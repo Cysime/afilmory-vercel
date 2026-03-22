@@ -49,9 +49,10 @@ export const ProgressiveImage = ({
   // State management
   const [state, setState] = useProgressiveImageState()
   const {
-    resolvedSrc,
-    sourceKind,
-    loadPhase,
+    blobSrc,
+    highResLoaded,
+    error,
+    isHighResImageRendered,
     currentScale,
     showScaleIndicator,
     isThumbnailLoaded,
@@ -73,13 +74,16 @@ export const ProgressiveImage = ({
   const imageLoaderManagerRef = useImageLoader(
     src,
     isCurrentImage,
+    highResLoaded,
+    error,
     onProgress,
     onError,
     onBlobSrcChange,
     loadingIndicatorRef,
-    setState.setResolvedSrc,
-    setState.setSourceKind,
-    setState.setLoadPhase,
+    setState.setBlobSrc,
+    setState.setHighResLoaded,
+    setState.setError,
+    setState.setIsHighResImageRendered,
   )
 
   const { onTransformed, onDOMTransformed } = useScaleIndicator(
@@ -96,40 +100,19 @@ export const ProgressiveImage = ({
     setState.setIsThumbnailLoaded(true)
   }, [setState])
 
-  const handleHighResImageLoad = useCallback(() => {
-    setState.setLoadPhase('painted')
+  // 高清图已渲染到DOM（WebGL onImagePainted 或 DOM img onLoad）
+  const handleHighResRendered = useCallback(() => {
+    setState.setIsHighResImageRendered(true)
     loadingIndicatorRef.current?.updateLoadingState({
       isVisible: false,
     })
   }, [loadingIndicatorRef, setState])
-
-  const handleHighResImageError = useCallback(() => {
-    setState.setLoadPhase('error')
-    loadingIndicatorRef.current?.updateLoadingState({
-      isVisible: true,
-      isError: true,
-      errorMessage: t('photo.error.loading'),
-    })
-  }, [loadingIndicatorRef, setState, t])
 
   const showContextMenu = useShowContextMenu()
 
   const isHDRSupported = useMediaQuery('(dynamic-range: high)')
   // Only use HDR if the browser supports it and the image is HDR
   const shouldUseHDR = isHDR && isHDRSupported
-  const shouldUseDOMViewer = hasVideo || shouldUseHDR || sourceKind !== 'blob'
-  const shouldUseWebGLViewer = !shouldUseDOMViewer && canUseWebGL
-  const hasHighResSource = Boolean(resolvedSrc)
-  const isHighResPainted = loadPhase === 'painted'
-  const hasHighResError = loadPhase === 'error'
-  const shouldRenderHighResLayer = hasHighResSource && isActiveImage && !hasHighResError
-
-  const handleWebGLImagePainted = useCallback(() => {
-    setState.setLoadPhase('painted')
-    loadingIndicatorRef.current?.updateLoadingState({
-      isVisible: false,
-    })
-  }, [loadingIndicatorRef, setState])
 
   return (
     <div
@@ -141,7 +124,7 @@ export const ProgressiveImage = ({
       onTouchEnd={handleLongPressEnd}
     >
       {/* 缩略图 - 在高分辨率图片未加载或加载失败时显示 */}
-      {thumbnailSrc && (!isHighResPainted || hasHighResError) && (
+      {thumbnailSrc && (!isHighResImageRendered || error) && (
         <img
           ref={thumbnailRef}
           src={thumbnailSrc}
@@ -156,26 +139,25 @@ export const ProgressiveImage = ({
       )}
 
       {/* 高分辨率图片 - 只在成功加载且非错误状态时显示 */}
-      {shouldRenderHighResLayer && resolvedSrc && (
+      {highResLoaded && blobSrc && isActiveImage && !error && (
         <div
           className="absolute inset-0 h-full w-full"
           onContextMenu={(e) => {
-            const items = createContextMenuItems(resolvedSrc, alt, t)
+            const items = createContextMenuItems(blobSrc, alt, t)
             showContextMenu(items, e)
           }}
         >
           {/* LivePhoto/Motion Photo 或 HDR 模式使用 DOMImageViewer */}
-          {shouldUseDOMViewer ? (
+          {hasVideo || shouldUseHDR ? (
             <DOMImageViewer
               ref={domImageViewerRef}
               onZoomChange={onDOMTransformed}
               minZoom={minZoom}
               maxZoom={maxZoom}
-              src={resolvedSrc}
+              src={blobSrc}
               alt={alt}
-              isVisible={loadPhase !== 'idle'}
-              onLoad={handleHighResImageLoad}
-              onError={handleHighResImageError}
+              highResLoaded={highResLoaded}
+              onLoad={handleHighResRendered}
             >
               {/* LivePhoto/Motion Photo 视频组件作为 children，跟随图片的变换 */}
               {hasVideo && videoSource && imageLoaderManagerRef.current && (
@@ -192,28 +174,30 @@ export const ProgressiveImage = ({
             </DOMImageViewer>
           ) : (
             /* 非 LivePhoto 模式使用 WebGLImageViewer */
-            <WebGLImageViewer
-              ref={webglImageViewerRef}
-              src={resolvedSrc}
-              className="absolute inset-0 h-full w-full"
-              width={width}
-              height={height}
-              initialScale={1}
-              minScale={minZoom}
-              maxScale={maxZoom}
-              limitToBounds={true}
-              centerOnInit={true}
-              smooth={true}
-              onZoomChange={onTransformed}
-              onLoadingStateChange={handleWebGLLoadingStateChange}
-              onImagePainted={handleWebGLImagePainted}
-              debug={import.meta.env.DEV}
-            />
+            canUseWebGL && (
+              <WebGLImageViewer
+                ref={webglImageViewerRef}
+                src={blobSrc}
+                className="absolute inset-0 h-full w-full"
+                width={width}
+                height={height}
+                initialScale={1}
+                minScale={minZoom}
+                maxScale={maxZoom}
+                limitToBounds={true}
+                centerOnInit={true}
+                smooth={true}
+                onZoomChange={onTransformed}
+                onLoadingStateChange={handleWebGLLoadingStateChange}
+                onImagePainted={handleHighResRendered}
+                debug={import.meta.env.DEV}
+              />
+            )
           )}
         </div>
       )}
 
-      {hasVideo && shouldRenderHighResLayer && resolvedSrc && (
+      {hasVideo && highResLoaded && blobSrc && isActiveImage && !error && (
         <LivePhotoBadge
           livePhotoRef={livePhotoRef}
           isLivePhotoPlaying={isLivePhotoPlaying}
@@ -221,10 +205,10 @@ export const ProgressiveImage = ({
         />
       )}
 
-      {shouldUseHDR && shouldRenderHighResLayer && resolvedSrc && <HDRBadge />}
+      {shouldUseHDR && highResLoaded && blobSrc && isActiveImage && !error && <HDRBadge />}
 
       {/* 备用图片（当 WebGL 不可用时） - 只在非错误状态时显示 */}
-      {!canUseWebGL && shouldUseWebGLViewer && shouldRenderHighResLayer && resolvedSrc && (
+      {!canUseWebGL && !hasVideo && !shouldUseHDR && highResLoaded && blobSrc && isActiveImage && !error && (
         <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/20">
           <i className="i-mingcute-warning-line mb-2 text-4xl" />
           <span className="text-center text-sm text-white">{t('photo.webgl.unavailable')}</span>

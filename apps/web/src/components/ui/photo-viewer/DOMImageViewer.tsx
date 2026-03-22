@@ -13,9 +13,8 @@ export const DOMImageViewer: FC<DOMImageViewerProps> = ({
   maxZoom,
   src,
   alt,
-  isVisible,
+  highResLoaded,
   onLoad,
-  onError,
   children,
 }) => {
   const transformRef = useRef<ReactZoomPanPinchRef>(null)
@@ -124,12 +123,14 @@ export const DOMImageViewer: FC<DOMImageViewerProps> = ({
           <img
             src={src || undefined}
             alt={alt}
-            className={clsxm('absolute inset-0 w-full h-full object-contain', isVisible ? 'opacity-100' : 'opacity-0')}
+            className={clsxm(
+              'absolute inset-0 w-full h-full object-contain',
+              highResLoaded ? 'opacity-100' : 'opacity-0',
+            )}
             draggable={false}
             loading="eager"
             decoding="async"
             onLoad={onLoad}
-            onError={onError}
           />
           {children}
         </TransformComponent>

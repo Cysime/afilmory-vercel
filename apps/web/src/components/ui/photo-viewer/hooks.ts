@@ -7,30 +7,29 @@ import { toast } from 'sonner'
 import { MenuItemSeparator, MenuItemText } from '~/atoms/context-menu'
 import { isMobileDevice } from '~/lib/device-viewport'
 import { ImageLoaderManager } from '~/lib/image-loader-manager'
-import { getImageFormat } from '~/lib/image-utils'
 
 import type { LivePhotoVideoHandle } from './LivePhotoVideo'
 import type { LoadingIndicatorRef } from './LoadingIndicator'
-import type { HighResSourceKind, ProgressiveImageState } from './types'
+import type { ProgressiveImageState } from './types'
 import { SHOW_SCALE_INDICATOR_DURATION } from './types'
-
-const DIRECT_RENDERABLE_IMAGE_FORMATS = new Set(['JPG', 'JPEG', 'PNG', 'WEBP', 'GIF', 'BMP', 'SVG', 'AVIF'])
 
 export const useProgressiveImageState = (): [
   ProgressiveImageState,
   {
-    setResolvedSrc: (src: string | null) => void
-    setSourceKind: (kind: HighResSourceKind | null) => void
-    setLoadPhase: (phase: ProgressiveImageState['loadPhase']) => void
+    setBlobSrc: (src: string | null) => void
+    setHighResLoaded: (loaded: boolean) => void
+    setError: (error: boolean) => void
+    setIsHighResImageRendered: (rendered: boolean) => void
     setCurrentScale: (scale: number) => void
     setShowScaleIndicator: (show: boolean) => void
     setIsThumbnailLoaded: (loaded: boolean) => void
     setIsLivePhotoPlaying: (playing: boolean) => void
   },
 ] => {
-  const [resolvedSrc, setResolvedSrc] = useState<string | null>(null)
-  const [sourceKind, setSourceKind] = useState<HighResSourceKind | null>(null)
-  const [loadPhase, setLoadPhase] = useState<ProgressiveImageState['loadPhase']>('idle')
+  const [blobSrc, setBlobSrc] = useState<string | null>(null)
+  const [highResLoaded, setHighResLoaded] = useState(false)
+  const [error, setError] = useState(false)
+  const [isHighResImageRendered, setIsHighResImageRendered] = useState(false)
   const [currentScale, setCurrentScale] = useState(1)
   const [showScaleIndicator, setShowScaleIndicator] = useState(false)
   const [isThumbnailLoaded, setIsThumbnailLoaded] = useState(false)
@@ -38,18 +37,20 @@ export const useProgressiveImageState = (): [
 
   return [
     {
-      resolvedSrc,
-      sourceKind,
-      loadPhase,
+      blobSrc,
+      highResLoaded,
+      error,
+      isHighResImageRendered,
       currentScale,
       showScaleIndicator,
       isThumbnailLoaded,
       isLivePhotoPlaying,
     },
     {
-      setResolvedSrc,
-      setSourceKind,
-      setLoadPhase,
+      setBlobSrc,
+      setHighResLoaded,
+      setError,
+      setIsHighResImageRendered,
       setCurrentScale,
       setShowScaleIndicator,
       setIsThumbnailLoaded,
@@ -61,63 +62,36 @@ export const useProgressiveImageState = (): [
 export const useImageLoader = (
   src: string,
   isCurrentImage: boolean,
+  highResLoaded: boolean,
+  error: boolean,
   onProgress?: (progress: number) => void,
   onError?: () => void,
   onBlobSrcChange?: (blobSrc: string | null) => void,
   loadingIndicatorRef?: React.RefObject<LoadingIndicatorRef | null>,
-  setResolvedSrc?: (src: string | null) => void,
-  setSourceKind?: (kind: HighResSourceKind | null) => void,
-  setLoadPhase?: (phase: ProgressiveImageState['loadPhase']) => void,
+  setBlobSrc?: (src: string | null) => void,
+  setHighResLoaded?: (loaded: boolean) => void,
+  setError?: (error: boolean) => void,
+  setIsHighResImageRendered?: (rendered: boolean) => void,
 ) => {
   const { t } = useTranslation()
   const imageLoaderManagerRef = useRef<ImageLoaderManager | null>(null)
 
   useEffect(() => {
-    const resetState = () => {
-      setResolvedSrc?.(null)
-      setSourceKind?.(null)
-      setLoadPhase?.('idle')
-      onBlobSrcChange?.(null)
-
-      // Reset loading indicator
-      loadingIndicatorRef?.current?.resetLoadingState()
-    }
-
-    if (!isCurrentImage) {
-      resetState()
-      imageLoaderManagerRef.current?.cleanup()
-      imageLoaderManagerRef.current = null
-      return
-    }
+    if (highResLoaded || error || !isCurrentImage) return
 
     // Create new image loader manager
     const imageLoaderManager = new ImageLoaderManager()
     imageLoaderManagerRef.current = imageLoaderManager
 
-    const isCrossOriginSource = (() => {
-      try {
-        return new URL(src, window.location.href).origin !== window.location.origin
-      } catch {
-        return false
-      }
-    })()
-    const shouldUseDirectCrossOriginImage =
-      isCrossOriginSource && DIRECT_RENDERABLE_IMAGE_FORMATS.has(getImageFormat(src))
+    function cleanup() {
+      setHighResLoaded?.(false)
+      setBlobSrc?.(null)
+      setError?.(false)
+      onBlobSrcChange?.(null)
+      setIsHighResImageRendered?.(false)
 
-    if (shouldUseDirectCrossOriginImage) {
-      loadingIndicatorRef?.current?.updateLoadingState({
-        isVisible: true,
-        loadingProgress: 0,
-        loadedBytes: 0,
-        totalBytes: 0,
-      })
-      setResolvedSrc?.(src)
-      setSourceKind?.('direct')
-      setLoadPhase?.('loading')
-      onBlobSrcChange?.(src)
-      return () => {
-        imageLoaderManager.cleanup()
-      }
+      // Reset loading indicator
+      loadingIndicatorRef?.current?.resetLoadingState()
     }
 
     const loadImage = async () => {
@@ -130,27 +104,12 @@ export const useImageLoader = (
           },
         })
 
-        setResolvedSrc?.(result.blobSrc)
-        setSourceKind?.(result.blobSrc.startsWith('blob:') ? 'blob' : 'direct')
-        setLoadPhase?.('ready')
+        setBlobSrc?.(result.blobSrc)
         onBlobSrcChange?.(result.blobSrc)
+        setHighResLoaded?.(true)
       } catch (loadError) {
-        if (isCrossOriginSource) {
-          loadingIndicatorRef?.current?.updateLoadingState({
-            isVisible: true,
-            loadingProgress: 0,
-            loadedBytes: 0,
-            totalBytes: 0,
-          })
-          setResolvedSrc?.(src)
-          setSourceKind?.('direct')
-          setLoadPhase?.('loading')
-          onBlobSrcChange?.(src)
-          return
-        }
-
         console.error('Failed to load image:', loadError)
-        setLoadPhase?.('error')
+        setError?.(true)
 
         // 显示错误状态，而不是完全隐藏图片
         loadingIndicatorRef?.current?.updateLoadingState({
@@ -161,13 +120,15 @@ export const useImageLoader = (
       }
     }
 
-    resetState()
+    cleanup()
     loadImage()
 
     return () => {
       imageLoaderManager.cleanup()
     }
   }, [
+    highResLoaded,
+    error,
     onProgress,
     src,
     onError,
@@ -175,9 +136,10 @@ export const useImageLoader = (
     onBlobSrcChange,
     loadingIndicatorRef,
     t,
-    setResolvedSrc,
-    setSourceKind,
-    setLoadPhase,
+    setBlobSrc,
+    setHighResLoaded,
+    setError,
+    setIsHighResImageRendered,
   ])
 
   return imageLoaderManagerRef
