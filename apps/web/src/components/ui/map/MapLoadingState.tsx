@@ -26,7 +26,7 @@ export const MapLoadingState = () => {
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3, delay: 0.2 }}
         >
-          {t('explory.loading.map')}
+          {t('explore.loading.map')}
         </m.div>
         <m.p
           className="text-sm text-gray-600 dark:text-gray-400"
@@ -34,7 +34,7 @@ export const MapLoadingState = () => {
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3, delay: 0.3 }}
         >
-          {t('explory.parsing.location')}
+          {t('explore.parsing.location')}
         </m.p>
       </m.div>
     </div>

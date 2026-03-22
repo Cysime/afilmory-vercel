@@ -40,7 +40,7 @@ const ExploryPageSkeleton = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.3 }}
         >
-          {t('explory.loading.map')}
+          {t('explore.loading.map')}
         </m.div>
         <m.p
           className="text-sm text-gray-600 dark:text-gray-400"
@@ -48,7 +48,7 @@ const ExploryPageSkeleton = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.4 }}
         >
-          {t('explory.parsing.location')}
+          {t('explore.parsing.location')}
         </m.p>
       </div>
     </m.div>
@@ -80,7 +80,7 @@ const ExploryPageError = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.2 }}
         >
-          {t('explory.map.error.title')}
+          {t('explore.map.error.title')}
         </m.div>
         <m.p
           className="text-sm text-red-600 dark:text-red-400"
@@ -88,7 +88,7 @@ const ExploryPageError = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.3 }}
         >
-          {t('explory.map.error.description')}
+          {t('explore.map.error.description')}
         </m.p>
       </div>
     </m.div>

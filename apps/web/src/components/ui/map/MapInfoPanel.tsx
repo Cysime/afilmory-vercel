@@ -40,7 +40,7 @@ export const MapInfoPanel = ({ markersCount, bounds }: MapInfoPanelProps) => {
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between">
                 <h1 className="text-text text-lg leading-tight font-semibold tracking-tight">
-                  {t('explory.explore.map')}
+                  {t('explore.explore.map')}
                 </h1>
                 {/* Collapse/Expand Button */}
                 <button
@@ -60,7 +60,7 @@ export const MapInfoPanel = ({ markersCount, bounds }: MapInfoPanelProps) => {
                 <div className="bg-green/10 ring-green/20 flex items-center gap-1.5 rounded-full px-2.5 py-1 ring-1 ring-inset">
                   <div className="bg-green h-1.5 w-1.5 rounded-full" />
                   <span className="text-text-secondary text-xs font-medium">
-                    {t('explory.found.locations', { count: markersCount })}
+                    {t('explore.found.locations', { count: markersCount })}
                   </span>
                 </div>
               </div>
@@ -83,7 +83,7 @@ export const MapInfoPanel = ({ markersCount, bounds }: MapInfoPanelProps) => {
               {/* Section header */}
               <div className="mb-4 flex items-center gap-2.5">
                 <i className="i-mingcute-location-line text-text-secondary" />
-                <span className="text-text text-sm font-medium tracking-tight">{t('explory.shooting.range')}</span>
+                <span className="text-text text-sm font-medium tracking-tight">{t('explore.shooting.range')}</span>
               </div>
 
               {/* Enhanced coordinate cards */}

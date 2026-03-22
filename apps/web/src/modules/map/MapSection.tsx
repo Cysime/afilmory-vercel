@@ -138,8 +138,8 @@ const MapSectionContent = () => {
       <div className="flex h-full w-full items-center justify-center">
         <div className="text-center">
           <div className="mb-4 text-4xl">❌</div>
-          <div className="text-lg font-medium text-red-900 dark:text-red-100">{t('explory.map.error.title')}</div>
-          <p className="text-sm text-red-600 dark:text-red-400">{t('explory.map.error.description')}</p>
+          <div className="text-lg font-medium text-red-900 dark:text-red-100">{t('explore.map.error.title')}</div>
+          <p className="text-sm text-red-600 dark:text-red-400">{t('explore.map.error.description')}</p>
         </div>
       </div>
     )

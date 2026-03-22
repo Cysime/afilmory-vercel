@@ -20,8 +20,8 @@ export const ClusterPhotoGrid = ({ photos, onPhotoClick }: ClusterPhotoGridProps
     <div className="space-y-3">
       {/* 标题 */}
       <div className="flex items-center justify-between">
-        <h3 className="text-text text-sm font-semibold">{t('explory.cluster.photos', { count: photos.length })}</h3>
-        <div className="text-text-secondary text-xs">{t('explory.cluster.click.details')}</div>
+        <h3 className="text-text text-sm font-semibold">{t('explore.cluster.photos', { count: photos.length })}</h3>
+        <div className="text-text-secondary text-xs">{t('explore.cluster.click.details')}</div>
       </div>
 
       {/* 照片网格 */}
@@ -88,7 +88,7 @@ export const ClusterPhotoGrid = ({ photos, onPhotoClick }: ClusterPhotoGridProps
           >
             <div className="text-center">
               <div className="text-text text-lg font-bold">+{remainingCount}</div>
-              <div className="text-text-secondary text-xs">{t('explory.cluster.more')}</div>
+              <div className="text-text-secondary text-xs">{t('explore.cluster.more')}</div>
             </div>
           </m.div>
         )}

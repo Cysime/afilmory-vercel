@@ -118,8 +118,8 @@ const useSyncStateToUrl = () => {
     if (!isRestored) return
 
     if (!isOpen) {
-      const isExploryPath = location.pathname === '/explory'
-      if (!isExploryPath) {
+      const isExplorePath = location.pathname === '/explore'
+      if (!isExplorePath) {
         const timer = setTimeout(() => {
           navigate('/')
         }, 500)

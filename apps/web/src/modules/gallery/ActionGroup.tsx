@@ -48,7 +48,7 @@ export const ActionGroup = () => {
       <Button
         variant="ghost"
         size="sm"
-        onClick={() => navigate('/explory')}
+        onClick={() => navigate('/explore')}
         className="h-10 w-10 rounded-full border-0 bg-gray-100 transition-all duration-200 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700"
         title={t('action.map.explore')}
       >
