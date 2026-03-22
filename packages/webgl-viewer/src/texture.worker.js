@@ -20,13 +20,11 @@ const WORKER_SIMPLE_LOD_LEVELS = [
  */
 self.onmessage = async (e) => {
   const { type, payload } = e.data
-  console.info('[Worker] Received message:', type, payload)
 
   switch (type) {
     case 'load-image': {
       const { url } = payload
       try {
-        console.info('[Worker] Fetching image:', url)
         const response = await fetch(url, { mode: 'cors' })
         const blob = await response.blob()
         originalImage = await createImageBitmap(blob)
@@ -46,7 +44,6 @@ self.onmessage = async (e) => {
           resizeQuality: 'medium',
         })
 
-        console.info('[Worker] Initial LOD created, posting image-loaded')
         self.postMessage(
           {
             type: 'image-loaded',
