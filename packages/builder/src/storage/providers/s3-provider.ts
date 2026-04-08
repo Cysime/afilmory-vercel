@@ -44,6 +44,13 @@ export class S3StorageProvider implements StorageProvider {
         const totalTimer = setTimeout(() => controller.abort(), totalTimeoutMs)
         let idleTimer: NodeJS.Timeout | null = null
         let firstByteAt: number | null = null
+        const clearTimers = () => {
+          clearTimeout(totalTimer)
+          if (idleTimer) {
+            clearTimeout(idleTimer)
+            idleTimer = null
+          }
+        }
 
         try {
           logger.s3.info(`下载开始：${key} (attempt ${attempt}/${maxAttempts})`)
@@ -99,13 +106,13 @@ export class S3StorageProvider implements StorageProvider {
             })
 
             stream.on('end', () => {
-              if (idleTimer) clearTimeout(idleTimer)
+              clearTimers()
               const buf = Buffer.concat(chunks)
               resolve(buf)
             })
 
             stream.on('error', (error) => {
-              if (idleTimer) clearTimeout(idleTimer)
+              clearTimers()
               reject(error)
             })
           })
@@ -114,12 +121,10 @@ export class S3StorageProvider implements StorageProvider {
           const ttfb = firstByteAt ? firstByteAt - startTime : duration
           const sizeKB = Math.round(buffer.length / 1024)
           logger.s3.success(`下载完成：${key} (${sizeKB}KB, ${duration}ms, TTFB ${ttfb}ms, attempt ${attempt})`)
-          clearTimeout(totalTimer)
           return buffer
         } catch (error) {
           const elapsed = Date.now() - startTime
           logger.s3.warn(`下载失败：${key} (attempt ${attempt}/${maxAttempts}, ${elapsed}ms)`, error)
-          clearTimeout(totalTimer)
 
           if (attempt < maxAttempts) {
             const delay = backoffDelay(attempt)
@@ -129,6 +134,8 @@ export class S3StorageProvider implements StorageProvider {
           }
           logger.s3.error(`下载最终失败：${key}`)
           return null
+        } finally {
+          clearTimers()
         }
       }
 

@@ -1,0 +1,67 @@
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import { handleDeletedPhotos } from '../manifest/manager.js'
+import { setBuilderOutputSettings } from '../output-paths.js'
+import type { PhotoManifestItem } from '../types/photo.js'
+
+function createPhotoManifestItem(id: string): PhotoManifestItem {
+  return {
+    id,
+    title: id,
+    description: '',
+    dateTaken: '2024-01-01T00:00:00.000Z',
+    tags: [],
+    originalUrl: `/originals/${id}.jpg`,
+    thumbnailUrl: `/thumbnails/${id}.jpg`,
+    thumbHash: null,
+    width: 100,
+    height: 100,
+    aspectRatio: 1,
+    s3Key: `${id}.jpg`,
+    lastModified: '2024-01-01T00:00:00.000Z',
+    size: 1,
+    exif: null,
+    toneAnalysis: null,
+    location: null,
+  }
+}
+
+describe('handleDeletedPhotos', () => {
+  let tmpDir: string
+  let thumbnailsDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'afilmory-manifest-'))
+    thumbnailsDir = path.join(tmpDir, 'thumbnails')
+
+    setBuilderOutputSettings({
+      manifestPath: path.join(tmpDir, 'photos-manifest.json'),
+      thumbnailsDir,
+      originalsDir: path.join(tmpDir, 'originals'),
+    })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('returns zero when the thumbnails directory does not exist', async () => {
+    await expect(handleDeletedPhotos([createPhotoManifestItem('keep')])).resolves.toBe(0)
+  })
+
+  it('removes thumbnails that are no longer present in the manifest', async () => {
+    await fs.mkdir(thumbnailsDir, { recursive: true })
+    await fs.writeFile(path.join(thumbnailsDir, 'keep.jpg'), '')
+    await fs.writeFile(path.join(thumbnailsDir, 'remove.jpg'), '')
+
+    const deletedCount = await handleDeletedPhotos([createPhotoManifestItem('keep')])
+
+    expect(deletedCount).toBe(1)
+    await expect(fs.access(path.join(thumbnailsDir, 'keep.jpg'))).resolves.toBeUndefined()
+    await expect(fs.access(path.join(thumbnailsDir, 'remove.jpg'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+})

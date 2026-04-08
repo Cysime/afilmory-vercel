@@ -95,7 +95,13 @@ export async function handleDeletedPhotos(items: PhotoManifestItem[]): Promise<n
   }
 
   let deletedCount = 0
-  const allThumbnails = await fs.readdir(thumbnailsDir)
+  const allThumbnails = await fs.readdir(thumbnailsDir).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') {
+      logger.main.info('📁 缩略图目录不存在，跳过删除检查')
+      return []
+    }
+    throw error
+  })
 
   // If thumbnails not in manifest, delete it
   const manifestKeySet = new Set(items.map((item) => item.id))

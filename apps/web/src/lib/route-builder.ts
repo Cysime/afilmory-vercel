@@ -1,5 +1,4 @@
 import { get, omit } from 'es-toolkit/compat'
-import { Fragment } from 'react/jsx-runtime'
 import type { RouteObject } from 'react-router'
 
 import { debugLog } from './debug-log'
@@ -8,6 +7,17 @@ type NestedStructure = { [key: string]: NestedStructure }
 
 const MainGroupSegment = '(main)'
 const PRIVATE_ROUTE_GROUPS = ['(data)', '(debug)']
+
+function withOptionalLazy(route: RouteObject, lazy?: RouteObject['lazy']): RouteObject {
+  if (!lazy) {
+    return route
+  }
+
+  return {
+    ...route,
+    lazy,
+  }
+}
 
 function nestPaths(paths: string[]): NestedStructure {
   const result: NestedStructure = {}
@@ -94,7 +104,7 @@ export function buildGlobRoutes(glob: Record<string, () => Promise<any>>): Route
 
       if (isGroupedRoute) {
         const accessPath = `${segmentPathKey}/layout.tsx`
-        const globGetter = get(glob, accessPath) || (() => Fragment)
+        const globGetter = get(glob, accessPath)
         if (pathGetterSet.has(accessPath)) {
           // throw new Error(`duplicate path: ` + accessPath)
 
@@ -108,15 +118,19 @@ export function buildGlobRoutes(glob: Record<string, () => Promise<any>>): Route
 
         const childrenChildren: RouteObject[] = []
         dtsRoutes(`${segmentPathKey}/`, childrenChildren, paths[key], parentPath)
-        children.push({
-          path: '',
-          lazy: globGetter,
-          children: childrenChildren,
-          handle: {
-            fs: segmentPathKey,
-            fullPath: parentPath,
-          },
-        })
+        children.push(
+          withOptionalLazy(
+            {
+              path: '',
+              children: childrenChildren,
+              handle: {
+                fs: segmentPathKey,
+                fullPath: parentPath,
+              },
+            },
+            globGetter,
+          ),
+        )
       } else if (key === 'layout') {
         // if parent key is grouped routes, the layout is handled, so skip this logic
         if (parentKey.endsWith(')/')) {
@@ -129,15 +143,19 @@ export function buildGlobRoutes(glob: Record<string, () => Promise<any>>): Route
         const childrenChildren: RouteObject[] = []
         // should omit layout, because layout is already handled
         dtsRoutes(parentKey, childrenChildren, omit(paths, 'layout') as NestedStructure, parentPath)
-        children.push({
-          path: '',
-          lazy: globGetter,
-          children: childrenChildren,
-          handle: {
-            fs: segmentPathKey,
-            fullPath: parentPath,
-          },
-        })
+        children.push(
+          withOptionalLazy(
+            {
+              path: '',
+              children: childrenChildren,
+              handle: {
+                fs: segmentPathKey,
+                fullPath: parentPath,
+              },
+            },
+            globGetter,
+          ),
+        )
         break
       } else {
         const content = paths[key]
