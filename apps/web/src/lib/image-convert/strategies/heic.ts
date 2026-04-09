@@ -112,6 +112,10 @@ export async function detectHeicFormat(file: File | Blob): Promise<boolean> {
 }
 
 export const isBrowserSupportHeic = () => {
+  if (typeof navigator === 'undefined') {
+    return false
+  }
+
   const safariVersionMatch = navigator.userAgent.match(/version\/(\d+)/i)
   const versionString = safariVersionMatch?.[1]
   const version = versionString ? Number.parseInt(versionString, 10) : 0

@@ -67,6 +67,10 @@ function convertMOVtoMP4(
 
 // 检测浏览器是否原生支持 MOV 格式
 function isBrowserSupportMov(): boolean {
+  if (typeof document === 'undefined') {
+    return false
+  }
+
   // 创建一个临时的 video 元素来测试格式支持
   const video = document.createElement('video')
 
@@ -85,6 +89,10 @@ function isBrowserSupportMov(): boolean {
 
 // 检测是否需要转换 mov 文件
 export function needsVideoConversion(url: string): boolean {
+  if (typeof document === 'undefined') {
+    return false
+  }
+
   const lowerUrl = url.toLowerCase()
   const isMovFile = lowerUrl.includes('.mov') || lowerUrl.endsWith('.mov')
 
