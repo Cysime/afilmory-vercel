@@ -100,8 +100,14 @@ const MIGRATION_STEPS: MigrationStep[] = [
   },
 ]
 
-function noOpBumpVersion(raw: any, _target: ManifestVersion): AfilmoryManifest {
-  return raw
+function noOpBumpVersion(raw: any, target: ManifestVersion): AfilmoryManifest {
+  return {
+    ...raw,
+    version: target,
+    data: Array.isArray(raw?.data) ? raw.data : [],
+    cameras: Array.isArray(raw?.cameras) ? raw.cameras : [],
+    lenses: Array.isArray(raw?.lenses) ? raw.lenses : [],
+  }
 }
 
 export function migrateManifest(
