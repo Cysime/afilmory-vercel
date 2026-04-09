@@ -144,14 +144,7 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   async listImages(): Promise<StorageObject[]> {
-    const listCommand = new ListObjectsV2Command({
-      Bucket: this.config.bucket,
-      Prefix: this.config.prefix,
-      MaxKeys: this.config.maxFileLimit, // 最多获取 1000 张照片
-    })
-
-    const listResponse = await this.s3Client.send(listCommand)
-    const objects = listResponse.Contents || []
+    const objects = await this.listS3Objects()
     const excludeRegex = this.config.excludeRegex ? new RegExp(this.config.excludeRegex) : null
 
     // 过滤出图片文件并转换为通用格式
@@ -169,16 +162,41 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   async listAllFiles(_progressCallback?: ProgressCallback): Promise<StorageObject[]> {
-    const listCommand = new ListObjectsV2Command({
-      Bucket: this.config.bucket,
-      Prefix: this.config.prefix,
-      MaxKeys: this.config.maxFileLimit,
-    })
-
-    const listResponse = await this.s3Client.send(listCommand)
-    const objects = listResponse.Contents || []
+    const objects = await this.listS3Objects()
 
     return objects.map((obj) => convertS3ObjectToStorageObject(obj))
+  }
+
+  private async listS3Objects(): Promise<_Object[]> {
+    const objects: _Object[] = []
+    let continuationToken: string | undefined
+    let remaining = this.config.maxFileLimit
+
+    do {
+      const pageSize = remaining ? Math.min(remaining, 1000) : 1000
+      const listCommand = new ListObjectsV2Command({
+        Bucket: this.config.bucket,
+        Prefix: this.config.prefix,
+        MaxKeys: pageSize,
+        ContinuationToken: continuationToken,
+      })
+
+      const listResponse = await this.s3Client.send(listCommand)
+      const contents = listResponse.Contents || []
+      const pageObjects = remaining ? contents.slice(0, remaining) : contents
+      objects.push(...pageObjects)
+
+      if (remaining) {
+        remaining -= pageObjects.length
+        if (remaining <= 0) {
+          break
+        }
+      }
+
+      continuationToken = listResponse.IsTruncated ? listResponse.NextContinuationToken : undefined
+    } while (continuationToken)
+
+    return objects
   }
 
   generatePublicUrl(key: string): string {
