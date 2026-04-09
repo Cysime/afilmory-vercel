@@ -79,6 +79,15 @@ export const Maplibre = ({
     }
   }, [selectedMarkerId, onMarkerClick, markers])
 
+  useEffect(() => {
+    if (autoFitBounds) {
+      return
+    }
+
+    setViewState(initialViewState)
+    setCurrentZoom(initialViewState.zoom)
+  }, [initialViewState, autoFitBounds])
+
   // Clustered markers
   const clusteredMarkers = useMemo(() => clusterMarkers(markers, currentZoom), [markers, currentZoom])
 
