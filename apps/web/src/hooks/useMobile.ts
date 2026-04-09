@@ -5,6 +5,10 @@ export const useMobile = () => {
 }
 
 export const isMobile = () => {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
   const w = window.innerWidth
   return w < 1024 && w !== 0
 }

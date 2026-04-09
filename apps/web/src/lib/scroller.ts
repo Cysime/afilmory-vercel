@@ -7,13 +7,25 @@ const spring: Transition = {
   damping: 250,
 }
 
-export const springScrollTo = (
-  value: number,
-  scrollerElement: HTMLElement = document.documentElement,
-  axis: 'x' | 'y' = 'y',
-) => {
-  // const scrollTop = scrollerElement?.scrollTop
-  const currentValue = axis === 'x' ? scrollerElement?.scrollLeft : scrollerElement?.scrollTop
+const getDefaultScrollerElement = () => {
+  if (typeof document === 'undefined') {
+    return null
+  }
+
+  return document.documentElement
+}
+
+export const springScrollTo = (value: number, scrollerElement?: HTMLElement | null, axis: 'x' | 'y' = 'y') => {
+  const defaultScrollerElement = getDefaultScrollerElement()
+  const targetScrollerElement = scrollerElement ?? defaultScrollerElement
+
+  if (!targetScrollerElement || typeof requestAnimationFrame === 'undefined') {
+    return null
+  }
+
+  const currentValue = axis === 'x' ? targetScrollerElement.scrollLeft : targetScrollerElement.scrollTop
+  const eventTarget =
+    targetScrollerElement === defaultScrollerElement && typeof window !== 'undefined' ? window : targetScrollerElement
 
   let isStop = false
   const stopSpringScrollHandler = () => {
@@ -21,14 +33,13 @@ export const springScrollTo = (
     animation.stop()
   }
 
-  const el = scrollerElement || window
   const animation = animateValue({
     keyframes: [currentValue + 1, value],
     autoplay: true,
     ...spring,
     onPlay() {
-      el.addEventListener('wheel', stopSpringScrollHandler, { capture: true })
-      el.addEventListener('touchmove', stopSpringScrollHandler)
+      eventTarget.addEventListener('wheel', stopSpringScrollHandler, { capture: true })
+      eventTarget.addEventListener('touchmove', stopSpringScrollHandler)
     },
 
     onUpdate(latest) {
@@ -43,17 +54,17 @@ export const springScrollTo = (
 
       requestAnimationFrame(() => {
         if (axis === 'x') {
-          el.scrollLeft = latest
+          targetScrollerElement.scrollLeft = latest
         } else {
-          el.scrollTop = latest
+          targetScrollerElement.scrollTop = latest
         }
       })
     },
   })
 
   animation.then(() => {
-    el.removeEventListener('wheel', stopSpringScrollHandler, { capture: true })
-    el.removeEventListener('touchmove', stopSpringScrollHandler)
+    eventTarget.removeEventListener('wheel', stopSpringScrollHandler, { capture: true })
+    eventTarget.removeEventListener('touchmove', stopSpringScrollHandler)
   })
 
   return animation
@@ -63,13 +74,13 @@ export const springScrollToElement = (
   element: HTMLElement,
   delta = 40,
 
-  scrollerElement: HTMLElement = document.documentElement,
+  scrollerElement?: HTMLElement | null,
 ) => {
   const y = calculateElementTop(element)
 
   const to = y + delta
 
-  return springScrollTo(to, scrollerElement || document.documentElement)
+  return springScrollTo(to, scrollerElement ?? getDefaultScrollerElement())
 }
 
 const calculateElementTop = (el: HTMLElement) => {
