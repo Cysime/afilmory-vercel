@@ -9,11 +9,11 @@ import { MANIFEST_PATH } from './__internal__/constants'
 
 // ── manifest helpers ──────────────────────────────────────────────────────────
 
-function resolveEmbedPreference(_command: 'serve' | 'build'): boolean {
+function resolveEmbedPreference(command: 'serve' | 'build'): boolean {
   const flag = process.env.AFILMORY_EMBED_MANIFEST?.trim().toLowerCase()
   if (flag === 'true') return true
   if (flag === 'false') return false
-  return true
+  return command === 'serve'
 }
 
 function getManifestContent(command: 'serve' | 'build'): string {

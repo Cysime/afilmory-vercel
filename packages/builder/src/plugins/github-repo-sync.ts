@@ -61,16 +61,9 @@ export default function githubRepoSyncPlugin(options: GitHubRepoSyncPluginOption
             logger.main.info('🔄 拉取远程仓库更新...')
             try {
               await $({ cwd: assetsGitDir, env: gitEnv, stdio: 'inherit' })`git pull --rebase`
-            } catch {
-              logger.main.warn('⚠️ git pull 失败，尝试重新克隆远程仓库...')
-              logger.main.info('🗑️ 删除现有仓库目录...')
-              await $({ cwd: webAppDir, stdio: 'inherit' })`rm -rf assets-git`
-              logger.main.info('📥 重新克隆远程仓库...')
-              await $({
-                cwd: webAppDir,
-                env: gitEnv,
-                stdio: 'inherit',
-              })`git clone ${repo.url} assets-git`
+            } catch (pullError) {
+              logger.main.warn('⚠️ git pull 失败，保留现有 assets-git 目录并降级为本地构建输出')
+              throw pullError
             }
           }
 

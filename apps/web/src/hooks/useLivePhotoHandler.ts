@@ -61,38 +61,35 @@ export const useLivePhotoHandler = ({ data, imageLoaded }: UseLivePhotoHandlerPr
   const hoverTimerRef = useRef<NodeJS.Timeout | null>(null)
   const imageLoaderManagerRef = useRef<ImageLoaderManager | null>(null)
   const loadedVideoKeyRef = useRef<string | null>(null)
+  const videoType = video?.type
+  const livePhotoUrl = videoType === 'live-photo' ? video?.videoUrl : undefined
+  const motionPhotoOffset = videoType === 'motion-photo' ? video?.offset : undefined
+  const motionPhotoSize = videoType === 'motion-photo' ? video?.size : undefined
+  const motionPhotoPresentationTimestamp = videoType === 'motion-photo' ? video?.presentationTimestamp : undefined
   const stableVideo = useMemo(() => {
-    if (!video) {
+    if (!videoType) {
       return
     }
 
-    if (video.type === 'motion-photo') {
+    if (videoType === 'motion-photo') {
       return {
         type: 'motion-photo' as const,
-        offset: video.offset,
-        size: video.size,
-        presentationTimestamp: video.presentationTimestamp,
+        offset: motionPhotoOffset!,
+        size: motionPhotoSize,
+        presentationTimestamp: motionPhotoPresentationTimestamp,
       }
     }
 
-    if (video.type === 'live-photo') {
+    if (videoType === 'live-photo') {
       return {
         type: 'live-photo' as const,
-        videoUrl: video.videoUrl,
+        videoUrl: livePhotoUrl!,
       }
     }
-
-    return video
-  }, [
-    video?.type,
-    video?.type === 'live-photo' ? video.videoUrl : null,
-    video?.type === 'motion-photo' ? video.offset : null,
-    video?.type === 'motion-photo' ? (video.size ?? null) : null,
-    video?.type === 'motion-photo' ? (video.presentationTimestamp ?? null) : null,
-  ])
+  }, [videoType, livePhotoUrl, motionPhotoOffset, motionPhotoSize, motionPhotoPresentationTimestamp])
   const videoLoadKey = getVideoLoadKey(stableVideo, originalUrl)
 
-  const hasVideo = video !== undefined
+  const hasVideo = videoType !== undefined
 
   useEffect(() => {
     setIsPlayingLivePhoto(false)

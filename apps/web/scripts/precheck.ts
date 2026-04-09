@@ -1,5 +1,6 @@
-/* eslint-disable no-console */
+import 'dotenv-expand/config'
 
+/* eslint-disable no-console */
 import { access } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -40,6 +41,17 @@ export const precheck = async () => {
 
   await $({
     cwd: workdir,
+    env: {
+      ...process.env,
+      BUILDER_CONFIG_PATH: process.env.BUILDER_CONFIG_PATH || 'builder.config.ts',
+    },
     stdio: 'inherit',
   })`pnpm --filter @afilmory/builder cli`
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  precheck().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error))
+    process.exitCode = 1
+  })
 }

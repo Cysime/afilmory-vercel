@@ -5,8 +5,8 @@ import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState 
 import type { ImageLoaderManager } from '~/lib/image-loader-manager'
 
 import type { LoadingIndicatorRef } from './LoadingIndicator'
-import type {VideoSource} from './types';
-import { getVideoSourceKey  } from './types'
+import type { VideoSource } from './types'
+import { getVideoSourceKey } from './types'
 
 function isAbortLikeError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError'
@@ -62,35 +62,42 @@ export const LivePhotoVideo = ({
   const hasAutoPlayedRef = useRef(false)
   const isConvertingVideoRef = useRef(false)
   const loadedVideoSourceKeyRef = useRef<string | null>(null)
+  const videoSourceType = videoSource.type
+  const livePhotoUrl = videoSourceType === 'live-photo' ? videoSource.videoUrl : undefined
+  const motionPhotoImageUrl = videoSourceType === 'motion-photo' ? videoSource.imageUrl : undefined
+  const motionPhotoOffset = videoSourceType === 'motion-photo' ? videoSource.offset : undefined
+  const motionPhotoSize = videoSourceType === 'motion-photo' ? videoSource.size : undefined
+  const motionPhotoPresentationTimestamp =
+    videoSourceType === 'motion-photo' ? videoSource.presentationTimestamp : undefined
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const videoAnimateController = useAnimationControls()
   const stableVideoSource = useMemo<VideoSource>(() => {
-    if (videoSource.type === 'motion-photo') {
+    if (videoSourceType === 'motion-photo') {
       return {
         type: 'motion-photo',
-        imageUrl: videoSource.imageUrl,
-        offset: videoSource.offset,
-        size: videoSource.size,
-        presentationTimestamp: videoSource.presentationTimestamp,
+        imageUrl: motionPhotoImageUrl!,
+        offset: motionPhotoOffset!,
+        size: motionPhotoSize,
+        presentationTimestamp: motionPhotoPresentationTimestamp,
       }
     }
 
-    if (videoSource.type === 'live-photo') {
+    if (videoSourceType === 'live-photo') {
       return {
         type: 'live-photo',
-        videoUrl: videoSource.videoUrl,
+        videoUrl: livePhotoUrl!,
       }
     }
 
     return { type: 'none' }
   }, [
-    videoSource.type,
-    videoSource.type === 'live-photo' ? videoSource.videoUrl : null,
-    videoSource.type === 'motion-photo' ? videoSource.imageUrl : null,
-    videoSource.type === 'motion-photo' ? videoSource.offset : null,
-    videoSource.type === 'motion-photo' ? (videoSource.size ?? null) : null,
-    videoSource.type === 'motion-photo' ? (videoSource.presentationTimestamp ?? null) : null,
+    videoSourceType,
+    livePhotoUrl,
+    motionPhotoImageUrl,
+    motionPhotoOffset,
+    motionPhotoSize,
+    motionPhotoPresentationTimestamp,
   ])
   const videoSourceKey = getVideoSourceKey(stableVideoSource)
 

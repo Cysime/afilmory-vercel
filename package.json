@@ -10,7 +10,7 @@
     "url": "https://github.com/vsxd/afilmory-vercel"
   },
   "scripts": {
-    "build": "pnpm build:manifest && pnpm build:web",
+    "build": "pnpm exec tsx apps/web/scripts/precheck.ts && pnpm build:web",
     "build:manifest": "BUILDER_CONFIG_PATH=builder.config.ts pnpm --filter @afilmory/builder cli",
     "build:web": "pnpm exec turbo run build --filter=@afilmory/web",
     "dev": "pnpm --filter @afilmory/web dev",

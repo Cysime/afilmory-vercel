@@ -2,8 +2,8 @@ import './styles/index.css'
 
 import type { ReactNode } from 'react'
 import { startTransition } from 'react'
-import type {Root} from 'react-dom/client';
-import { createRoot  } from 'react-dom/client'
+import type { Root } from 'react-dom/client'
+import { createRoot } from 'react-dom/client'
 import { RouterProvider } from 'react-router'
 
 import { BootstrapError } from './components/common/BootstrapError'

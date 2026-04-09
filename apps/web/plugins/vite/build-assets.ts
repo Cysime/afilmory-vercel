@@ -3,8 +3,6 @@ import { readFileSync } from 'node:fs'
 import type { PhotoManifestItem } from '@afilmory/data'
 import type { Plugin } from 'vite'
 
-import { cleanupOldOGImages } from '../../../../scripts/cleanup-og-images.js'
-import { generateFavicons } from '../../../../scripts/generate-favicon.js'
 import { generateOGImage } from '../../../../scripts/generate-og-image.js'
 import type { SiteConfig } from '../../../../site.config'
 import { MANIFEST_PATH } from './__internal__/constants'
@@ -44,29 +42,29 @@ export function buildAssetsPlugin(ogOptions: OGImagePluginOptions = {}, siteConf
     name: 'build-assets',
     apply: 'build',
     async buildStart() {
-      // 在构建开始时生成 OG 图片
       const timestamp = Date.now()
-      const fileName = `og-image-${timestamp}.png`
+      const fileName = `assets/og-image-${timestamp}.png`
 
       try {
-        // 生成 favicon
-        await generateFavicons()
-
-        // 生成 OG 图片
-        await generateOGImage({
+        const ogImage = await generateOGImage({
           title,
           description,
           outputPath: fileName,
           includePhotos: true,
           photoCount: 4,
+          writeToDisk: false,
         })
-        ogImagePath = `/${fileName}`
-        this.info(`OG image generated: ${ogImagePath}`)
 
-        // 清理旧的 OG 图片
-        await cleanupOldOGImages(1)
+        this.emitFile({
+          type: 'asset',
+          fileName: ogImage.outputPath,
+          source: ogImage.buffer,
+        })
+
+        ogImagePath = `/${ogImage.outputPath}`
+        this.info(`OG image generated: ${ogImagePath}`)
       } catch (error) {
-        console.error('Failed to generate OG image:', error)
+        this.error(`Failed to generate OG image: ${error instanceof Error ? error.message : String(error)}`)
       }
     },
     generateBundle() {
@@ -101,7 +99,7 @@ export function buildAssetsPlugin(ogOptions: OGImagePluginOptions = {}, siteConf
         this.info(`Generated RSS feed with ${sortedPhotos.length} photos`)
         this.info(`Generated sitemap with ${sortedPhotos.length + 1} URLs`)
       } catch (error) {
-        console.error('Error generating RSS feed and sitemap:', error)
+        this.error(`Error generating RSS feed and sitemap: ${error instanceof Error ? error.message : String(error)}`)
       }
     },
     transformIndexHtml: {

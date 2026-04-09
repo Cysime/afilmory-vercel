@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import sharp from 'sharp'
 
@@ -10,7 +10,7 @@ import { renderSVGText, wrapSVGText } from './svg-text-renderer.js'
 
 // 获取最新的照片
 async function getLatestPhotos(count = 4) {
-  const photos = buildTimePhotoLoader.getPhotos()
+  const photos = [...buildTimePhotoLoader.getPhotos()]
 
   // 按拍摄时间排序，获取最新的照片
   const sortedPhotos = photos.sort((a, b) => {
@@ -139,16 +139,27 @@ interface OGImageOptions {
   outputPath: string
   includePhotos?: boolean
   photoCount?: number
+  outputDir?: string
+  writeToDisk?: boolean
+}
+
+export interface GeneratedImageArtifact {
+  outputPath: string
+  buffer: Buffer
 }
 
 export async function generateOGImage(options: OGImageOptions) {
-  const { title, description, width = 1200, height = 630, outputPath, includePhotos = true, photoCount = 4 } = options
-
-  // 确保输出目录存在
-  const outputDir = join(process.cwd(), 'public')
-  if (!existsSync(outputDir)) {
-    mkdirSync(outputDir, { recursive: true })
-  }
+  const {
+    title,
+    description,
+    width = 1200,
+    height = 630,
+    outputPath,
+    includePhotos = true,
+    photoCount = 4,
+    outputDir = join(process.cwd(), 'public'),
+    writeToDisk = true,
+  } = options
 
   try {
     let finalImage: sharp.Sharp
@@ -343,12 +354,21 @@ export async function generateOGImage(options: OGImageOptions) {
     // 生成最终图片
     const buffer = await finalImage.png().toBuffer()
 
-    // 写入文件
-    const fullOutputPath = join(outputDir, outputPath)
-    writeFileSync(fullOutputPath, buffer)
+    if (writeToDisk) {
+      const fullOutputPath = join(outputDir, outputPath)
+      const fullOutputDir = dirname(fullOutputPath)
+      if (!existsSync(fullOutputDir)) {
+        mkdirSync(fullOutputDir, { recursive: true })
+      }
 
-    console.info(`✅ OG image generated: ${fullOutputPath}`)
-    return fullOutputPath
+      writeFileSync(fullOutputPath, buffer)
+      console.info(`✅ OG image generated: ${fullOutputPath}`)
+    }
+
+    return {
+      outputPath,
+      buffer,
+    } satisfies GeneratedImageArtifact
   } catch (error) {
     console.error('❌ Error generating OG image:', error)
     throw error
