@@ -2,7 +2,14 @@ import { lazy, Suspense } from 'react'
 import { Outlet } from 'react-router'
 
 import { useCommandPaletteShortcut } from './hooks/useCommandPaletteShortcut'
+import { installPhotoPagePrefetch } from './lib/photo-page-prefetch'
 import { RootProviders } from './providers/root-providers'
+
+declare global {
+  interface Window {
+    __AFILMORY_PHOTO_PAGE_PREFETCH_CLEANUP__?: () => void
+  }
+}
 
 const CommandPalette = lazy(() =>
   import('./components/gallery/CommandPalette').then((m) => ({ default: m.CommandPalette })),
@@ -11,39 +18,8 @@ const CommandPalette = lazy(() =>
 const photoPagePrefetch = import.meta.glob('./pages/(main)/photos/[photoId]/index.tsx', { eager: false })
 
 if (typeof window !== 'undefined') {
-  const moduleKey = './pages/(main)/photos/[photoId]/index.tsx'
-
-  let hasPrefetchedPhotoPage = false
-
-  const prefetchPhotoPage = () => {
-    if (hasPrefetchedPhotoPage) {
-      return
-    }
-
-    hasPrefetchedPhotoPage = true
-    void photoPagePrefetch[moduleKey]?.()
-    window.removeEventListener('pointerover', onPhotoLinkIntent, true)
-    window.removeEventListener('focusin', onPhotoLinkIntent, true)
-  }
-
-  const onPhotoLinkIntent = (event: Event) => {
-    const { target } = event
-
-    if (!(target instanceof Element)) {
-      return
-    }
-
-    const link = target.closest('a[href]')
-    const href = link?.getAttribute('href')
-    if (!href?.startsWith('/photos/')) {
-      return
-    }
-
-    prefetchPhotoPage()
-  }
-
-  window.addEventListener('pointerover', onPhotoLinkIntent, { capture: true, passive: true })
-  window.addEventListener('focusin', onPhotoLinkIntent, true)
+  window.__AFILMORY_PHOTO_PAGE_PREFETCH_CLEANUP__?.()
+  window.__AFILMORY_PHOTO_PAGE_PREFETCH_CLEANUP__ = installPhotoPagePrefetch(photoPagePrefetch)
 }
 
 function App() {

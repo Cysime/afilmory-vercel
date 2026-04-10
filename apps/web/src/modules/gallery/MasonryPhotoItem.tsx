@@ -13,6 +13,11 @@ import {
   TablerAperture,
 } from '~/icons'
 import { isMobileDevice } from '~/lib/device-viewport'
+import {
+  getGalleryThumbnailCacheKey,
+  hasLoadedGalleryThumbnail,
+  markGalleryThumbnailLoaded,
+} from '~/lib/gallery-thumbnail-cache'
 import { getImageFormat } from '~/lib/image-utils'
 import type { PhotoManifest } from '~/types/photo'
 
@@ -25,6 +30,8 @@ export const MasonryPhotoItem = memo(
     const [imageError, setImageError] = useState(false)
 
     const imageRef = useRef<HTMLImageElement>(null)
+    const thumbnailCacheKey = getGalleryThumbnailCacheKey(data.id, data.thumbnailUrl)
+    const hasLoadedThumbnailBefore = hasLoadedGalleryThumbnail(thumbnailCacheKey)
 
     const {
       videoRef,
@@ -40,9 +47,10 @@ export const MasonryPhotoItem = memo(
     useEffect(() => {
       setImageLoaded(false)
       setImageError(false)
-    }, [data.id])
+    }, [thumbnailCacheKey])
 
     const handleImageLoad = () => {
+      markGalleryThumbnailLoaded(thumbnailCacheKey)
       setImageLoaded(true)
     }
 
@@ -114,6 +122,7 @@ export const MasonryPhotoItem = memo(
     }
 
     const exifData = formatExifData()
+    const shouldShowImageDetails = imageLoaded || hasLoadedThumbnailBefore
 
     // 使用通用的图片格式提取函数
     const imageFormat = getImageFormat(data.originalUrl || data.s3Key || '')
@@ -142,7 +151,6 @@ export const MasonryPhotoItem = memo(
             ref={imageRef}
             src={data.thumbnailUrl}
             alt={data.title}
-            loading="lazy"
             className={clsx('absolute inset-0 h-full w-full object-cover duration-300 group-hover:scale-105')}
             onLoad={handleImageLoad}
             onError={handleImageError}
@@ -208,7 +216,7 @@ export const MasonryPhotoItem = memo(
         )}
 
         {/* 图片信息和 EXIF 覆盖层 */}
-        {imageLoaded && (
+        {shouldShowImageDetails && (
           <div className="pointer-events-none">
             {/* 渐变背景 - 独立的层 */}
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
