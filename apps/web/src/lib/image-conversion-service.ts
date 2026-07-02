@@ -3,7 +3,7 @@ import type {
   ImageCacheResult,
   RegularImageCache,
 } from "~/lib/image-cache-service";
-import { imageConverterManager } from "~/lib/image-convert";
+import { ImageConverterManager } from "~/lib/image-convert";
 import type {
   ImageLoadResult,
   LoadingCallbacks,
@@ -14,7 +14,17 @@ function createRegularImageCacheKey(url: string): string {
 }
 
 export class ImageConversionService {
-  constructor(private readonly regularImageCache: RegularImageCache) {}
+  private readonly imageConverterManager: ImageConverterManager;
+
+  constructor(
+    private readonly regularImageCache: RegularImageCache,
+    imageConverterManager?: ImageConverterManager,
+  ) {
+    // 转换管理器不再是模块级单例：生产路径由 createAppRuntime 注入 runtime 级实例
+    // （并发管道、pending 任务去重随 runtime 隔离）；未注入时按实例新建，方便测试隔离。
+    this.imageConverterManager =
+      imageConverterManager ?? new ImageConverterManager();
+  }
 
   getCachedRegularImage(
     originalUrl: string,
@@ -44,7 +54,7 @@ export class ImageConversionService {
     callbacks: LoadingCallbacks,
   ): Promise<ImageLoadResult> {
     try {
-      const conversionResult = await imageConverterManager.convertImage(
+      const conversionResult = await this.imageConverterManager.convertImage(
         blob,
         originalUrl,
         callbacks,

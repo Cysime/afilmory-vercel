@@ -41,9 +41,11 @@ function sanitizeStoragePath(value: string | undefined | null): string {
 export function createStorageKeyNormalizer(
   storageConfig: StorageConfig,
 ): (key: string) => string {
-  let basePrefix = "";
-
-  basePrefix = sanitizeStoragePath(storageConfig.prefix);
+  // 只有 S3 配置有 prefix；本地文件系统的 key 本来就是相对 basePath 的路径。
+  // 用 "prefix" in 而不是判别字段，兼容缺失 provider 的历史配置对象。
+  const basePrefix = sanitizeStoragePath(
+    "prefix" in storageConfig ? storageConfig.prefix : undefined,
+  );
 
   const prefixWithSlash = basePrefix ? `${basePrefix}/` : "";
 

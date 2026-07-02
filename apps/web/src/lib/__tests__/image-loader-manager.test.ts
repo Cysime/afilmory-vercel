@@ -17,8 +17,9 @@ vi.mock("~/lib/file-type", () => ({
 }));
 
 vi.mock("~/lib/image-convert", () => ({
-  imageConverterManager: {
-    convertImage: vi.fn(async () => null),
+  // 单例已移除：ImageConversionService 现在按实例持有 ImageConverterManager。
+  ImageConverterManager: class {
+    convertImage = vi.fn(async () => null);
   },
 }));
 

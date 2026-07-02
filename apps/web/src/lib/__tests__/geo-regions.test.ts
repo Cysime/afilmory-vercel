@@ -1,5 +1,5 @@
 import type { LocationAdminInfo, PhotoManifestItem } from "@afilmory/schema";
-import { buildGeoRegionId, photoMatchesGeoFilters } from "@afilmory/schema";
+import { buildGeoRegionId, photoMatchesGeoFilters } from "@afilmory/schema/geo";
 import { describe, expect, it } from "vitest";
 
 import { createGeographicRegions, getRegionDisplayName } from "../geo-regions";

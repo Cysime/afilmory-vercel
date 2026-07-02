@@ -1,6 +1,6 @@
 import { logger } from "../../logger/index.js";
 import type { StorageObject } from "../../storage/interfaces.js";
-import { isSupportedImageKey } from "../../storage/providers/s3-provider.js";
+import { isSupportedImageKey } from "../../storage/supported-formats.js";
 import type { BuildSession } from "./session.js";
 
 export interface SourceScanResult {

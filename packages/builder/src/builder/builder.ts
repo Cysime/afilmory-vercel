@@ -13,7 +13,7 @@ import type {
   BuilderPluginEventPayloads,
 } from "../plugins/types.js";
 import type { StorageConfig } from "../storage/index.js";
-import { StorageManager } from "../storage/index.js";
+import { normalizeStorageConfig, StorageManager } from "../storage/index.js";
 import type { BuilderConfig, UserBuilderSettings } from "../types/config.js";
 import type { AfilmoryManifest, ManifestSource } from "../types/manifest.js";
 import type { BuilderOptions, BuilderResult } from "../types/options.js";
@@ -314,14 +314,25 @@ export class AfilmoryBuilder {
 
   private getManifestSource(): ManifestSource {
     const storage = this.getStorageConfig();
-    return {
-      provider: "s3",
-      bucket: storage.bucket,
-      region: storage.region,
-      endpoint: storage.endpoint,
-      prefix: storage.prefix,
-      customDomain: storage.customDomain,
-    };
+    switch (storage.provider) {
+      case "s3": {
+        return {
+          provider: "s3",
+          bucket: storage.bucket,
+          region: storage.region,
+          endpoint: storage.endpoint,
+          prefix: storage.prefix,
+          customDomain: storage.customDomain,
+        };
+      }
+      case "local": {
+        // schema 的 ManifestSource 目前只建模 s3 / unknown 两种来源
+        // （@afilmory/schema 的 normalizeSource 也会把任何非 s3 provider 归一成
+        // unknown）。在 schema 增加 local 变体之前，本地文件系统源如实记录为
+        // unknown，而不是像旧代码那样硬编码谎报成 s3。
+        return { provider: "unknown" };
+      }
+    }
   }
 
   private logBuildStart(): void {
@@ -338,6 +349,12 @@ export class AfilmoryBuilder {
         logger.main.info(`🌐 自定义域名：${customDomain}`);
         logger.main.info(`🪣 存储桶：${bucket}`);
         logger.main.info(`📂 前缀：${prefix}`);
+        break;
+      }
+      case "local": {
+        logger.main.info("🚀 开始从本地文件系统获取照片列表...");
+        logger.main.info(`📂 照片目录：${storage.basePath}`);
+        logger.main.info(`🌐 公共 URL 前缀：${storage.baseUrl ?? "/photos"}`);
         break;
       }
     }
@@ -488,7 +505,9 @@ export class AfilmoryBuilder {
         "Storage configuration is missing. 请配置 system/user storage 设置。",
       );
     }
-    return storage;
+    // 兜底缺失的 provider 判别字段（历史配置默认 s3），使 getManifestSource /
+    // logBuildStart 的 switch 与 StorageManager 看到同一份归一化配置。
+    return normalizeStorageConfig(storage);
   }
 
   /**

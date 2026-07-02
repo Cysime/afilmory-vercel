@@ -5,6 +5,8 @@ import { createContext, use } from "react";
 import { PhotoRepository } from "~/data-runtime/photo-repository";
 import type { RegularImageCache } from "~/lib/image-cache-service";
 import { createRegularImageCache } from "~/lib/image-cache-service";
+import { ImageConversionService } from "~/lib/image-conversion-service";
+import { ImageConverterManager } from "~/lib/image-convert";
 import { ImageLoaderManager } from "~/lib/image-loader-manager";
 
 import type { AfilmoryBrowserRuntime } from "./browser-runtime";
@@ -58,10 +60,21 @@ export interface ImageLoadingService {
 class RuntimeImageLoadingService implements ImageLoadingService {
   private readonly loaders = new Set<ImageLoaderManager>();
 
-  constructor(private readonly imageCache: RegularImageCache) {}
+  constructor(
+    private readonly imageCache: RegularImageCache,
+    private readonly imageConverter: ImageConverterManager,
+  ) {}
 
   createLoader(): ImageLoaderManager {
-    const loader = new ImageLoaderManager(this.imageCache);
+    // 所有 loader 共享同一个 runtime 级转换管理器：
+    // 并发管道与 pending 任务去重在 runtime 内共享（与旧的全局单例行为一致），
+    // 但不同 runtime 之间相互隔离，dispose 后随 runtime 一起被回收。
+    const loader = new ImageLoaderManager(this.imageCache, {
+      imageConversionService: new ImageConversionService(
+        this.imageCache,
+        this.imageConverter,
+      ),
+    });
     this.loaders.add(loader);
     return loader;
   }
@@ -83,6 +96,7 @@ export type AppRuntime = {
   bodyScrollLock: BodyScrollLockManager;
   browser: AfilmoryBrowserRuntime;
   imageCache: RegularImageCache;
+  imageConverter: ImageConverterManager;
   imageLoading: ImageLoadingService;
   photoRepository: PhotoRepository;
   store: ReturnType<typeof createStore>;
@@ -98,12 +112,17 @@ export function createAppRuntime({
 }): AppRuntime {
   const bodyScrollLock = new BodyScrollLockManager();
   const imageCache = createRegularImageCache();
-  const imageLoading = new RuntimeImageLoadingService(imageCache);
+  const imageConverter = new ImageConverterManager();
+  const imageLoading = new RuntimeImageLoadingService(
+    imageCache,
+    imageConverter,
+  );
 
   return {
     bodyScrollLock,
     browser: browserRuntime,
     imageCache,
+    imageConverter,
     imageLoading,
     photoRepository: new PhotoRepository(manifest),
     store: createStore(),

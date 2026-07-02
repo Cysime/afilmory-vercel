@@ -4,7 +4,7 @@ import {
   getPhotoAdminForLevel,
   getRegionAdminPath,
   normalizeDisplayValue,
-} from "@afilmory/schema";
+} from "@afilmory/schema/geo";
 
 import type {
   GeographicRegion,

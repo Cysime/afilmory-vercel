@@ -6,11 +6,12 @@ import { fileURLToPath } from "node:url";
 
 import sharp from "sharp";
 
-import { buildTimePhotoLoader } from "./photo-loader.js";
-import { renderSVGText, wrapSVGText } from "./svg-text-renderer.js";
+import { buildTimePhotoLoader } from "./photo-loader.ts";
+import { renderSVGText, wrapSVGText } from "./svg-text-renderer.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const monorepoRoot = resolve(__dirname, "..");
+// packages/build-assets/src -> 仓库根需要上跳三层（原先在根 scripts/ 时是一层）
+const monorepoRoot = resolve(__dirname, "../../..");
 const webPublicDir = join(monorepoRoot, "apps/web/public");
 
 // 获取最新的照片

@@ -62,6 +62,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@afilmory/build-assets": "workspace:*",
     "@egoist/tailwindcss-icons": "catalog:",
     "@iconify-json/mingcute": "catalog:",
     "@iconify-json/ri": "^1.2.6",

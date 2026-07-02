@@ -1,8 +1,28 @@
-# S3 存储提供商
+# 存储提供商
 
-本项目的静态站点配置只面向 S3 兼容对象存储。原始照片保留在 S3 或兼容服务中，Builder 在构建期读取源对象、生成缩略图和 manifest；生产部署不会打包原图。
+`StorageConfig` 是以 `provider` 字段判别的联合类型，`StorageManager` 据此分发到具体实现：
 
-## 配置来源
+- `provider: "s3"` → `S3StorageProvider`（默认；历史配置缺失 `provider` 字段时由 `normalizeStorageConfig` 兜底成 `"s3"`）
+- `provider: "local"` → `LocalFileSystemProvider`（零凭据的本地文件系统源）
+
+两个 provider 共享的逻辑放在 provider 中立的模块里，避免第二个实现出现后规则漂移：
+
+- `../supported-formats.ts`：`isSupportedImageKey` 扩展名谓词（`listImages`、Live Photo 配对、`SourceScanner` 共用）。
+- `../live-photo.ts`：`detectLivePhotoPairs` 纯 key 配对逻辑。
+- `../exclude-regex.ts`：`excludeRegex` 的宽容编译（无效正则告警并忽略，不崩构建）。
+
+## 排除逻辑的分层约定
+
+排除分两层，各司其职（不要在 provider 里重复实现另一层）：
+
+1. **provider 层**：只应用自身配置里的静态 `excludeRegex`（S3 / local 语义对等），在列举时生效；`listObjectKeys` 按契约不应用任何排除。
+2. **manager 层**：`StorageManager.excludeFilters`（`addExcludeFilter` / `addExcludePrefix`）是跨 provider 的动态过滤，例如 thumbnail-storage 插件排除远端缩略图前缀。
+
+## S3 提供商（`s3-provider.ts`）
+
+本仓库默认的静态站点配置面向 S3 兼容对象存储。原始照片保留在 S3 或兼容服务中，Builder 在构建期读取源对象、生成缩略图和 manifest；生产部署不会打包原图。
+
+### 配置来源
 
 根目录 `builder.config.ts` 使用：
 
@@ -30,7 +50,7 @@ storage: {
 }
 ```
 
-## 环境变量
+### 环境变量
 
 Builder 刷新 manifest 时必需：
 
@@ -50,7 +70,7 @@ Builder 刷新 manifest 时必需：
 | `S3_CUSTOM_DOMAIN` | 空                                   | 生成公开 URL 时使用的 CDN 域 |
 | `S3_EXCLUDE_REGEX` | 空                                   | 排除对象 key 的正则表达式    |
 
-## 支持的服务
+### 支持的服务
 
 只要兼容 AWS S3 API 即可，包括：
 
@@ -62,7 +82,7 @@ Builder 刷新 manifest 时必需：
 
 不同 provider 的 endpoint 和公开 URL 规则可能不同。若配置了 `S3_CUSTOM_DOMAIN`，公开 URL 会优先使用该域名。
 
-## Public URL 生成规则
+### Public URL 生成规则
 
 `S3StorageProvider.generatePublicUrl(key)`：
 
@@ -73,24 +93,7 @@ Builder 刷新 manifest 时必需：
 
 所有 key 会按 URL path segment 安全编码。
 
-## 扫描与过滤
-
-- `listImages()` 只返回支持的图片扩展名。
-- 支持格式定义在 `packages/builder/src/constants/index.ts`：
-  `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.tiff`, `.tif`, `.heic`, `.heif`, `.hif`。
-- `S3_PREFIX` 限制扫描前缀。
-- `S3_EXCLUDE_REGEX` 可排除某些 key，例如 `.*\.txt$`。
-- `maxFileLimit` 可在配置中限制扫描数量。
-
-## Live Photo 检测
-
-S3 provider 会在对象列表中按同目录、同基础文件名匹配图片和视频：
-
-- 图片扩展名来自支持图片格式。
-- 视频扩展名包括 `.mov` 和 `.mp4`。
-- 匹配结果用于 manifest 的 `video: { type: "live-photo", ... }`。
-
-## 网络和重试
+### 网络和重试
 
 下载单个对象时会使用：
 
@@ -99,13 +102,50 @@ S3 provider 会在对象列表中按同目录、同基础文件名匹配图片�
 - `maxAttempts` 和标准 backoff 控制重试。
 - 大文件会输出内存压力警告。
 
+## 本地文件系统提供商（`local-provider.ts`）
+
+`provider: "local"` 以 `basePath` 为根递归扫描照片源目录，不需要任何对象存储凭据：
+
+```ts
+storage: {
+  provider: "local",
+  basePath: path.resolve(__dirname, "photos"),
+  // baseUrl: "/photos",        // originalUrl 前缀，默认 "/photos"
+  // excludeRegex: "^drafts/",  // 语义与 S3 的 excludeRegex 对等
+}
+```
+
+- **key**：相对 `basePath` 的 posix 路径（与 S3 key 语义一致），列举结果按 key 稳定排序。
+- **StorageObject 元数据**：`size` / `lastModified` 来自 `fs.stat`；`etag` 是由 stat 派生的弱 etag（`mtimeMs-size`），不做内容哈希——它诚实地只声明"stat 变了"，用于兜住 `needsUpdate` 的 mtime "变新才算变" 判定漏掉的同尺寸回滚场景。
+- **公开 URL**：`baseUrl`（默认 `/photos`）+ 编码后的 key。dev 下 `apps/web/plugins/vite/photos-static.ts` 按同一约定把 `/photos/*` 映射到仓库根的 `photos/` 目录，因此 manifest 里的 originalUrl 开箱即用。
+- **Live Photo / 图片过滤**：与 S3 共用 `live-photo.ts` 与 `supported-formats.ts`。
+- **uploadFile / deleteFile**：写入/删除 `basePath` 下的文件；本地文件系统没有对象元数据，`contentType` / `cacheControl` 会被忽略；删除不存在的 key 与 S3 一样静默成功。
+- **安全**：所有 key 解析后必须仍在 `basePath` 内，越界 key 一律拒绝。
+
+## 扫描与过滤（两个 provider 通用）
+
+- `listImages()` 只返回支持的图片扩展名。
+- 支持格式定义在 `packages/builder/src/constants/index.ts`：
+  `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.tiff`, `.tif`, `.heic`, `.heif`, `.hif`。
+- `excludeRegex` 可排除某些 key，例如 `.*\.txt$`。
+- S3 专属：`S3_PREFIX` 限制扫描前缀，`maxFileLimit` 限制扫描数量。
+
+## Live Photo 检测
+
+`detectLivePhotoPairs`（两个 provider 共用）在对象列表中按同目录、同基础文件名匹配图片和视频：
+
+- 图片扩展名来自支持图片格式。
+- 视频扩展名为 `.mov`。
+- 分组内先按 key 稳定排序，配对结果与列举顺序无关。
+- 匹配结果用于 manifest 的 `video: { type: "live-photo", ... }`。
+
 ## 构建缓存
 
-`REPO_URL`/`REPO_TOKEN` 只用于缓存生成的 manifest 和缩略图，帮助 CI 增量构建。它不是照片存储方式，也不会改变 S3 provider 的源对象读取逻辑。
+`REPO_URL`/`REPO_TOKEN` 只用于缓存生成的 manifest 和缩略图，帮助 CI 增量构建。它不是照片存储方式，也不会改变 provider 的源对象读取逻辑。
 
 ## 常见问题
 
-- **缺少 S3 凭据**：`precheck` 会在已有 `generated/photos-manifest.json` 时复用 manifest；没有 manifest 时构建失败。
+- **缺少 S3 凭据**：`precheck` 会在已有 `generated/photos-manifest.json` 时复用 manifest；没有 manifest 时构建失败。想完全绕开凭据，用 `provider: "local"`。
 - **URL 不是预期 CDN 域名**：确认 `S3_CUSTOM_DOMAIN` 是否设置，且不要在 key 中重复写 CDN path。
-- **照片没有出现在 manifest**：检查扩展名、`S3_PREFIX` 和 `S3_EXCLUDE_REGEX`。
+- **照片没有出现在 manifest**：检查扩展名、`S3_PREFIX` 和 `excludeRegex`。
 - **首次构建慢**：首次需要下载和处理全部照片，后续会基于现有 manifest 增量复用。

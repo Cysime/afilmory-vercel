@@ -4,13 +4,12 @@ import { writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import sharp from "sharp";
-
 import {
   measureSVGText,
   renderSVGText,
   wrapSVGText,
-} from "./svg-text-renderer.js";
+} from "@afilmory/build-assets";
+import sharp from "sharp";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const monorepoRoot = resolve(__dirname, "..");

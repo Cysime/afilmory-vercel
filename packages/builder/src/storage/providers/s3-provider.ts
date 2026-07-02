@@ -1,5 +1,3 @@
-import path from "node:path";
-
 import type {
   _Object,
   DeleteObjectCommandOutput,
@@ -14,11 +12,11 @@ import {
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 
-import { SUPPORTED_FORMATS } from "../../constants/index.js";
 import { logger } from "../../logger/index.js";
 import { createS3Client } from "../../s3/client.js";
 import { backoffDelay, sleep } from "../../utils/backoff.js";
 import { Semaphore } from "../../utils/semaphore.js";
+import { compileExcludeRegex } from "../exclude-regex.js";
 import type {
   ProgressCallback,
   S3Config,
@@ -26,6 +24,8 @@ import type {
   StorageProvider,
   StorageUploadOptions,
 } from "../interfaces";
+import { detectLivePhotoPairs } from "../live-photo.js";
+import { isSupportedImageKey } from "../supported-formats.js";
 import { encodeStorageKeyForUrl, joinPublicUrl } from "../url.js";
 
 export interface S3SendOptions {
@@ -56,14 +56,6 @@ export interface S3ClientLike {
       options?: S3SendOptions,
     ): Promise<DeleteObjectCommandOutput>;
   };
-}
-
-// 「是否为受支持的图片」的唯一事实来源：按扩展名判断。
-// provider 的 listImages / detectLivePhotos 与 SourceScanner 的本地派生共用此谓词，
-// 避免多处扩展名过滤逻辑漂移。
-export function isSupportedImageKey(key: string | undefined): key is string {
-  if (!key) return false;
-  return SUPPORTED_FORMATS.has(path.extname(key).toLowerCase());
 }
 
 // 将 AWS S3 对象转换为通用存储对象
@@ -211,25 +203,23 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   // 编译并缓存 S3_EXCLUDE_REGEX。无效正则不应崩掉整个构建——记录告警并忽略。
+  // 注意分层约定：provider 只应用自身配置里的静态 excludeRegex；跨 provider 的
+  // 动态过滤由 StorageManager.excludeFilters 统一负责（见 manager.ts）。
   private excludeRegexCache: RegExp | null | undefined;
 
   private getExcludeRegex(): RegExp | null {
     if (this.excludeRegexCache !== undefined) {
       return this.excludeRegexCache;
     }
-    if (!this.config.excludeRegex) {
-      this.excludeRegexCache = null;
-      return null;
-    }
-    try {
-      this.excludeRegexCache = new RegExp(this.config.excludeRegex);
-    } catch (error) {
-      logger.s3.warn(
-        `S3_EXCLUDE_REGEX 无效，已忽略：${this.config.excludeRegex}`,
-        error,
-      );
-      this.excludeRegexCache = null;
-    }
+    this.excludeRegexCache = compileExcludeRegex(
+      this.config.excludeRegex,
+      (error) => {
+        logger.s3.warn(
+          `S3_EXCLUDE_REGEX 无效，已忽略：${this.config.excludeRegex}`,
+          error,
+        );
+      },
+    );
     return this.excludeRegexCache;
   }
 
@@ -344,45 +334,8 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   detectLivePhotos(allObjects: StorageObject[]): Map<string, StorageObject> {
-    const livePhotoMap = new Map<string, StorageObject>(); // image key -> video object
-
-    // 按目录和基础文件名分组所有文件
-    const fileGroups = new Map<string, StorageObject[]>();
-
-    for (const obj of allObjects) {
-      if (!obj.key) continue;
-
-      const dir = path.dirname(obj.key);
-      const basename = path.parse(obj.key).name;
-      const groupKey = `${dir}/${basename}`;
-
-      if (!fileGroups.has(groupKey)) {
-        fileGroups.set(groupKey, []);
-      }
-      fileGroups.get(groupKey)!.push(obj);
-    }
-
-    // 在每个分组中寻找图片 + 视频配对。先按 key 稳定排序，使配对结果与 S3 列举
-    // 顺序无关（否则同名多图时"最后一个胜出"会随列举顺序漂移）。
-    for (const files of fileGroups.values()) {
-      const sorted = files
-        .filter((file) => file.key)
-        .sort((a, b) => String(a.key).localeCompare(String(b.key)));
-
-      const imageFile =
-        sorted.find((file) => isSupportedImageKey(file.key)) ?? null;
-      const videoFile =
-        sorted.find(
-          (file) => file.key && path.extname(file.key).toLowerCase() === ".mov",
-        ) ?? null;
-
-      // 如果找到配对，记录为 live photo
-      if (imageFile?.key && videoFile) {
-        livePhotoMap.set(imageFile.key, videoFile);
-      }
-    }
-
-    return livePhotoMap;
+    // 配对逻辑是纯 key 运算，与本地文件系统 provider 共用（见 live-photo.ts）。
+    return detectLivePhotoPairs(allObjects);
   }
 
   async deleteFile(key: string): Promise<void> {

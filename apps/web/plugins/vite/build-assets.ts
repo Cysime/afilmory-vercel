@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
+import { generateOGImage } from "@afilmory/build-assets";
 import type { PhotoManifestItem } from "@afilmory/schema";
 import { assertManifest } from "@afilmory/schema";
 import type { Plugin } from "vite";
 
-import { generateOGImage } from "../../../../scripts/generate-og-image.js";
+// site.config 是仓库根级配置（by design），保持相对路径引用
 import type { SiteConfig } from "../../../../site.config";
 import { MANIFEST_PATH } from "./__internal__/constants";
 import { generateRSSFeed } from "./rss";

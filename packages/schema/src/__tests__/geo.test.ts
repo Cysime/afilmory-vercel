@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import type { LocationAdminInfo, PhotoManifestItem } from "../index";
 import {
   buildGeoRegionId,
   getLanguageCandidates,
@@ -9,7 +8,8 @@ import {
   getRegionAdminPath,
   normalizeLocationInfoAdminAliases,
   photoMatchesGeoFilters,
-} from "../index";
+} from "../geo";
+import type { LocationAdminInfo, PhotoManifestItem } from "../index";
 
 const createPhoto = (
   id: string,

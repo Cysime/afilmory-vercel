@@ -1,5 +1,5 @@
 import type { PhotoManifestItem } from "@afilmory/schema";
-import { photoMatchesGeoFilters } from "@afilmory/schema";
+import { photoMatchesGeoFilters } from "@afilmory/schema/geo";
 import { atom, useAtom, useAtomValue, useSetAtom } from "jotai";
 import { use, useCallback, useEffect, useMemo } from "react";
 

@@ -206,7 +206,7 @@ apps/web/dist/
 - 构建期生成 Open Graph PNG。
 - 读取 manifest 生成 RSS feed 和 sitemap。
 - 将 meta tags 插入 `index.html`。
-- OG 图片由 `scripts/generate-og-image.ts` 使用 Sharp 和 SVG/text helpers 生成。
+- OG 图片由 `@afilmory/build-assets`（`packages/build-assets/src/generate-og-image.ts`）使用 Sharp 和 SVG/text helpers 生成。
 
 ### `createDependencyChunksPlugin`
 

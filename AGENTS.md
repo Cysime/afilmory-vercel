@@ -117,7 +117,7 @@ Manifest shape 来自 `@afilmory/schema`：
 - 单张照片包含 `id`、`originalUrl`、`thumbnailUrl`、`thumbHash`、`s3Key`、`exif`、`toneAnalysis`、`location`、可选 `video` 和 `isHDR`。
 - `parseManifest` 只接受 manifest v2；旧 schema 不做迁移，无法解析时返回空 manifest fallback。
 
-前端运行时不要直接读取构建脚本目录。使用 `apps/web/src/data-runtime/manifest-runtime.ts` 和 `photo-loader.ts`。
+前端运行时不要直接读取构建脚本目录。使用 `apps/web/src/data-runtime/manifest-runtime.ts`；构建期读 manifest 用 `@afilmory/build-assets` 的 `buildTimePhotoLoader`。
 
 ## 国际化
 
