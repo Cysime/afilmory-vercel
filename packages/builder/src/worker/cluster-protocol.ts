@@ -54,10 +54,9 @@ export interface WorkerStats {
 
 export interface WorkerInitMessage {
   type: "init";
-  sharedData: {
-    data: number[];
-    length: number;
-  };
+  // IPC 通道使用 advanced（v8 结构化克隆）序列化，Map/Date/Buffer 可原生传输，
+  // 因此这里直接携带共享数据本体，无需手动 v8.serialize -> number[] 的中转。
+  sharedData: ClusterWorkerSharedData;
 }
 
 export type ClusterWorkerMessage =

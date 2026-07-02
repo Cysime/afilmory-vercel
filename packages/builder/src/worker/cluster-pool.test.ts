@@ -1,10 +1,16 @@
+import { deserialize, serialize } from "node:v8";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setConsoleForwarding } from "../logger/index.js";
+import type { StorageObject } from "../storage/interfaces.js";
+import type { BuilderConfig } from "../types/config.js";
+import type { PhotoManifestItem } from "../types/photo.js";
 import { ClusterPool } from "./cluster-pool.js";
 import type {
   BatchTaskMessage,
   ClusterWorkerMessage,
+  ClusterWorkerSharedData,
   WorkerInitMessage,
 } from "./cluster-protocol.js";
 
@@ -234,6 +240,78 @@ describe("ClusterPool", () => {
     expect(
       worker.sentMessages.some((message) => message.type === "shutdown"),
     ).toBe(true);
+  });
+
+  it("enables advanced IPC serialization and sends shared data (Maps included) natively", async () => {
+    // 局部子集 cast 而非 as unknown 双重断言：字段名/类型仍受编译器约束
+    const sharedData: ClusterWorkerSharedData = {
+      existingManifestMap: new Map([
+        ["a.jpg", { id: "a" } as PhotoManifestItem],
+      ]),
+      livePhotoMap: new Map([["a.jpg", { key: "a.mov" } as StorageObject]]),
+      imageObjects: [
+        {
+          key: "a.jpg",
+          lastModified: new Date("2026-06-06T00:00:00.000Z"),
+        } as StorageObject,
+      ],
+      builderConfig: {
+        output: {
+          manifestPath: "/tmp/manifest.json",
+          thumbnailsDir: "/tmp/thumbnails",
+          originalsDir: "/tmp/originals",
+        },
+      } as BuilderConfig,
+      builderOptions: {
+        isForceMode: false,
+        isForceManifest: false,
+        isForceThumbnails: false,
+      },
+      photoIdCollisionKeys: ["dup.jpg"],
+    };
+
+    const pool = new ClusterPool<string>({
+      concurrency: 1,
+      sharedData,
+      totalTasks: 1,
+      workerConcurrency: 1,
+    });
+
+    const { run, worker } = await startReadyWorker(pool);
+
+    // IPC 通道必须启用 advanced（v8 结构化克隆）序列化，Map/Date 才能原生传输
+    expect(clusterMocks.setupPrimary).toHaveBeenCalledWith(
+      expect.objectContaining({ serialization: "advanced" }),
+    );
+
+    const initMessage = worker.sentMessages.find(
+      (message): message is WorkerInitMessage => message.type === "init",
+    );
+    expect(initMessage).toBeDefined();
+    // 共享数据直接发送，不再有 {data: number[], length} 的逐字节中转
+    expect(initMessage?.sharedData).toBe(sharedData);
+    expect(initMessage?.sharedData.existingManifestMap).toBeInstanceOf(Map);
+
+    // 用 v8 序列化往返模拟 advanced IPC 传输：Map/Date 必须原样还原
+    const roundTripped = deserialize(
+      serialize(initMessage?.sharedData),
+    ) as ClusterWorkerSharedData;
+    expect(roundTripped.existingManifestMap).toBeInstanceOf(Map);
+    expect([...roundTripped.existingManifestMap.entries()]).toEqual([
+      ["a.jpg", { id: "a" }],
+    ]);
+    expect(roundTripped.livePhotoMap).toBeInstanceOf(Map);
+    expect(roundTripped.livePhotoMap.get("a.jpg")).toEqual({ key: "a.mov" });
+    expect(roundTripped.imageObjects[0].lastModified).toBeInstanceOf(Date);
+
+    const batch = getLastBatchTaskMessage(worker);
+    worker.emitMessage({
+      results: [
+        { result: "photo-0", taskId: batch.tasks[0].taskId, type: "result" },
+      ],
+      type: "batch-result",
+    });
+    await expect(run).resolves.toEqual(["photo-0"]);
   });
 
   it("rejects and shuts down remaining workers when a worker exits unexpectedly", async () => {

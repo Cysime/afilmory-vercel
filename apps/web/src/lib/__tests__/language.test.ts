@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  detectPreferredLanguage,
+  getBrowserLanguageCandidates,
   getFallbackLanguages,
   normalizeDetectedLanguage,
   resolveSupportedLanguage,
@@ -35,5 +37,71 @@ describe("language helpers", () => {
     expect(getFallbackLanguages("zh")).toEqual(["zh-CN", "en"]);
     expect(getFallbackLanguages("en-US")).toEqual(["en"]);
     expect(getFallbackLanguages()).toEqual(["en"]);
+  });
+});
+
+describe("detectPreferredLanguage", () => {
+  it("picks the first candidate that resolves to a supported language", () => {
+    expect(detectPreferredLanguage(["fr-FR", "ja-JP", "en"], "en")).toBe("ja");
+    expect(detectPreferredLanguage(["zh-Hant-HK"], "en")).toBe("zh-HK");
+  });
+
+  it("normalizes the legacy jp alias to ja", () => {
+    expect(detectPreferredLanguage(["jp"], "en")).toBe("ja");
+  });
+
+  it("ignores empty or nullish candidates", () => {
+    expect(detectPreferredLanguage(["", null, undefined, "ko-KR"], "en")).toBe(
+      "ko",
+    );
+  });
+
+  it("falls back to the configured language when nothing matches", () => {
+    expect(detectPreferredLanguage(["fr-FR"], "zh")).toBe("zh-CN");
+    expect(detectPreferredLanguage([], "ja")).toBe("ja");
+  });
+
+  it("falls back to en when even the configured fallback is unsupported", () => {
+    expect(detectPreferredLanguage(["fr-FR"], "de")).toBe("en");
+    expect(detectPreferredLanguage([])).toBe("en");
+  });
+});
+
+describe("getBrowserLanguageCandidates", () => {
+  it("orders navigator languages before the htmlTag language", () => {
+    const languagesSpy = vi
+      .spyOn(navigator, "languages", "get")
+      .mockReturnValue(["ja-JP", "en-US"]);
+    const languageSpy = vi
+      .spyOn(navigator, "language", "get")
+      .mockReturnValue("ja-JP");
+    const previousHtmlLang = document.documentElement.lang;
+    document.documentElement.lang = "zh-CN";
+
+    try {
+      expect(getBrowserLanguageCandidates()).toEqual([
+        "ja-JP",
+        "en-US",
+        "ja-JP",
+        "zh-CN",
+      ]);
+    } finally {
+      languagesSpy.mockRestore();
+      languageSpy.mockRestore();
+      document.documentElement.lang = previousHtmlLang;
+    }
+  });
+
+  it("skips the htmlTag source when the attribute is empty", () => {
+    const previousHtmlLang = document.documentElement.lang;
+    document.documentElement.lang = "";
+
+    try {
+      const candidates = getBrowserLanguageCandidates();
+      expect(candidates.length).toBeGreaterThan(0);
+      expect(candidates).not.toContain("");
+    } finally {
+      document.documentElement.lang = previousHtmlLang;
+    }
   });
 });

@@ -107,6 +107,50 @@ describe("viewer photo resolution", () => {
     unmount();
   });
 
+  it("memoizes filterAndSortPhotos on (photos, setting) reference identity", () => {
+    const photos = [
+      createPhoto({ id: "a", tags: ["keep"] }),
+      createPhoto({ id: "b", tags: ["other"] }),
+    ];
+    const setting = { ...defaultGallerySetting, selectedTags: ["keep"] };
+
+    const first = filterAndSortPhotos(photos, setting);
+    const second = filterAndSortPhotos(photos, setting);
+
+    // 同引用重复调用必须返回同一个结果数组（引用相等）
+    expect(second).toBe(first);
+    expect(first.map((photo) => photo.id)).toEqual(["a"]);
+
+    // setting 引用变化（即使内容相同）要重算
+    const recomputed = filterAndSortPhotos(photos, { ...setting });
+    expect(recomputed).not.toBe(first);
+    expect(recomputed.map((photo) => photo.id)).toEqual(["a"]);
+
+    // photos 引用变化也要重算
+    const otherPhotos = [...photos];
+    const recomputedForPhotos = filterAndSortPhotos(otherPhotos, setting);
+    expect(recomputedForPhotos).not.toBe(first);
+    expect(recomputedForPhotos.map((photo) => photo.id)).toEqual(["a"]);
+  });
+
+  it("returns referentially equal results across getFilteredPhotos calls with stable runtime state", () => {
+    runtime.store.set(gallerySettingAtom, {
+      ...defaultGallerySetting,
+      selectedTags: ["keep"],
+    });
+
+    // layout.tsx 在同一个 effect 里连续调用 getViewerPhotos/getViewerSourceMode，
+    // 两次内部的 getFilteredPhotos 应命中备忘、返回同一数组
+    expect(getFilteredPhotos(runtime)).toBe(getFilteredPhotos(runtime));
+
+    runtime.store.set(gallerySettingAtom, { ...defaultGallerySetting });
+    const afterSettingChange = getFilteredPhotos(runtime);
+    expect(afterSettingChange.map((photo) => photo.id)).toEqual([
+      "visible-photo",
+      "hidden-photo",
+    ]);
+  });
+
   it("keeps the filtered viewer set when the requested photo is still visible", () => {
     runtime.store.set(gallerySettingAtom, {
       ...defaultGallerySetting,

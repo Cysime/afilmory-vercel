@@ -249,8 +249,13 @@ Original photos are not bundled into `apps/web/dist`; the manifest points to S3/
 # Development server. Runs precheck first.
 pnpm dev
 
-# Full static build: precheck, package builds, then Vite web build.
+# Full static build: precheck, then Vite web build. Workspace packages are
+# consumed from TypeScript source, so deployments never build package dist/.
 pnpm build
+
+# Publish-only: builds dist/ for @afilmory/builder and @afilmory/webgl-viewer
+# before `npm publish`. Not part of the deploy or CI build chain.
+pnpm build:packages
 
 # Refresh manifest and thumbnails only.
 pnpm build:manifest

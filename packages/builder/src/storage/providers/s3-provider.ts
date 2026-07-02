@@ -58,6 +58,14 @@ export interface S3ClientLike {
   };
 }
 
+// 「是否为受支持的图片」的唯一事实来源：按扩展名判断。
+// provider 的 listImages / detectLivePhotos 与 SourceScanner 的本地派生共用此谓词，
+// 避免多处扩展名过滤逻辑漂移。
+export function isSupportedImageKey(key: string | undefined): key is string {
+  if (!key) return false;
+  return SUPPORTED_FORMATS.has(path.extname(key).toLowerCase());
+}
+
 // 将 AWS S3 对象转换为通用存储对象
 function convertS3ObjectToStorageObject(s3Object: _Object): StorageObject {
   return {
@@ -235,13 +243,10 @@ export class S3StorageProvider implements StorageProvider {
 
     // 过滤出图片文件并转换为通用格式
     const imageObjects = objects
-      .filter((obj: _Object) => {
-        if (!obj.Key) return false;
-        if (this.isExcluded(obj.Key)) return false;
-
-        const ext = path.extname(obj.Key).toLowerCase();
-        return SUPPORTED_FORMATS.has(ext);
-      })
+      .filter(
+        (obj: _Object) =>
+          isSupportedImageKey(obj.Key) && !this.isExcluded(obj.Key),
+      )
       .map((obj) => convertS3ObjectToStorageObject(obj));
 
     return imageObjects;
@@ -365,11 +370,7 @@ export class S3StorageProvider implements StorageProvider {
         .sort((a, b) => String(a.key).localeCompare(String(b.key)));
 
       const imageFile =
-        sorted.find(
-          (file) =>
-            file.key &&
-            SUPPORTED_FORMATS.has(path.extname(file.key).toLowerCase()),
-        ) ?? null;
+        sorted.find((file) => isSupportedImageKey(file.key)) ?? null;
       const videoFile =
         sorted.find(
           (file) => file.key && path.extname(file.key).toLowerCase() === ".mov",

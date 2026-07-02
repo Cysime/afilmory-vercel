@@ -7,7 +7,7 @@ export const dependencyChunkGroups: DependencyChunkGroup[] = [
   },
   {
     name: "i18n",
-    patterns: ["i18next", "i18next-browser-languagedetector", "react-i18next"],
+    patterns: ["i18next", "react-i18next"],
   },
   {
     name: "motion",

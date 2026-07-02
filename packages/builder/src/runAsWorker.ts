@@ -1,5 +1,4 @@
 import process from "node:process";
-import { deserialize } from "node:v8";
 
 import type { BuilderOptions } from "./builder/builder.js";
 import { AfilmoryBuilder } from "./builder/builder.js";
@@ -47,16 +46,11 @@ export async function runAsWorker() {
   let pluginRunState: PluginRunState;
 
   // 初始化函数，从主进程接收共享数据
-  const initializeWorker = async (
-    serializedData: WorkerInitMessage["sharedData"],
-  ) => {
+  const initializeWorker = async (sharedData: ClusterWorkerSharedData) => {
     if (isInitialized) return;
 
-    // 将数组重新转换为 Buffer，然后反序列化
-    const buffer = Buffer.from(serializedData.data);
-    const sharedData = deserialize(buffer) as ClusterWorkerSharedData;
-
-    // 从主进程接收的共享数据中恢复数据结构（数据已经是正确的类型）
+    // IPC 通道使用 advanced（v8）序列化，Map 等结构已在传输层原生还原，
+    // 这里直接使用共享数据即可，无需手动 Buffer.from + v8.deserialize。
     imageObjects = sharedData.imageObjects;
     existingManifestMap = sharedData.existingManifestMap;
     livePhotoMap = sharedData.livePhotoMap;

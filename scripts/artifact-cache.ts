@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { assertManifest } from "@afilmory/schema";
 
-interface ArtifactCacheConfig {
+export interface ArtifactCacheConfig {
   cacheDir: string;
   repoBranch?: string;
   repoToken: string;
@@ -244,7 +244,10 @@ const ensureCacheReadme = async (
   );
 };
 
-const saveArtifacts = async (config: ArtifactCacheConfig): Promise<void> => {
+// Exported for tests (command sequence is verified with a spawn recorder).
+export const saveArtifacts = async (
+  config: ArtifactCacheConfig,
+): Promise<void> => {
   await cloneCacheRepository(config);
 
   const gitPaths = ["README.md"];
@@ -276,6 +279,7 @@ const saveArtifacts = async (config: ArtifactCacheConfig): Promise<void> => {
   );
   await run(config, "git", ["add", ...gitPaths], config.cacheDir);
 
+  // 与刚 fetch 下来的远端 HEAD 树比较：产物没变就跳过推送。
   const status = await run(
     config,
     "git",
@@ -287,6 +291,33 @@ const saveArtifacts = async (config: ArtifactCacheConfig): Promise<void> => {
     return;
   }
 
+  // 推送目标分支：优先显式配置；否则取 clone 检出的分支名。
+  // 用 symbolic-ref 而非 rev-parse，空仓库（unborn branch）下也能拿到分支名。
+  const branch =
+    config.repoBranch ||
+    (
+      await run(
+        config,
+        "git",
+        ["symbolic-ref", "--short", "HEAD"],
+        config.cacheDir,
+      )
+    ).trim();
+
+  // 缓存仓库只需要最新一份产物（README 里明确它不是照片备份仓库）。
+  // 若每次部署都在旧历史上追加一个装满二进制缩略图的 commit，远端会无限增长
+  // （GitHub 在 1GB 时告警）。所以这里改成生成单个 orphan commit 并 force-push，
+  // 让远端历史永远只有一个提交。restore 每次都是全新 --depth=1 clone，
+  // 感知不到历史被重写，因此对读取方是完全透明的。
+  await run(
+    config,
+    "git",
+    ["checkout", "--orphan", "afilmory-cache-tmp"],
+    config.cacheDir,
+  );
+  // orphan checkout 会保留 index，这里再 add --all 兜底，确保旧 HEAD
+  // 带下来的所有文件（含未在 gitPaths 里的历史文件）都进入新提交。
+  await run(config, "git", ["add", "--all"], config.cacheDir);
   await run(
     config,
     "git",
@@ -296,10 +327,12 @@ const saveArtifacts = async (config: ArtifactCacheConfig): Promise<void> => {
   await run(
     config,
     "git",
-    ["push", "--set-upstream", "origin", "HEAD"],
+    ["push", "--force", "origin", `HEAD:refs/heads/${branch}`],
     config.cacheDir,
   );
-  console.info("[artifact-cache] Remote cache updated.");
+  console.info(
+    "[artifact-cache] Remote cache updated (history reset to a single commit).",
+  );
 };
 
 const main = async (): Promise<void> => {

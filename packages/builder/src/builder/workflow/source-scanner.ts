@@ -1,5 +1,6 @@
 import { logger } from "../../logger/index.js";
 import type { StorageObject } from "../../storage/interfaces.js";
+import { isSupportedImageKey } from "../../storage/providers/s3-provider.js";
 import type { BuildSession } from "./session.js";
 
 export interface SourceScanResult {
@@ -30,7 +31,12 @@ export class SourceScanner {
       livePhotoMap,
     });
 
-    const imageObjects = await storageManager.listImages();
+    // 从已获取的 allObjects 本地派生图片列表（共用 isSupportedImageKey 谓词），
+    // 避免对存储桶做第二次全量 ListObjectsV2 分页；同时 allObjects 与 imageObjects
+    // 观察到的是同一份桶快照，不会因两次列举之间的写入而彼此不一致。
+    const imageObjects = allObjects.filter((object) =>
+      isSupportedImageKey(object.key),
+    );
     logger.main.info(`存储中找到 ${imageObjects.length} 张照片`);
 
     return {

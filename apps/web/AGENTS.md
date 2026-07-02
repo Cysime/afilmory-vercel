@@ -164,8 +164,9 @@ pnpm build
 根脚本实际步骤：
 
 1. `pnpm exec tsx apps/web/scripts/precheck.ts`
-2. `pnpm build:packages`
-3. `pnpm build:web`
+2. `pnpm build:web`
+
+workspace 包直接从 TS 源码消费，部署构建不运行 `pnpm build:packages`（它仅供 npm 发布）。
 
 `pnpm build:web` 只运行 Vite build，要求 manifest 已存在。`buildAssetsPlugin` 会读取 manifest 并生成 `feed.xml`、`sitemap.xml` 和 OG 图片。
 

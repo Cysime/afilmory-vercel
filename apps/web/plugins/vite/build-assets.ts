@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import type { PhotoManifestItem } from "@afilmory/schema";
@@ -46,26 +47,32 @@ export function buildAssetsPlugin(
     name: "build-assets",
     apply: "build",
     async buildStart() {
-      const timestamp = Date.now();
-      const fileName = `assets/og-image-${timestamp}.png`;
-
       try {
         const ogImage = await generateOGImage({
           title,
           description,
-          outputPath: fileName,
+          outputPath: "assets/og-image.png",
           includePhotos: true,
           photoCount: 4,
           writeToDisk: false,
         });
 
+        // 用内容哈希命名（与 data-inject 的 manifest 资产一致）：同样的输入产出
+        // 同样的 URL，构建可复现、CDN 缓存不再被 Date.now() 每次打穿。
+        // 注意保留 og-image- 前缀，pwa.ts 的 globIgnores '**/og-image-*.png' 依赖它。
+        const hash = createHash("sha256")
+          .update(ogImage.buffer)
+          .digest("hex")
+          .slice(0, 10);
+        const fileName = `assets/og-image-${hash}.png`;
+
         this.emitFile({
           type: "asset",
-          fileName: ogImage.outputPath,
+          fileName,
           source: ogImage.buffer,
         });
 
-        ogImagePath = `/${ogImage.outputPath}`;
+        ogImagePath = `/${fileName}`;
         this.info(`OG image generated: ${ogImagePath}`);
       } catch (error) {
         this.error(
@@ -149,7 +156,6 @@ export function buildAssetsPlugin(
     <!-- Additional meta tags -->
     <meta name="description" content="${safeDescription}" />
     <meta name="author" content="${safeSiteName}" />
-    <meta name="generator" content="Vite + React" />
     <meta name="robots" content="index, follow" />
     <meta name="theme-color" content="#0a0a0a" />
     <meta name="msapplication-TileColor" content="#0a0a0a" />
@@ -158,7 +164,7 @@ export function buildAssetsPlugin(
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
-            <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="shortcut icon" href="/favicon.ico" />
         `;
 

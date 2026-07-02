@@ -9,6 +9,7 @@ import { RouterProvider } from "react-router";
 import { BootstrapError } from "./components/common/BootstrapError";
 import { BootstrapReady } from "./components/common/BootstrapReady";
 import { loadManifestRuntime } from "./data-runtime/manifest-runtime";
+import { initialLanguageReady } from "./i18n";
 import { installCriticalRoutePreloads } from "./lib/critical-route-preload";
 import { markStartup } from "./lib/startup-metrics";
 import { createAppRouter } from "./router";
@@ -83,6 +84,9 @@ async function bootstrap() {
     const startupTasks: Promise<unknown>[] = [
       loadManifestRuntime(),
       criticalRoutesReady,
+      // 检测语言的翻译包与 manifest / 关键路由并行加载（en 为同步空操作），
+      // 首次渲染前就绪，非英文用户不会闪现英文兜底文案。
+      initialLanguageReady,
     ];
 
     if (import.meta.env.DEV && import.meta.env.MODE === "development") {

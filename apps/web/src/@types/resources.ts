@@ -1,35 +1,12 @@
 import en from "@locales/app/en.json";
-import jp from "@locales/app/jp.json";
-import ko from "@locales/app/ko.json";
-import zhCn from "@locales/app/zh-CN.json";
-import zhHk from "@locales/app/zh-HK.json";
-import zhTw from "@locales/app/zh-TW.json";
 
-import type { MainSupportedLanguages, ns } from "./constants";
+import type { ns } from "./constants";
 
+// 只静态打包英文作为永远可用的兜底文案；其余语言包在 bootstrap 阶段
+// 按检测到的语言动态加载（见 ~/i18n.ts 的 loadLanguageBundle），
+// 避免 6 份语言 JSON 全部进入首屏关键路径 chunk。
 export const resources = {
   en: {
     app: en,
   },
-  "zh-CN": {
-    app: zhCn,
-  },
-  "zh-HK": {
-    app: zhHk,
-  },
-  ja: {
-    app: jp,
-  },
-  jp: {
-    app: jp,
-  },
-  ko: {
-    app: ko,
-  },
-  "zh-TW": {
-    app: zhTw,
-  },
-} satisfies Record<
-  MainSupportedLanguages,
-  Record<(typeof ns)[number], Record<string, string>>
->;
+} satisfies Record<"en", Record<(typeof ns)[number], Record<string, string>>>;

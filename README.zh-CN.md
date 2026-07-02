@@ -239,8 +239,13 @@ pnpm install
 # 开发服务器。会先运行 precheck。
 pnpm dev
 
-# 完整静态构建：precheck、包构建、Vite Web 构建。
+# 完整静态构建：precheck，然后 Vite Web 构建。workspace 包直接从
+# TypeScript 源码消费，部署构建不需要预先构建包的 dist/。
 pnpm build
+
+# 仅供发布 npm 包使用：为 @afilmory/builder 和 @afilmory/webgl-viewer
+# 构建 dist/，部署与 CI 构建链均不依赖它。
+pnpm build:packages
 
 # 只刷新 manifest 和缩略图。
 pnpm build:manifest

@@ -3,7 +3,6 @@ import type { Worker } from "node:cluster";
 import cluster from "node:cluster";
 import { EventEmitter } from "node:events";
 import process from "node:process";
-import { serialize } from "node:v8";
 
 import type { Logger } from "../logger/index.js";
 import { logger } from "../logger/index.js";
@@ -158,6 +157,9 @@ export class ClusterPool<T> extends EventEmitter {
       exec: process.argv[1], // 使用当前脚本 (CLI) 作为 worker
       args: ["--cluster-worker"], // 传递 worker 标识参数
       silent: false,
+      // advanced = v8 结构化克隆序列化：Map/Date/Buffer 等可直接通过 IPC 传输，
+      // 共享数据无需手动 v8.serialize -> Array.from(buffer) -> JSON 的逐字节中转。
+      serialization: "advanced",
     });
 
     const { requiredWorkers, workersToStart } = calculateWorkersToStart({
@@ -268,23 +270,11 @@ export class ClusterPool<T> extends EventEmitter {
     if (stats && worker && !this.initializedWorkers.has(workerId)) {
       // 首次准备就绪时发送初始化数据，但不立即标记为 ready
       if (this.sharedData) {
-        // 使用 v8.serialize 序列化数据以保持类型完整性
-        const serializedBuffer = serialize({
-          existingManifestMap: this.sharedData.existingManifestMap,
-          livePhotoMap: this.sharedData.livePhotoMap,
-          imageObjects: this.sharedData.imageObjects,
-          builderConfig: this.sharedData.builderConfig,
-          builderOptions: this.sharedData.builderOptions,
-          photoIdCollisionKeys: this.sharedData.photoIdCollisionKeys,
-        });
-
-        // 将 Buffer 转换为数组以通过 IPC 传输
+        // IPC 通道已启用 advanced（v8）序列化，existingManifestMap / livePhotoMap
+        // 等 Map 结构可原生传输并在 worker 侧还原类型，直接发送共享数据本体。
         const initMessage: WorkerInitMessage = {
           type: "init",
-          sharedData: {
-            data: Array.from(serializedBuffer),
-            length: serializedBuffer.length,
-          },
+          sharedData: this.sharedData,
         };
         worker.send(initMessage);
         workerLogger.info(`发送初始化数据到 Worker ${workerId}`);

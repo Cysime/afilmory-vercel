@@ -7,4 +7,7 @@ export type {
   StorageUploadOptions,
 } from "./interfaces.js";
 export { StorageManager } from "./manager.js";
-export { S3StorageProvider } from "./providers/s3-provider.js";
+export {
+  isSupportedImageKey,
+  S3StorageProvider,
+} from "./providers/s3-provider.js";

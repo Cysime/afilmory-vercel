@@ -85,9 +85,9 @@ Builder 主流程使用 `packages/builder/src/builder/workflow` 分层：`BuildS
 根脚本以 `package.json` 为准：
 
 - `pnpm dev`: 运行 `apps/web/scripts/precheck.ts`，再启动 Vite dev server。
-- `pnpm build`: 运行 `precheck`，再运行 `pnpm build:packages` 和 `pnpm build:web`。
+- `pnpm build`: 运行 `precheck`，再运行 `pnpm build:web`。workspace 包直接从 TS 源码消费（exports 指向 `./src/index.ts`），部署构建不需要包的 dist/。
 - `pnpm build:manifest`: 设置 `BUILDER_CONFIG_PATH=builder.config.ts` 并运行 builder CLI。
-- `pnpm build:packages`: 构建 `@afilmory/builder` 和 `@afilmory/webgl-viewer`。
+- `pnpm build:packages`: 仅供 npm 发布使用，构建 `@afilmory/builder` 和 `@afilmory/webgl-viewer` 的 dist/；不在部署/CI 构建链上。
 - `pnpm build:web`: 只构建前端，要求 manifest 已存在。
 - `pnpm preview`: 预览 `apps/web/dist`。
 
