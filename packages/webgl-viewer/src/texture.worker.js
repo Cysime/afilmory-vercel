@@ -70,11 +70,6 @@ self.onmessage = async (e) => {
       }
       break;
     }
-    case "init": {
-      originalImage = payload.imageBitmap;
-      self.postMessage({ type: "init-done" });
-      break;
-    }
     case "create-tile": {
       if (!originalImage) {
         console.warn("Worker has not been initialized with an image.");

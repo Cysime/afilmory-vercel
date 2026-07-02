@@ -250,6 +250,9 @@ pnpm build:web
 
 # 本地预览 apps/web/dist。
 pnpm preview
+
+# 重新生成 favicon 资源到 apps/web/public。
+pnpm generate:favicon
 ```
 
 运行 `pnpm preview` 后打开 http://localhost:4173。

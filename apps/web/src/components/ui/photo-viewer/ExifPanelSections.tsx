@@ -8,7 +8,7 @@ import {
   CarbonIsoOutline,
   MaterialSymbolsExposure,
   MaterialSymbolsShutterSpeed,
-  StreamlineImageAccessoriesLensesPhotosCameraShutterPicturePhotographyPicturesPhotoLens,
+  StreamlineImageAccessoriesLensesPhotosCameraShutterPicturePhotographyPicturesPhotoLens as LensIcon,
   TablerAperture,
 } from "~/icons";
 
@@ -120,9 +120,7 @@ function CaptureParameterBadges({
       <div className="grid grid-cols-2 gap-2">
         {formattedExifData.focalLength35mm && (
           <ExifBadge
-            icon={
-              <StreamlineImageAccessoriesLensesPhotosCameraShutterPicturePhotographyPicturesPhotoLens className="text-sm text-white/70" />
-            }
+            icon={<LensIcon className="text-sm text-white/70" />}
             value={`${formattedExifData.focalLength35mm}mm`}
           />
         )}

@@ -43,7 +43,7 @@ The root `builder.config.ts` is the source of truth for this repository:
 - `storage.endpoint`: `S3_ENDPOINT`, defaulted by `env.ts`
 - `storage.customDomain`: optional CDN/public domain
 
-The documented and implemented deployment path is S3-only. Future photo-source support should be added through a typed `PhotoSourceAdapter`, not through a global storage registry.
+The documented and implemented deployment path is S3-only. Future photo-source support should be added as a new `StorageProvider` implementation, not through a global storage registry.
 
 ## CLI Usage
 

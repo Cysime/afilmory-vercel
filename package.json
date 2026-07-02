@@ -17,6 +17,7 @@
     "build:web": "pnpm --filter @afilmory/web build",
     "dev": "pnpm --filter @afilmory/web dev",
     "format": "prettier --write \"apps/**/*.{ts,tsx,js,jsx,json,css,md}\" \"packages/**/*.{ts,tsx,js,jsx,json,css,md}\"",
+    "generate:favicon": "tsx scripts/generate-favicon.ts",
     "lint": "eslint . --cache --cache-location node_modules/.cache/eslint/root",
     "lint:fix": "eslint . --fix",
     "prepare": "simple-git-hooks",

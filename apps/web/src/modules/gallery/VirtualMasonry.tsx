@@ -12,7 +12,6 @@ import {
 export interface MasonryRef {
   getLayoutMetrics: () => MasonryLayoutMetrics | null;
   getItemRect: (index: number) => DOMRect | null;
-  reposition: () => void;
 }
 
 export interface MasonryLayoutMetrics {
@@ -247,10 +246,6 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
           cell.width,
           cell.height,
         );
-      },
-      reposition: () => {
-        // 纯计算布局无需手动重排；保留接口以兼容旧调用方，触发一次重算即可。
-        setMeasuredHeights((prev) => new Map(prev));
       },
     }),
     [columnGutter, renderColumnWidth, layout, rowGutter],

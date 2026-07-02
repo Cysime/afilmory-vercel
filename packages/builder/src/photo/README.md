@@ -64,7 +64,7 @@ photo/
 
 ## Video and HDR Handling
 
-- Live Photo：通过 storage provider 的 `detectLivePhotos` 或 `createLivePhotoMap` 按同名图片/视频配对，视频 key 会转成公开 URL。
+- Live Photo：通过 storage provider 的 `detectLivePhotos` 按同名图片/视频配对，视频 key 会转成公开 URL。
 - Motion Photo：从 EXIF/XMP container metadata 中检测嵌入视频 offset、size 和 presentation timestamp。
 - HDR：`gainmap-detector.ts` 检测 ContainerDirectory 中的 gain map 条目，结果写入 `isHDR`。
 

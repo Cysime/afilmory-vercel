@@ -210,7 +210,7 @@ export const PhotoViewer = ({
         )}
       </AnimatePresence>
       {/* 固定背景层防止透出 */}
-      {/* 交叉溶解的 Blurhash 背景 */}
+      {/* 交叉溶解的 Thumbhash 背景 */}
       <AnimatePresence mode="sync">
         {shouldRenderThumbhash && (
           <m.div

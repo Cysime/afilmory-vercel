@@ -31,8 +31,8 @@ export const dependencyChunkGroups: DependencyChunkGroup[] = [
     ],
   },
   {
-    // masonic 已被自研虚拟 masonry 取代并移除；保留仍在使用的测量/可见性相关库。
-    name: "masonry",
+    // masonic 已被自研虚拟 masonry 取代并移除；这里只剩测量/可见性 observer 相关库。
+    name: "observers",
     patterns: [
       "react-intersection-observer",
       "react-use-measure",

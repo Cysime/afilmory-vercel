@@ -1,4 +1,4 @@
-import { ModalProvider, Spring, Toaster } from "@afilmory/ui";
+import { Spring, Toaster } from "@afilmory/ui";
 import { SpeedInsights } from "@vercel/speed-insights/react";
 import { Provider } from "jotai";
 import { LazyMotion, MotionConfig } from "motion/react";
@@ -24,13 +24,11 @@ export const RootProviders: FC<PropsWithChildren<{ runtime: AppRuntime }>> = ({
     <MotionConfig transition={Spring.presets.smooth} reducedMotion="user">
       <AfilmoryRuntimeProvider runtime={runtime}>
         <Provider store={runtime.store}>
-          <ModalProvider>
-            <EventProvider />
-            <StableRouterProvider />
+          <EventProvider />
+          <StableRouterProvider />
 
-            <ContextMenuProvider />
-            <I18nProvider>{children}</I18nProvider>
-          </ModalProvider>
+          <ContextMenuProvider />
+          <I18nProvider>{children}</I18nProvider>
         </Provider>
       </AfilmoryRuntimeProvider>
     </MotionConfig>

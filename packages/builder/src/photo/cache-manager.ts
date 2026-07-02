@@ -8,7 +8,7 @@ export interface CacheableData {
   thumbnail?: {
     thumbnailUrl: string;
     thumbnailBuffer: Buffer;
-    blurhash: string;
+    thumbHash: string;
   };
   exif?: any;
   toneAnalysis?: any;

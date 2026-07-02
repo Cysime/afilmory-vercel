@@ -87,7 +87,7 @@ Production builds exclude `(debug)` and `(data)` route groups. Development keeps
 
 ### 照片网格
 
-- `MasonryRoot` 和 `modules/gallery/Masonic.tsx` 基于 Masonic 实现虚拟瀑布流。
+- `MasonryRoot` 和 `modules/gallery/VirtualMasonry.tsx` 实现自研纯计算虚拟瀑布流（已替代 masonic 库）。
 - 缩略图使用 `photo.thumbnailUrl`。
 - 占位和取色使用 `photo.thumbHash`。
 - 筛选状态通过 URL search params 与 Jotai 状态同步。

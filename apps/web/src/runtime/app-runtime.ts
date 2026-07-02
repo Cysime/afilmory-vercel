@@ -82,7 +82,6 @@ class RuntimeImageLoadingService implements ImageLoadingService {
 export type AppRuntime = {
   bodyScrollLock: BodyScrollLockManager;
   browser: AfilmoryBrowserRuntime;
-  criticalRoutePreloadCleanup?: () => void;
   imageCache: RegularImageCache;
   imageLoading: ImageLoadingService;
   photoRepository: PhotoRepository;
@@ -109,7 +108,6 @@ export function createAppRuntime({
     photoRepository: new PhotoRepository(manifest),
     store: createStore(),
     dispose() {
-      this.criticalRoutePreloadCleanup?.();
       imageLoading.cleanupAll();
       this.imageCache.clear();
       bodyScrollLock.reset();

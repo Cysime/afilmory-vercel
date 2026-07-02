@@ -1,9 +1,7 @@
 import { TransformAnimationController } from "./animation-controller";
-import { copyImageUrlToClipboard } from "./clipboard-service";
 import { createWebGLDebugInfo } from "./debug-adapter";
 import { resolveDoubleClickToggle } from "./double-click-zoom-policy";
 import { LoadingState } from "./enum";
-import { ImageViewerEngineBase } from "./ImageViewerEngineBase";
 import { WebGLInputController } from "./input-controller";
 import type { DebugInfo, WebGLImageViewerProps } from "./interface";
 import { WebGLViewerRenderer } from "./renderer";
@@ -40,7 +38,7 @@ import {
 import { TextureWorkerBridge } from "./worker-bridge";
 
 // 简化的 WebGL 图像查看器引擎
-export class WebGLImageViewerEngine extends ImageViewerEngineBase {
+export class WebGLImageViewerEngine {
   private canvas: HTMLCanvasElement;
   private gl: WebGLRenderingContext;
   private renderer!: WebGLViewerRenderer;
@@ -72,7 +70,6 @@ export class WebGLImageViewerEngine extends ImageViewerEngineBase {
   // 配置和回调
   private config: Required<WebGLImageViewerProps>;
   private onZoomChange?: (originalScale: number, relativeScale: number) => void;
-  private onImageCopied?: () => void;
   private onLoadingStateChange?: (
     isLoading: boolean,
     state?: LoadingState,
@@ -96,10 +93,6 @@ export class WebGLImageViewerEngine extends ImageViewerEngineBase {
   private tileRequestRuntime = new TileRequestRuntime();
   private tileProcessingFrameId: number | null = null;
 
-  // Reusable buffers
-  private matrixBuffer = new Float32Array(9);
-  private tileMatrixBuffer = new Float32Array(9);
-
   // 可视区域信息
   private currentVisibleTiles = new Set<TileKey>();
   private lastViewportHash = "";
@@ -114,11 +107,9 @@ export class WebGLImageViewerEngine extends ImageViewerEngineBase {
     config: Required<WebGLImageViewerProps>,
     onDebugUpdate?: React.RefObject<(debugInfo: DebugInfo) => void>,
   ) {
-    super();
     this.canvas = canvas;
     this.config = config;
     this.onZoomChange = config.onZoomChange;
-    this.onImageCopied = config.onImageCopied;
     this.onLoadingStateChange = config.onLoadingStateChange;
     this.onImagePainted = config.onImagePainted;
     this.onDebugUpdate = onDebugUpdate;
@@ -1125,22 +1116,6 @@ export class WebGLImageViewerEngine extends ImageViewerEngineBase {
       this.applyTransformState(nextTransform);
       this.render();
       this.notifyZoomChange();
-    }
-  }
-
-  async copyOriginalImageToClipboard() {
-    try {
-      const didCopy = await copyImageUrlToClipboard(this.originalImageSrc);
-      if (!didCopy) {
-        console.warn("Clipboard API not supported");
-        return;
-      }
-
-      if (this.onImageCopied) {
-        this.onImageCopied();
-      }
-    } catch (error) {
-      console.error("Failed to copy image to clipboard:", error);
     }
   }
 }

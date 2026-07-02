@@ -100,7 +100,7 @@ export const logger = {
   s3: createTaggedLogger("S3"),
   image: createTaggedLogger("IMAGE"),
   thumbnail: createTaggedLogger("THUMBNAIL"),
-  blurhash: createTaggedLogger("BLURHASH"),
+  thumbhash: createTaggedLogger("THUMBHASH"),
   exif: createTaggedLogger("EXIF"),
   fs: createTaggedLogger("FS"),
   worker: (id: number) => createTaggedLogger(`WORKER-${id}`),

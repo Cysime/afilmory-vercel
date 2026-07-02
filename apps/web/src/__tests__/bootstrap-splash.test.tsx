@@ -67,7 +67,6 @@ describe("bootstrap splash", () => {
         lock: vi.fn(() => vi.fn()),
         reset: vi.fn(),
       },
-      criticalRoutePreloadCleanup: undefined,
       dispose: vi.fn(),
       imageCache: {
         clear: vi.fn(),
@@ -80,11 +79,7 @@ describe("bootstrap splash", () => {
     const createAppRouter = vi.fn(() => ({}));
     const markStartup = vi.fn();
     const flushStartupMetrics = vi.fn();
-    const cleanupCriticalRoutePreloads = vi.fn();
-    const installCriticalRoutePreloads = vi.fn(() => ({
-      cleanup: cleanupCriticalRoutePreloads,
-      ready: criticalRoutesPromise,
-    }));
+    const installCriticalRoutePreloads = vi.fn(() => criticalRoutesPromise);
 
     vi.doMock("../data-runtime/manifest-runtime", () => ({
       loadManifestRuntime: vi.fn(() => manifestPromise),

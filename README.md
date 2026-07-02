@@ -260,6 +260,9 @@ pnpm build:web
 
 # Preview apps/web/dist locally.
 pnpm preview
+
+# Regenerate favicon assets into apps/web/public.
+pnpm generate:favicon
 ```
 
 Open http://localhost:4173 after `pnpm preview`.

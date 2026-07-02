@@ -35,10 +35,6 @@ const restrictedImports = {
       message: "Use a local equality helper with Jotai selectors.",
     },
     {
-      name: "@afilmory/data",
-      message: "Use @afilmory/schema or @afilmory/media.",
-    },
-    {
       name: "~/data-runtime/photo-loader",
       message:
         "Use AppRuntime PhotoRepository instead of a module singleton.",
@@ -57,7 +53,7 @@ const restrictedImports = {
   ],
   patterns: [
     {
-      group: ["zustand/*", "@afilmory/data/*"],
+      group: ["zustand/*"],
       message: "UI state uses Jotai in this app.",
     },
   ],

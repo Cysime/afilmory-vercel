@@ -1,1 +1,1 @@
-export { compressUint8Array, decompressUint8Array } from "./u8array.ts";
+export { hexToUint8Array, uint8ArrayToHex } from "./u8array.ts";

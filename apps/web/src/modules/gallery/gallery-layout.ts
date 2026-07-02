@@ -1,6 +1,6 @@
 import type { PhotoManifest } from "~/types/photo";
 
-import type { MasonryLayoutMetrics } from "./Masonic";
+import type { MasonryLayoutMetrics } from "./VirtualMasonry";
 
 export class MasonryHeaderItem {
   static default = new MasonryHeaderItem();

@@ -19,10 +19,8 @@ pnpm --filter @afilmory/webgl-viewer test
 ```text
 src/
 ├── DebugInfo.tsx              # debug overlay
-├── ImageViewerEngineBase.ts   # engine base class
 ├── WebGLImageViewer.tsx       # React component wrapper
 ├── WebGLImageViewerEngine.ts  # engine coordinator
-├── clipboard-service.ts       # clipboard side effect wrapper
 ├── constants.ts               # default interaction configs
 ├── debug-adapter.ts           # debug info projection
 ├── enum.ts                    # LoadingState
@@ -105,22 +103,6 @@ type DoubleClickConfig = {
 
 type PanningConfig = {
   disabled?: boolean;
-  velocityDisabled?: boolean; // default true
-};
-```
-
-### Animation config
-
-```ts
-type AlignmentAnimationConfig = {
-  sizeX: number;
-  sizeY: number;
-  velocityAlignmentTime: number; // default 0.2
-};
-
-type VelocityAnimationConfig = {
-  sensitivity: number; // default 1
-  animationTime: number; // default 0.2
 };
 ```
 
@@ -128,7 +110,6 @@ type VelocityAnimationConfig = {
 
 ```ts
 onZoomChange?: (originalScale: number, relativeScale: number) => void;
-onImageCopied?: () => void;
 onLoadingStateChange?: (
   isLoading: boolean,
   state?: LoadingState,
@@ -193,7 +174,6 @@ The debug overlay also exposes a tile outline toggle.
 - `renderer.ts` owns shader program and draw calls; `input-controller.ts` owns DOM input handling.
 - `transform-controller.ts` and `tile-scheduler.ts` keep viewport math and tile selection testable outside the engine.
 - `worker-bridge.ts` wraps worker messaging; `texture.worker.js` loads image data and creates tile bitmaps off the main thread when possible.
-- `clipboard-service.ts` isolates clipboard side effects so copy behavior is easy to test and replace.
 - The component calls `onError` for initialization and image loading failures so the app can fall back gracefully.
 
 ## Development Checklist

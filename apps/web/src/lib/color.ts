@@ -1,4 +1,4 @@
-import { decompressUint8Array } from "@afilmory/media";
+import { hexToUint8Array } from "@afilmory/media";
 import { thumbHashToDataURL } from "thumbhash";
 
 const BG_HEX = "#1c1c1e";
@@ -111,7 +111,7 @@ export const averageColorFromImage = (img: HTMLImageElement): string | null => {
 
 export const dataUrlFromThumbhash = (thumbHash: string): string | null => {
   try {
-    return thumbHashToDataURL(decompressUint8Array(thumbHash));
+    return thumbHashToDataURL(hexToUint8Array(thumbHash));
   } catch {
     return null;
   }

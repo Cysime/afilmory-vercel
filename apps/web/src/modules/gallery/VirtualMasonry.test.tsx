@@ -2,8 +2,8 @@ import { render, screen } from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { MasonryRef } from "./Masonic";
-import { Masonry } from "./Masonic";
+import type { MasonryRef } from "./VirtualMasonry";
+import { Masonry } from "./VirtualMasonry";
 
 let scrollEl: HTMLElement | null = null;
 

@@ -16,7 +16,7 @@ import {
 import { buildGalleryFilterSearch } from "~/lib/gallery-filter-url";
 import { translateDynamicKey } from "~/lib/i18n-dynamic";
 import { buildPhotoDetailPathname } from "~/lib/photo-detail-route";
-import { FilterPanelContent } from "~/modules/gallery/panels/FilterPanel";
+import { FilterPanel } from "~/modules/gallery/panels/FilterPanel";
 import { useAfilmoryRuntime, usePhotoRepository } from "~/runtime/app-runtime";
 import type { PhotoManifest } from "~/types/photo";
 
@@ -602,7 +602,7 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-2"
         >
           {isBrowsingFilters ? (
-            <FilterPanelContent
+            <FilterPanel
               showHeader={false}
               className="max-h-none overflow-visible px-6 pt-3 pb-8"
             />

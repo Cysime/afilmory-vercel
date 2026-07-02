@@ -6,8 +6,8 @@ import sharp from "sharp";
 import { getScopedBuilderOutputSettings } from "../output-paths.js";
 import { getPhotoProcessingLoggers } from "../photo/logger-adapter.js";
 import type { ThumbnailResult } from "../types/photo.js";
-import { generateBlurhash } from "./blurhash.js";
 import { SOURCE_SHARP_OPTIONS } from "./sharp-options.js";
+import { generateThumbHash } from "./thumbhash.js";
 
 // 常量定义
 // q80 + mozjpeg：600px 网格缩略图 q90 时普遍 200-450KB，移动端解码慢、浏览器内存
@@ -107,7 +107,7 @@ export async function thumbnailExists(photoId: string): Promise<boolean> {
   }
 }
 
-// 读取现有缩略图并生成 blurhash
+// 读取现有缩略图并生成 thumbhash
 async function processExistingThumbnail(
   photoId: string,
 ): Promise<ThumbnailResult | null> {
@@ -118,7 +118,7 @@ async function processExistingThumbnail(
 
   try {
     const existingBuffer = await fs.readFile(thumbnailPath);
-    const thumbHash = await generateBlurhash(existingBuffer);
+    const thumbHash = await generateThumbHash(existingBuffer);
 
     return createSuccessResult(thumbnailUrl, existingBuffer, thumbHash);
   } catch (error) {
@@ -139,7 +139,7 @@ async function generateNewThumbnail(
   const startTime = Date.now();
 
   try {
-    // 创建 Sharp 实例，复用于缩略图和 blurhash 生成
+    // 创建 Sharp 实例，复用于缩略图和 thumbhash 生成
     const sharpInstance = sharp(imageBuffer, SOURCE_SHARP_OPTIONS).rotate(); // 自动根据 EXIF 旋转
 
     // 生成缩略图
@@ -159,8 +159,8 @@ async function generateNewThumbnail(
     const sizeKB = Math.round(thumbnailBuffer.length / 1024);
     log.success(`生成完成：${photoId} (${sizeKB}KB, ${duration}ms)`);
 
-    // 基于生成的缩略图生成 blurhash
-    const thumbHash = await generateBlurhash(thumbnailBuffer);
+    // 基于生成的缩略图生成 thumbhash
+    const thumbHash = await generateThumbHash(thumbnailBuffer);
 
     return createSuccessResult(thumbnailUrl, thumbnailBuffer, thumbHash);
   } catch (error) {
@@ -169,8 +169,8 @@ async function generateNewThumbnail(
   }
 }
 
-// 生成缩略图和 blurhash（复用 Sharp 实例）
-export async function generateThumbnailAndBlurhash(
+// 生成缩略图和 thumbhash（复用 Sharp 实例）
+export async function generateThumbnailAndThumbHash(
   imageBuffer: Buffer,
   photoId: string,
   forceRegenerate = false,

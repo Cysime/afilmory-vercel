@@ -69,11 +69,7 @@ const FilterSection = ({
   );
 };
 
-export const FilterPanel = () => {
-  return <FilterPanelContent />;
-};
-
-export const FilterPanelContent = ({
+export const FilterPanel = ({
   showHeader = true,
   className,
 }: {

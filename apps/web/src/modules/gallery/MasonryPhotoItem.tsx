@@ -19,7 +19,7 @@ import { useContextPhotos, useOpenPhotoViewer } from "~/hooks/usePhotoViewer";
 import {
   CarbonIsoOutline,
   MaterialSymbolsShutterSpeed,
-  StreamlineImageAccessoriesLensesPhotosCameraShutterPicturePhotographyPicturesPhotoLens,
+  StreamlineImageAccessoriesLensesPhotosCameraShutterPicturePhotographyPicturesPhotoLens as LensIcon,
   TablerAperture,
 } from "~/icons";
 import { isMobileDevice } from "~/lib/device-viewport";
@@ -210,7 +210,7 @@ export const MasonryPhotoItem = memo(
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
-        {/* Blurhash 占位符 */}
+        {/* Thumbhash 占位符 */}
         {!imageError && (
           <ThumbnailImage
             ref={imageRef}
@@ -346,7 +346,7 @@ export const MasonryPhotoItem = memo(
                 <div className="grid grid-cols-2 gap-2 pb-4 text-xs">
                   {exifData.focalLength35mm && (
                     <div className="flex items-center gap-1.5 rounded-md bg-white/10 px-2 py-1 opacity-0 backdrop-blur-md transition-opacity duration-300 group-hover:opacity-100">
-                      <StreamlineImageAccessoriesLensesPhotosCameraShutterPicturePhotographyPicturesPhotoLens className="text-white/70" />
+                      <LensIcon className="text-white/70" />
                       <span className="text-white/90">
                         {exifData.focalLength35mm}mm
                       </span>

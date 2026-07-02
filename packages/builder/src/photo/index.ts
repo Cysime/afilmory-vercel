@@ -10,13 +10,13 @@ export { shouldProcessPhoto } from "./cache-manager.js";
 export type { ThumbnailResult } from "./data-processors.js";
 export {
   processExifData,
-  processThumbnailAndBlurhash,
+  processThumbnailAndThumbHash,
   processToneAnalysis,
 } from "./data-processors.js";
 
 // Live Photo 处理
 export type { LivePhotoResult } from "./live-photo-handler.js";
-export { createLivePhotoMap, processLivePhoto } from "./live-photo-handler.js";
+export { processLivePhoto } from "./live-photo-handler.js";
 
 // 执行上下文
 export {

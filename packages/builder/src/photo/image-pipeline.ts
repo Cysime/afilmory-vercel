@@ -1,4 +1,4 @@
-import { compressUint8Array } from "@afilmory/media";
+import { uint8ArrayToHex } from "@afilmory/media";
 import sharp from "sharp";
 
 import type { PhotoProcessorOptions } from "../core/contracts/photo-processing.js";
@@ -17,7 +17,7 @@ import type { PhotoManifestItem, ProcessPhotoResult } from "../types/photo.js";
 import { shouldProcessPhoto } from "./cache-manager.js";
 import {
   processExifData,
-  processThumbnailAndBlurhash,
+  processThumbnailAndThumbHash,
   processToneAnalysis,
 } from "./data-processors.js";
 import { detectGainMap } from "./gainmap-detector.js";
@@ -183,8 +183,8 @@ export async function executePhotoProcessingPipeline(
 
     const { sharpInstance, imageBuffer, metadata } = processedData;
 
-    // 3. 处理缩略图和 blurhash
-    const thumbnailResult = await processThumbnailAndBlurhash(
+    // 3. 处理缩略图和 thumbhash
+    const thumbnailResult = await processThumbnailAndThumbHash(
       imageBuffer,
       photoId,
       existingItem,
@@ -262,7 +262,7 @@ export async function executePhotoProcessingPipeline(
       originalUrl: await storageManager.generatePublicUrl(photoKey),
       thumbnailUrl: thumbnailResult.thumbnailUrl,
       thumbHash: thumbnailResult.thumbHash
-        ? compressUint8Array(thumbnailResult.thumbHash)
+        ? uint8ArrayToHex(thumbnailResult.thumbHash)
         : null,
       width: metadata.width,
       height: metadata.height,

@@ -9,7 +9,7 @@ export interface PhotoProcessingLoggers {
   image: PhotoLogger;
   s3: PhotoLogger;
   thumbnail: PhotoLogger;
-  blurhash: PhotoLogger;
+  thumbhash: PhotoLogger;
   exif: PhotoLogger;
   tone: PhotoLogger;
   location: PhotoLogger;

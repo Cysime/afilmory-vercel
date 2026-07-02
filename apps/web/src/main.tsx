@@ -75,10 +75,9 @@ async function bootstrap() {
   try {
     markStartup("manifest-start");
     markStartup("critical-routes-start");
-    const criticalRoutePreload = installCriticalRoutePreloads(
+    const criticalRoutesReady = installCriticalRoutePreloads(
       criticalRoutePreloadModules,
-    );
-    const criticalRoutesReady = criticalRoutePreload.ready.then(() => {
+    ).then(() => {
       markStartup("critical-routes-ready");
     });
     const startupTasks: Promise<unknown>[] = [
@@ -106,7 +105,6 @@ async function bootstrap() {
     const runtime = createAppRuntime({
       manifest: manifest as Awaited<ReturnType<typeof loadManifestRuntime>>,
     });
-    runtime.criticalRoutePreloadCleanup = criticalRoutePreload.cleanup;
     markStartup("photo-repository-ready");
     markStartup("react-render-start");
     renderApp(<RouterProvider router={createAppRouter(runtime)} />);

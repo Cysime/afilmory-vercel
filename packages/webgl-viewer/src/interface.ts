@@ -17,16 +17,6 @@ export interface DoubleClickConfig {
 }
 export interface PanningConfig {
   disabled?: boolean;
-  velocityDisabled?: boolean;
-}
-export interface AlignmentAnimationConfig {
-  sizeX: number;
-  sizeY: number;
-  velocityAlignmentTime: number;
-}
-export interface VelocityAnimationConfig {
-  sensitivity: number;
-  animationTime: number;
 }
 export interface WebGLImageViewerProps {
   src: string;
@@ -44,10 +34,7 @@ export interface WebGLImageViewerProps {
   limitToBounds?: boolean;
   centerOnInit?: boolean;
   smooth?: boolean;
-  alignmentAnimation?: AlignmentAnimationConfig;
-  velocityAnimation?: VelocityAnimationConfig;
   onZoomChange?: (originalScale: number, relativeScale: number) => void;
-  onImageCopied?: () => void;
   onLoadingStateChange?: (
     isLoading: boolean,
     state?: LoadingState,

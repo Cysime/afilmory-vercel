@@ -96,7 +96,7 @@ export function createPhotoProcessingLoggers(
     image: new CompatibleLoggerAdapter(workerLogger.withTag("IMAGE")),
     s3: new CompatibleLoggerAdapter(workerLogger.withTag("S3")),
     thumbnail: new CompatibleLoggerAdapter(workerLogger.withTag("THUMBNAIL")),
-    blurhash: new CompatibleLoggerAdapter(workerLogger.withTag("BLURHASH")),
+    thumbhash: new CompatibleLoggerAdapter(workerLogger.withTag("THUMBHASH")),
     exif: new CompatibleLoggerAdapter(workerLogger.withTag("EXIF")),
     tone: new CompatibleLoggerAdapter(workerLogger.withTag("TONE")),
     location: new CompatibleLoggerAdapter(workerLogger.withTag("LOCATION")),

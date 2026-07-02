@@ -23,10 +23,10 @@ import {
   MasonryHeaderItem,
   shouldAnimateMasonryItem,
 } from "./gallery-layout";
-import type { MasonryRef } from "./Masonic";
-import { Masonry } from "./Masonic";
 import { MasonryHeaderMasonryItem } from "./MasonryHeaderMasonryItem";
 import { MasonryPhotoItem } from "./MasonryPhotoItem";
+import type { MasonryRef } from "./VirtualMasonry";
+import { Masonry } from "./VirtualMasonry";
 
 export const MasonryRoot = () => {
   const { columns } = useAtomValue(gallerySettingAtom);

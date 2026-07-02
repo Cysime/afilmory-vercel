@@ -116,14 +116,6 @@ export class StorageManager {
     return this.provider;
   }
 
-  /**
-   * 切换存储提供商
-   * @param config 新的存储配置
-   */
-  switchProvider(config: StorageConfig): void {
-    this.provider = this.createProvider(config);
-  }
-
   private createProvider(config: StorageConfig): StorageProvider {
     return new S3StorageProvider(config);
   }

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { decompressUint8Array } from "@afilmory/media";
+import { hexToUint8Array } from "@afilmory/media";
 import type sharp from "sharp";
 
 import { HEIC_FORMATS } from "../constants/index.js";
@@ -10,7 +10,7 @@ import type { ExifReaderService } from "../image/exif.js";
 import { extractExifData } from "../image/exif.js";
 import { calculateHistogramAndAnalyzeTone } from "../image/histogram.js";
 import {
-  generateThumbnailAndBlurhash,
+  generateThumbnailAndThumbHash,
   getThumbnailPublicUrl,
   thumbnailExists,
 } from "../image/thumbnail.js";
@@ -29,10 +29,10 @@ export interface ThumbnailResult {
 }
 
 /**
- * 处理缩略图和 blurhash
+ * 处理缩略图和 thumbhash
  * 优先复用现有数据，如果不存在或需要强制更新则重新生成
  */
-export async function processThumbnailAndBlurhash(
+export async function processThumbnailAndThumbHash(
   imageBuffer: Buffer,
   photoId: string,
   existingItem: PhotoManifestItem | undefined,
@@ -53,13 +53,13 @@ export async function processThumbnailAndBlurhash(
       const thumbnailBuffer = await fs.readFile(thumbnailPath);
       const thumbnailUrl = getThumbnailPublicUrl(photoId);
 
-      loggers.blurhash.info(`复用现有 blurhash: ${photoId}`);
+      loggers.thumbhash.info(`复用现有 thumbhash: ${photoId}`);
       loggers.thumbnail.info(`复用现有缩略图：${photoId}`);
 
       return {
         thumbnailUrl,
         thumbnailBuffer,
-        thumbHash: decompressUint8Array(existingItem.thumbHash),
+        thumbHash: hexToUint8Array(existingItem.thumbHash),
       };
     } catch (error) {
       loggers.thumbnail.warn(`读取现有缩略图失败，重新生成：${photoId}`, error);
@@ -67,8 +67,8 @@ export async function processThumbnailAndBlurhash(
     }
   }
 
-  // 生成新的缩略图和 blurhash
-  const result = await generateThumbnailAndBlurhash(
+  // 生成新的缩略图和 thumbhash
+  const result = await generateThumbnailAndThumbHash(
     imageBuffer,
     photoId,
     options.isForceMode || options.isForceThumbnails,
