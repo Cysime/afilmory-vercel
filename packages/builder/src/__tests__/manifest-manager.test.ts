@@ -83,6 +83,22 @@ describe("handleDeletedPhotos", () => {
       fs.access(path.join(thumbnailsDir, "remove.jpg")),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("leaves non-jpg files like the .encoding marker untouched", async () => {
+    await fs.mkdir(thumbnailsDir, { recursive: true });
+    await fs.writeFile(path.join(thumbnailsDir, "keep.jpg"), "");
+    await fs.writeFile(path.join(thumbnailsDir, ".encoding"), "jpeg-w600-q80");
+
+    const deletedCount = await runWithBuilderOutputSettings(
+      outputSettings,
+      () => handleDeletedPhotos([createPhotoManifestItem("keep")]),
+    );
+
+    expect(deletedCount).toBe(0);
+    await expect(
+      fs.readFile(path.join(thumbnailsDir, ".encoding"), "utf-8"),
+    ).resolves.toBe("jpeg-w600-q80");
+  });
 });
 
 describe("loadExistingManifest", () => {

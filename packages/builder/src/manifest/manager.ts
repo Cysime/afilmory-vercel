@@ -142,6 +142,9 @@ export async function handleDeletedPhotos(
   const manifestKeySet = new Set(items.map((item) => item.id));
 
   for (const thumbnail of allThumbnails) {
+    // 只清理 *.jpg 缩略图：目录里还住着 .encoding 编码签名标记（见 image/thumbnail.ts），
+    // 误删它会在构建中途崩溃后触发下一次全量重生成缩略图，废掉 artifact-cache 增量路径。
+    if (!thumbnail.endsWith(".jpg")) continue;
     if (!manifestKeySet.has(basename(thumbnail, ".jpg"))) {
       await fs.unlink(path.join(thumbnailsDir, thumbnail));
       deletedCount++;
