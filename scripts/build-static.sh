@@ -1,20 +1,20 @@
 #!/bin/sh
 set -e
 
-# 静态站点构建脚本
-# 用于 Vercel、Netlify、Cloudflare Pages 等平台的部署
+# 静态站点构建脚本（Vercel、Netlify、Cloudflare Pages 等平台）。
+# 只负责编排：缓存恢复 -> pnpm build -> 缓存同步 -> 校验产物。
+# 所有新鲜度/降级决策（S3 凭据缺失、生产硬失败、manifest 复用）
+# 由 apps/web/scripts/precheck.ts 单点负责，它在 `pnpm build` 内运行。
 
-echo "🚀 开始构建静态站点..."
+echo "[build] Starting static site build..."
 
-MANIFEST_PATH="generated/photos-manifest.json"
-BUILD_COMMAND="pnpm build"
 CACHE_REPO_URL="${REPO_URL:-${BUILDER_REPO_URL:-}}"
 CACHE_REPO_TOKEN="${REPO_TOKEN:-${GIT_TOKEN:-}}"
 
 if [ -n "$CACHE_REPO_URL" ] && [ -n "$CACHE_REPO_TOKEN" ]; then
-  echo "♻️  尝试从远程仓库缓存恢复 manifest 和缩略图..."
+  echo "[build] Restoring manifest and thumbnails from the remote cache repository..."
   if ! pnpm exec tsx scripts/artifact-cache.ts restore; then
-    echo "⚠️  远程仓库缓存恢复失败，将继续使用本地文件或从 S3 重建"
+    echo "[build] Remote cache restore failed; continuing with local files or a rebuild from S3"
   fi
 else
   MISSING_CACHE_CONFIG=""
@@ -28,60 +28,29 @@ else
       MISSING_CACHE_CONFIG="REPO_TOKEN/GIT_TOKEN"
     fi
   fi
-  echo "ℹ️  远程仓库缓存未启用，缺少: $MISSING_CACHE_CONFIG"
+  echo "[build] Remote cache repository not configured, missing: $MISSING_CACHE_CONFIG"
 fi
 
-# 如果没有 S3 凭据但仓库里已有 manifest，则允许静态预览构建继续
-if [ -z "$S3_BUCKET_NAME" ] || [ -z "$S3_ACCESS_KEY_ID" ] || [ -z "$S3_SECRET_ACCESS_KEY" ]; then
-  if [ -f "$MANIFEST_PATH" ]; then
-    # 生产构建要求新鲜数据：缺少 S3 凭据时硬失败，避免静默发布陈旧站点。
-    # Vercel 生产部署会注入 VERCEL_ENV=production；REPO_TOKEN 之外的平台可用 REQUIRE_FRESH_BUILD=true。
-    if [ "$VERCEL_ENV" = "production" ] || [ "$REQUIRE_FRESH_BUILD" = "true" ]; then
-      echo "❌ 错误: 生产构建要求新鲜数据，但缺少完整的 S3 环境变量"
-      echo "   拒绝使用现有 manifest 发布陈旧站点 (VERCEL_ENV=production 或 REQUIRE_FRESH_BUILD=true)"
-      echo "   请在部署平台配置 S3_BUCKET_NAME / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY"
-      exit 1
-    fi
-    echo "⚠️  未检测到完整的 S3 环境变量，使用现有 manifest 继续构建 Preview"
-    BUILD_COMMAND="pnpm build:web"
-  else
-    echo "❌ 错误: S3 环境变量未设置，且未找到可复用的 manifest"
-    echo ""
-    echo "   请确保在部署平台配置了以下环境变量:"
-    echo "   - S3_BUCKET_NAME (必填)"
-    echo "   - S3_ACCESS_KEY_ID (必填)"
-    echo "   - S3_SECRET_ACCESS_KEY (必填)"
-    echo "   - S3_REGION (可选，默认: us-east-1)"
-    echo "   - S3_ENDPOINT (可选)"
-    echo "   - S3_PREFIX (可选)"
-    echo "   - S3_CUSTOM_DOMAIN (可选)"
-    echo ""
-    echo "   或者先生成可复用的 photos-manifest.json 后再触发 Preview 构建"
-    exit 1
-  fi
-fi
-
-# 执行完整构建
-echo "📦 构建中..."
-if ! $BUILD_COMMAND; then
-  echo "❌ 构建失败"
+echo "[build] Running pnpm build (precheck decides freshness/fallback)..."
+if ! pnpm build; then
+  echo "[build] Build failed"
   exit 1
 fi
 
 if [ -n "$CACHE_REPO_URL" ] && [ -n "$CACHE_REPO_TOKEN" ]; then
-  echo "♻️  同步最新 manifest 和缩略图到远程仓库缓存..."
+  echo "[build] Saving refreshed manifest and thumbnails to the remote cache repository..."
   if ! pnpm exec tsx scripts/artifact-cache.ts save; then
-    echo "⚠️  远程仓库缓存同步失败，静态站点产物已生成但下次构建可能无法复用缓存"
+    echo "[build] Remote cache save failed; static output was built but the next build may not reuse the cache"
   fi
 else
-  echo "ℹ️  远程仓库缓存未启用，跳过同步 manifest 和缩略图"
+  echo "[build] Remote cache repository not configured, skipping cache save"
 fi
 
 # 验证构建输出
 OUTPUT_DIR="apps/web/dist"
 if [ ! -f "$OUTPUT_DIR/index.html" ]; then
-  echo "❌ 错误: 构建输出不完整，未找到 index.html"
+  echo "[build] Error: build output is incomplete, index.html not found"
   exit 1
 fi
 
-echo "✅ 构建完成！输出目录: $OUTPUT_DIR"
+echo "[build] Build complete. Output directory: $OUTPUT_DIR"

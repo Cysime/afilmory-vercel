@@ -1,8 +1,8 @@
 import type { PhotoProcessorOptions } from "../core/contracts/photo-processing.js";
 import { thumbnailExists } from "../image/thumbnail.js";
-import { needsUpdate } from "../manifest/manager.js";
 import type { StorageObject } from "../storage/interfaces.js";
 import type { PhotoManifestItem } from "../types/photo.js";
+import { decidePhotoWork } from "./work-decision.js";
 
 export interface CacheableData {
   thumbnail?: {
@@ -17,6 +17,9 @@ export interface CacheableData {
 /**
  * 检查是否需要处理照片
  * 考虑文件更新状态和缓存存在性
+ *
+ * 判定逻辑与 DiffPlanner 的任务过滤共享同一实现（decidePhotoWork），
+ * 保证 same-timestamp 的 size/etag 变更不会进入 worker 后又被跳过。
  */
 export async function shouldProcessPhoto(
   photoId: string,
@@ -24,37 +27,9 @@ export async function shouldProcessPhoto(
   obj: StorageObject,
   options: PhotoProcessorOptions,
 ): Promise<{ shouldProcess: boolean; reason: string }> {
-  // 强制模式下总是处理
-  if (options.isForceMode) {
-    return { shouldProcess: true, reason: "强制模式" };
-  }
-
-  // 新照片总是需要处理
-  if (!existingItem) {
-    return { shouldProcess: true, reason: "新照片" };
-  }
-
-  // Keep this predicate in sync with task filtering so same-timestamp
-  // size/etag changes do not enter the worker and then get skipped.
-  const fileNeedsUpdate = needsUpdate(existingItem, obj);
-
-  if (fileNeedsUpdate || options.isForceManifest) {
-    return {
-      shouldProcess: true,
-      reason: fileNeedsUpdate ? "文件已更新" : "强制更新清单",
-    };
-  }
-
-  // 检查缩略图是否存在
-  const hasThumbnail = await thumbnailExists(photoId);
-  if (!hasThumbnail || options.isForceThumbnails) {
-    return {
-      shouldProcess: true,
-      reason: options.isForceThumbnails ? "强制重新生成缩略图" : "缩略图缺失",
-    };
-  }
-
-  return { shouldProcess: false, reason: "无需处理" };
+  return decidePhotoWork(existingItem, obj, options, () =>
+    thumbnailExists(photoId),
+  );
 }
 
 /**

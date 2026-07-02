@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { TextureWorkerBridge } from "./worker-bridge";
+import { SIMPLE_LOD_LEVELS, TILE_SIZE } from "./tile-cache";
+import { buildTextureWorkerSource, TextureWorkerBridge } from "./worker-bridge";
 
 class WorkerMock {
   static instances: WorkerMock[] = [];
@@ -18,6 +19,47 @@ class WorkerMock {
     WorkerMock.instances.push(this);
   }
 }
+
+describe("buildTextureWorkerSource", () => {
+  it("prepends the shared constants from tile-cache.ts to the worker source", () => {
+    const source = buildTextureWorkerSource();
+
+    expect(source.startsWith(`const TILE_SIZE = ${TILE_SIZE};`)).toBe(true);
+    expect(source).toContain(
+      `const SIMPLE_LOD_LEVELS = ${JSON.stringify(SIMPLE_LOD_LEVELS)};`,
+    );
+    // The worker body itself must not re-declare the injected constants.
+    const [, workerBody] = source.split("\nlet originalImage");
+    expect(workerBody).toBeDefined();
+    expect(workerBody).not.toContain("const TILE_SIZE");
+    expect(workerBody).not.toContain("const SIMPLE_LOD_LEVELS");
+    // The actual worker code still follows the prelude.
+    expect(source).toContain("self.onmessage");
+  });
+
+  it("produces the source handed to the worker Blob", async () => {
+    vi.stubGlobal("Worker", WorkerMock);
+    const realCreateObjectURL = URL.createObjectURL;
+    const createObjectURL = vi.fn((_blob: Blob) => "blob:texture-worker");
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+
+    try {
+      new TextureWorkerBridge({ onMessage: vi.fn() });
+
+      const blob = createObjectURL.mock.calls[0]![0];
+      await expect(blob.text()).resolves.toBe(buildTextureWorkerSource());
+    } finally {
+      vi.unstubAllGlobals();
+      Object.defineProperty(URL, "createObjectURL", {
+        configurable: true,
+        value: realCreateObjectURL,
+      });
+    }
+  });
+});
 
 describe("TextureWorkerBridge", () => {
   const originalWorker = globalThis.Worker;

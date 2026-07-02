@@ -111,7 +111,7 @@
 2. 登录 Vercel，并 fork/import 仓库。
 3. 配置必需的 S3 变量。
 4. 点击 **Deploy**。
-5. Vercel 构建会运行 `scripts/build-static.sh`；S3 凭据完整时执行完整构建。
+5. Vercel 构建会运行 `scripts/build-static.sh`，其内部执行 `pnpm build`；S3 凭据完整时由 precheck 刷新 manifest。
 
 ---
 
@@ -285,9 +285,9 @@ Vercel 使用：
 - **构建命令：** `sh scripts/build-static.sh`
 - **输出目录：** `apps/web/dist`
 
-配置了 `REPO_URL` 和 `REPO_TOKEN` 时，`scripts/build-static.sh` 会先恢复缓存中的 manifest、geocoding cache 和缩略图，再判断是否需要 S3。构建成功后，它会把最新构建产物同步回缓存仓库。
+配置了 `REPO_URL` 和 `REPO_TOKEN` 时，`scripts/build-static.sh` 会先恢复缓存中的 manifest、geocoding cache 和缩略图，再执行构建。构建成功后，它会把最新构建产物同步回缓存仓库。
 
-S3 凭据完整时，`scripts/build-static.sh` 会运行 `pnpm build`。缺少 S3 凭据但存在可复用 `generated/photos-manifest.json` 时，它会运行 `pnpm build:web`，让 Preview 部署仍可成功。
+`scripts/build-static.sh` 始终运行 `pnpm build`；所有新鲜度与降级决策统一由 `apps/web/scripts/precheck.ts` 负责。缺少 S3 凭据但存在可复用 `generated/photos-manifest.json` 时，precheck 会复用它，让 Preview 部署仍可成功。生产部署（`VERCEL_ENV=production`，其他平台可用 `REQUIRE_FRESH_BUILD=true`）则会失败，拒绝发布陈旧 manifest。
 
 ### 其他静态托管平台
 

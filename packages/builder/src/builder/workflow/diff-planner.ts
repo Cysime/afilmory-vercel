@@ -1,7 +1,7 @@
 import { thumbnailExists } from "../../image/thumbnail.js";
 import { logger } from "../../logger/index.js";
-import { needsUpdate } from "../../manifest/manager.js";
 import { findPhotoIdCollisionKeys } from "../../photo/id.js";
+import { decidePhotoWork } from "../../photo/work-decision.js";
 import type { StorageObject } from "../../storage/interfaces.js";
 import type { PhotoManifestItem } from "../../types/photo.js";
 import type { BuildSession } from "./session.js";
@@ -63,29 +63,22 @@ export class DiffPlanner {
   ): Promise<StorageObject[]> {
     const { options } = session;
 
-    if (options.isForceMode || options.isForceManifest) {
-      return imageObjects;
-    }
-
     const tasksToProcess: StorageObject[] = [];
 
+    // 与 worker 侧的 shouldProcessPhoto 共享同一判定实现（decidePhotoWork），
+    // 避免两处级联漂移导致增量构建静默出错。
     for (const obj of imageObjects) {
       const { key } = obj;
       const existingItem = existingManifestMap.get(key);
-      const photoId = session.getPhotoIdForKey(key, existingItem);
 
-      if (!existingItem) {
-        tasksToProcess.push(obj);
-        continue;
-      }
+      const { shouldProcess } = await decidePhotoWork(
+        existingItem,
+        obj,
+        options,
+        () => thumbnailExists(session.getPhotoIdForKey(key, existingItem)),
+      );
 
-      if (needsUpdate(existingItem, obj)) {
-        tasksToProcess.push(obj);
-        continue;
-      }
-
-      const hasThumbnail = await thumbnailExists(photoId);
-      if (!hasThumbnail || options.isForceThumbnails) {
+      if (shouldProcess) {
         tasksToProcess.push(obj);
       }
     }

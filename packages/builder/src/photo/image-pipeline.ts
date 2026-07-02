@@ -21,7 +21,6 @@ import {
   processToneAnalysis,
 } from "./data-processors.js";
 import { detectGainMap } from "./gainmap-detector.js";
-import { createPhotoId } from "./id.js";
 import { extractPhotoInfo } from "./info-extractor.js";
 import { processLivePhoto } from "./live-photo-handler.js";
 import { detectMotionPhoto } from "./motion-photo-detector.js";
@@ -128,34 +127,6 @@ export async function processImageWithSharp(
 }
 
 /**
- * 生成带摘要后缀的 ID
- * @param s3Key S3 键
- * @returns 带摘要后缀的 ID
- */
-function generatePhotoId(
-  s3Key: string,
-  existingItem?: PhotoManifestItem,
-  runtime: PhotoPipelineRuntime = createPhotoPipelineRuntime(),
-): string {
-  const { services } = runtime;
-  const digestSuffixLength =
-    services.config.system.processing.digestSuffixLength ?? 0;
-
-  if (
-    existingItem?.id &&
-    digestSuffixLength <= 0 &&
-    !services.photoId.hasCollision(s3Key)
-  ) {
-    return existingItem.id;
-  }
-
-  return createPhotoId(s3Key, {
-    digestSuffixLength,
-    forceDigest: services.photoId.hasCollision(s3Key),
-  });
-}
-
-/**
  * 完整的照片处理管道
  * 整合所有处理步骤
  */
@@ -166,7 +137,7 @@ export async function executePhotoProcessingPipeline(
   const { photoKey, obj, existingItem, livePhotoMap, options } = context;
   const { loggers, storageManager } = runtime;
   // Generate the actual photo ID with digest suffix
-  const photoId = generatePhotoId(photoKey, existingItem, runtime);
+  const photoId = runtime.services.photoId.getIdForKey(photoKey, existingItem);
 
   try {
     // 1. 预处理图片
@@ -322,7 +293,10 @@ export async function processPhotoWithPipeline(
   const { photoKey, existingItem, obj, options } = context;
   const { emitPluginEvent, loggers } = pipelineRuntime;
 
-  const photoId = generatePhotoId(photoKey, existingItem, pipelineRuntime);
+  const photoId = pipelineRuntime.services.photoId.getIdForKey(
+    photoKey,
+    existingItem,
+  );
 
   await emitPluginEvent(runtime.runState, "beforePhotoProcess", {
     options: runtime.builderOptions,

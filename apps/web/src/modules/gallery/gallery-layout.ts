@@ -297,6 +297,16 @@ export function selectVisibleMasonryCells({
   };
 }
 
+/**
+ * 估算某张照片在虚拟瀑布流里的屏幕矩形（cell 未渲染、getItemRect 拿不到时用）。
+ *
+ * 实现上直接调用 computeMasonryLayout 复算同一份布局：items 结构与 MasonryRoot
+ * 一致（桌面端 header 哨兵占 index 0，占位高度用测得的 headerHeight；空高度的
+ * header 与真实布局一样不占位——真实布局里它尚未 measure 时照片也按无 header 排），
+ * 照片高度同样由 computeMasonryItemHeight 得出。于是「估算与真实布局逐像素一致」
+ * 是构造性成立的，不再靠手抄放置循环维持。每次打开/关闭 viewer 才跑一次，
+ * O(n)（n 为照片数，百量级）可忽略。
+ */
 export function estimatePhotoVirtualRect({
   headerHeight,
   isMobile,
@@ -315,36 +325,42 @@ export function estimatePhotoVirtualRect({
   if (columnCount <= 0 || columnWidth <= 0) {
     return null;
   }
-
-  const columnHeights = Array.from({ length: columnCount }, () => 0);
-  if (!isMobile && columnHeights.length > 0 && headerHeight > 0) {
-    columnHeights[0] = headerHeight + rowGutter;
+  if (photoIndex < 0 || photoIndex >= photos.length) {
+    return null;
   }
 
-  for (let index = 0; index <= photoIndex; index += 1) {
-    const photo = photos[index];
-    if (!photo) {
-      return null;
-    }
-
-    // 与 computeMasonryLayout 同一套整数几何，估算矩形才能与真实布局逐像素一致。
-    const height = computeMasonryItemHeight(columnWidth, photo);
-    const column = getShortestColumnIndex(columnHeights);
-    const left = Math.round(column * (columnWidth + columnGutter));
-    const top = columnHeights[column] ?? 0;
-
-    if (index === photoIndex) {
-      return {
-        left: containerRect.left + left,
-        top: containerRect.top + top,
-        width: columnWidth,
-        height,
-        borderRadius: 0,
-      };
-    }
-
-    columnHeights[column] = top + height + rowGutter;
+  const includeHeader = !isMobile && headerHeight > 0;
+  // 目标照片之后的 item 不影响它的位置，截断到目标即可。
+  const targetPhotos = photos.slice(0, photoIndex + 1);
+  if (targetPhotos.some((photo) => !photo)) {
+    return null;
   }
 
-  return null;
+  const items: MasonryItemType[] = includeHeader
+    ? [MasonryHeaderItem.default, ...targetPhotos]
+    : targetPhotos;
+  const { cells } = computeMasonryLayout({
+    items,
+    columnCount,
+    columnWidth,
+    columnGutter,
+    rowGutter,
+    getItemHeight: (item) =>
+      item instanceof MasonryHeaderItem
+        ? headerHeight
+        : computeMasonryItemHeight(columnWidth, item),
+  });
+
+  const cell = cells[includeHeader ? photoIndex + 1 : photoIndex];
+  if (!cell) {
+    return null;
+  }
+
+  return {
+    left: containerRect.left + cell.left,
+    top: containerRect.top + cell.top,
+    width: cell.width,
+    height: cell.height,
+    borderRadius: 0,
+  };
 }

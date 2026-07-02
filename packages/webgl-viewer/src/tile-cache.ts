@@ -26,6 +26,15 @@ export function createTileKey(x: number, y: number, lodLevel: number): TileKey {
   return `${x}-${y}-${lodLevel}`;
 }
 
+export function parseTileKey(key: TileKey): {
+  x: number;
+  y: number;
+  lodLevel: number;
+} {
+  const [x, y, lodLevel] = key.split("-").map(Number);
+  return { x, y, lodLevel };
+}
+
 export function getTileGridSize(input: {
   imageWidth: number;
   imageHeight: number;

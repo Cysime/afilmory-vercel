@@ -11,6 +11,7 @@ import {
   createTileKey,
   getTileGridSize as getTileGridSizeForLOD,
   MAX_TILES_PER_FRAME,
+  parseTileKey,
   SIMPLE_LOD_LEVELS,
   TILE_CACHE_SIZE,
 } from "./tile-cache";
@@ -36,6 +37,7 @@ import {
   zoomAtTransform,
 } from "./transform-controller";
 import { TextureWorkerBridge } from "./worker-bridge";
+import type { TextureWorkerMessage } from "./worker-protocol";
 
 // 简化的 WebGL 图像查看器引擎
 export class WebGLImageViewerEngine {
@@ -246,13 +248,14 @@ export class WebGLImageViewerEngine {
     });
   }
 
-  private handleWorkerMessage(e: MessageEvent) {
+  private handleWorkerMessage(e: MessageEvent<TextureWorkerMessage>) {
     if (this.isDestroyed) return;
 
-    const { type, payload } = e.data;
+    const message = e.data;
 
-    if (type === "image-loaded") {
-      const { imageBitmap, imageWidth, imageHeight, lodLevel } = payload;
+    if (message.type === "image-loaded") {
+      const { imageBitmap, imageWidth, imageHeight, lodLevel } =
+        message.payload;
       try {
         if (!this.imageWidth || !this.imageHeight) {
           this.imageWidth = imageWidth;
@@ -290,7 +293,7 @@ export class WebGLImageViewerEngine {
       return;
     }
 
-    if (type === "load-error") {
+    if (message.type === "load-error") {
       this.isLoadingTexture = false;
       this.notifyLoadingStateChange(false);
       if (this.loadImageReject) {
@@ -301,15 +304,15 @@ export class WebGLImageViewerEngine {
       return;
     }
 
-    if (type === "init-done") {
+    if (message.type === "init-done") {
       this.textureWorkerInitialized = true;
       // After worker is initialized, we can start processing pending tiles.
       this.updateTileCache();
       return;
     }
 
-    if (type === "tile-created") {
-      const { key, imageBitmap, lodLevel } = payload;
+    if (message.type === "tile-created") {
+      const { key, imageBitmap, lodLevel } = message.payload;
       const loadingInfo = this.tileRequestRuntime.getLoadingInfo(key);
       const tileInfoInCache = this.tileCache.get(key);
 
@@ -326,7 +329,7 @@ export class WebGLImageViewerEngine {
       imageBitmap.close(); // free memory
 
       if (texture) {
-        const [x, y] = key.split("-").map(Number);
+        const { x, y } = parseTileKey(key);
         const tileInfo: TileInfo = {
           x,
           y,
@@ -352,8 +355,8 @@ export class WebGLImageViewerEngine {
       } else if (loadingInfo) {
         this.tileRequestRuntime.markFailed(key);
       }
-    } else if (type === "tile-error") {
-      const { key, error } = payload;
+    } else if (message.type === "tile-error") {
+      const { key, error } = message.payload;
       console.warn(`Worker failed to create tile: ${key}`, error);
       this.tileRequestRuntime.markFailed(key);
     }
@@ -702,7 +705,7 @@ export class WebGLImageViewerEngine {
       }
 
       // 解析瓦片坐标
-      const [x, y, lodLevel] = key.split("-").map(Number);
+      const { x, y, lodLevel } = parseTileKey(key);
       const lodConfig = SIMPLE_LOD_LEVELS[lodLevel];
 
       this.workerBridge.createTile({

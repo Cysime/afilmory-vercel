@@ -23,6 +23,7 @@ import {
   TablerAperture,
 } from "~/icons";
 import { isMobileDevice } from "~/lib/device-viewport";
+import { getEssentialExif } from "~/lib/essential-exif";
 import { buildGalleryFilterSearch } from "~/lib/gallery-filter-url";
 import { getImageFormat } from "~/lib/image-utils";
 import { buildPhotoDetailPathname } from "~/lib/photo-detail-route";
@@ -142,46 +143,14 @@ export const MasonryPhotoItem = memo(
     // 保证格子壳与照片内容逐像素一致、无小数 y 坐标（iOS 分块光栅化 hairline 的根源）。
     const calculatedHeight = computeMasonryItemHeight(width, data);
 
-    // 格式化 EXIF 数据
-    const formatExifData = () => {
-      const { exif } = data;
-
-      // 安全处理：如果 exif 不存在或为空，则返回空对象
-      if (!exif) {
-        return {
-          focalLength35mm: null,
-          iso: null,
-          shutterSpeed: null,
-          aperture: null,
-        };
-      }
-
-      // 等效焦距 (35mm)
-      const focalLength35mm = exif.FocalLengthIn35mmFormat
-        ? Number.parseInt(exif.FocalLengthIn35mmFormat)
-        : exif.FocalLength
-          ? Number.parseInt(exif.FocalLength)
-          : null;
-
-      // ISO
-      const iso = exif.ISO;
-
-      // 快门速度
-      const exposureTime = exif.ExposureTime;
-      const shutterSpeed = exposureTime ? `${exposureTime}s` : null;
-
-      // 光圈
-      const aperture = exif.FNumber ? `f/${exif.FNumber}` : null;
-
-      return {
-        focalLength35mm,
-        iso,
-        shutterSpeed,
-        aperture,
-      };
+    // 核心 EXIF 拍摄参数：与查看器面板共用同一份格式化逻辑（essential-exif.ts）。
+    // 覆盖层只有一格焦距，无 35mm 等效值时回退实际焦距。
+    const essentialExif = getEssentialExif(data.exif);
+    const exifData = {
+      ...essentialExif,
+      focalLength35mm:
+        essentialExif.focalLength35mm ?? essentialExif.focalLength,
     };
-
-    const exifData = formatExifData();
     const shouldShowImageDetails = imageLoaded || hasLoadedThumbnailBefore;
 
     // 使用通用的图片格式提取函数

@@ -1,17 +1,12 @@
 /// <reference lib="webworker" />
 
+// TILE_SIZE and SIMPLE_LOD_LEVELS are injected by worker-bridge.ts as a
+// generated prelude (single source of truth: tile-cache.ts). Do not declare
+// them here.
+/* global TILE_SIZE, SIMPLE_LOD_LEVELS */
+
 let originalImage = null;
 
-const TILE_SIZE = 512; // Must be same as in WebGLImageViewerEngine.ts
-
-// 简化的 LOD 级别
-const WORKER_SIMPLE_LOD_LEVELS = [
-  { scale: 0.25 }, // 极低质量
-  { scale: 0.5 }, // 低质量
-  { scale: 1 }, // 正常质量
-  { scale: 2 }, // 高质量
-  { scale: 4 }, // 超高质量
-];
 /**
  *
  * @param {MessageEvent} e
@@ -36,7 +31,7 @@ self.onmessage = async (e) => {
 
         // Create initial LOD texture
         const lodLevel = 1; // Initial LOD level
-        const lodConfig = WORKER_SIMPLE_LOD_LEVELS[lodLevel];
+        const lodConfig = SIMPLE_LOD_LEVELS[lodLevel];
         const finalWidth = Math.max(
           1,
           Math.round(originalImage.width * lodConfig.scale),

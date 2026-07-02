@@ -111,7 +111,7 @@ Click the button below and follow the prompts to configure S3-related environmen
 2. Sign in to Vercel and fork/import the repository.
 3. Configure the required S3 variables.
 4. Click **Deploy**.
-5. The Vercel build runs `scripts/build-static.sh`, which runs the full build when S3 credentials are available.
+5. The Vercel build runs `scripts/build-static.sh`, which runs `pnpm build`; precheck refreshes the manifest from S3 when credentials are available.
 
 ---
 
@@ -295,9 +295,9 @@ Vercel uses:
 - **Build command:** `sh scripts/build-static.sh`
 - **Output directory:** `apps/web/dist`
 
-When `REPO_URL` and `REPO_TOKEN` are configured, `scripts/build-static.sh` restores cached manifest, geocoding cache, and thumbnails before deciding whether it needs S3. After a successful build it pushes the refreshed artifacts back to the cache repository.
+When `REPO_URL` and `REPO_TOKEN` are configured, `scripts/build-static.sh` restores cached manifest, geocoding cache, and thumbnails before running the build. After a successful build it pushes the refreshed artifacts back to the cache repository.
 
-`scripts/build-static.sh` runs `pnpm build` when required S3 credentials are present. If S3 credentials are missing but a reusable `generated/photos-manifest.json` exists, it runs `pnpm build:web` so preview deployments can still succeed.
+`scripts/build-static.sh` always runs `pnpm build`; all freshness and fallback decisions live in `apps/web/scripts/precheck.ts`. When S3 credentials are missing but a reusable `generated/photos-manifest.json` exists, precheck reuses it so preview deployments still succeed. Production deploys (`VERCEL_ENV=production`, or `REQUIRE_FRESH_BUILD=true` on other platforms) fail instead of publishing a stale manifest.
 
 ### Other static hosts
 
