@@ -67,7 +67,10 @@ vi.mock("motion/react", () => ({
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    // 简单插值：断言未命名照片 aria-label 里的日期是否被真正传入
+    t: (key: string, options?: Record<string, unknown>) =>
+      options && "date" in options ? `${key}:${String(options.date)}` : key,
+    i18n: { language: "en" },
   }),
 }));
 
@@ -212,6 +215,34 @@ describe("MasonryPhotoItem", () => {
     const img = getByAltText("A7C01202");
     expect(img.getAttribute("loading")).toBe("eager");
     expect(img.getAttribute("fetchpriority")).toBe("low");
+  });
+
+  it("labels untitled photos with their formatted taken date for screen readers", () => {
+    const untitled = { ...photo, title: "", description: "" };
+    // 期望值用同一套 Intl 参数计算，避免测试机时区导致日期偏移
+    const expectedDate = new Intl.DateTimeFormat("en", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    }).format(new Date(untitled.dateTaken));
+
+    const { getByRole } = renderItem({ data: untitled, width: 300, index: 0 });
+
+    expect(
+      getByRole("button", {
+        name: `photo.untitled.taken-on:${expectedDate}`,
+      }),
+    ).toBeTruthy();
+  });
+
+  it("falls back to a generic untitled label when the taken date is invalid", () => {
+    const untitled = { ...photo, title: "", description: "", dateTaken: "" };
+
+    const { getByRole } = renderItem({ data: untitled, width: 300, index: 0 });
+
+    expect(
+      getByRole("button", { name: "photo.untitled.fallback" }),
+    ).toBeTruthy();
   });
 
   it("waits for async route navigation before opening the viewer", async () => {

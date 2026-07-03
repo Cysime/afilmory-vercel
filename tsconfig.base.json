@@ -1,0 +1,26 @@
+{
+  // 各 workspace 包共享的 compilerOptions（包内 tsconfig 通过 extends 复用）。
+  //
+  // 其中 "moduleResolution": "bundler" 和 "allowImportingTsExtensions"（配合
+  // "noEmit"）是 load-bearing 的：所有包都不做构建、package.json exports 直接
+  // 指向 ./src/*.ts 裸源码，跨包类型解析全靠这两项，删掉任何一个都会破坏。
+  //
+  // "lib" 默认取最保守的纯 ESNext（不含 DOM），浏览器相关的包自行覆盖。
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": false,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noImplicitAny": true,
+    "noEmit": true
+  }
+}

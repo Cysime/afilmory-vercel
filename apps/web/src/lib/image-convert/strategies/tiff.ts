@@ -1,3 +1,4 @@
+import { getI18n } from "~/i18n";
 import { isSafari } from "~/lib/device-viewport";
 import type { LoadingCallbacks } from "~/lib/image-loading-types";
 
@@ -25,11 +26,14 @@ export class TiffConverterStrategy implements ImageConverterStrategy {
     const { onLoadingStateUpdate } = callbacks || {};
 
     try {
+      // 获取国际化文案
+      const i18n = getI18n();
+
       // 更新转换状态
       onLoadingStateUpdate?.({
         isConverting: true,
         isQueueWaiting: false,
-        conversionMessage: "Converting TIFF image...",
+        conversionMessage: i18n.t("loading.tiff.converting"),
       });
 
       // 执行转换逻辑
@@ -112,7 +116,9 @@ export class TiffConverterStrategy implements ImageConverterStrategy {
             }
           },
           "image/jpeg",
-          1,
+          // 0.9 与 1 在屏幕上肉眼不可分，但体积通常小 3-5 倍；
+          // 转换结果会进入有内存上限的 blob 缓存，质量 1 会白白挤占缓存额度。
+          0.9,
         );
       });
     } catch (error) {
