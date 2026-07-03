@@ -26,11 +26,13 @@ describe("TextureLodManager", () => {
     expect(deleted).toEqual([first]);
     expect(manager.texture).toBe(second);
     expect(manager.currentLOD).toBe(2);
-    expect(manager.textureCount).toBe(1);
+    expect(manager.hasTexture).toBe(true);
 
     manager.dispose();
     manager.dispose();
 
     expect(deleted).toEqual([first, second]);
+    expect(manager.hasTexture).toBe(false);
+    expect(manager.currentLOD).toBe(1);
   });
 });

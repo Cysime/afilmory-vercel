@@ -49,3 +49,49 @@ export function getTileGridSize(input: {
     rows: Math.ceil(scaledHeight / TILE_SIZE),
   };
 }
+
+/**
+ * Actual pixel dimensions of one tile's bitmap. Interior tiles are
+ * TILE_SIZE × TILE_SIZE; edge tiles are smaller. Mirrors the slicing math in
+ * texture.worker.js so memory accounting matches what the worker produces.
+ */
+export function getTilePixelSize(input: {
+  x: number;
+  y: number;
+  lodLevel: number;
+  imageWidth: number;
+  imageHeight: number;
+}): { width: number; height: number } {
+  const lodConfig = SIMPLE_LOD_LEVELS[input.lodLevel];
+  if (!lodConfig || input.imageWidth <= 0 || input.imageHeight <= 0) {
+    return { width: 0, height: 0 };
+  }
+
+  const { cols, rows } = getTileGridSize({
+    imageWidth: input.imageWidth,
+    imageHeight: input.imageHeight,
+    lodLevel: input.lodLevel,
+  });
+
+  const sourceWidth = input.imageWidth / cols;
+  const sourceHeight = input.imageHeight / rows;
+  const actualSourceWidth = Math.min(
+    sourceWidth,
+    input.imageWidth - input.x * sourceWidth,
+  );
+  const actualSourceHeight = Math.min(
+    sourceHeight,
+    input.imageHeight - input.y * sourceHeight,
+  );
+
+  return {
+    width: Math.max(
+      0,
+      Math.min(TILE_SIZE, Math.ceil(actualSourceWidth * lodConfig.scale)),
+    ),
+    height: Math.max(
+      0,
+      Math.min(TILE_SIZE, Math.ceil(actualSourceHeight * lodConfig.scale)),
+    ),
+  };
+}

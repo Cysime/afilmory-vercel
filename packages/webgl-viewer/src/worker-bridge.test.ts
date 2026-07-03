@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SIMPLE_LOD_LEVELS, TILE_SIZE } from "./tile-cache";
-import { buildTextureWorkerSource, TextureWorkerBridge } from "./worker-bridge";
+import {
+  buildTextureWorkerSource,
+  clampDimensionsToFit,
+  TextureWorkerBridge,
+} from "./worker-bridge";
 
 class WorkerMock {
   static instances: WorkerMock[] = [];
@@ -20,6 +24,46 @@ class WorkerMock {
   }
 }
 
+describe("clampDimensionsToFit", () => {
+  it("keeps dimensions that already fit", () => {
+    expect(clampDimensionsToFit(4000, 3000, 4096)).toEqual({
+      width: 4000,
+      height: 3000,
+    });
+  });
+
+  it("scales oversized dimensions down to the cap, preserving aspect ratio", () => {
+    // 10000px 原图 → 0.5x 底图 5000px：老 GPU 的 4096 上限会让 texImage2D 失败
+    expect(clampDimensionsToFit(5000, 3750, 4096)).toEqual({
+      width: 4096,
+      height: 3072,
+    });
+    // 高度主导的情况
+    expect(clampDimensionsToFit(1000, 8192, 4096)).toEqual({
+      width: 500,
+      height: 4096,
+    });
+  });
+
+  it("never produces a dimension below 1", () => {
+    expect(clampDimensionsToFit(10_000, 1, 4096)).toEqual({
+      width: 4096,
+      height: 1,
+    });
+  });
+
+  it("passes dimensions through when the cap is unknown (0 / negative)", () => {
+    expect(clampDimensionsToFit(9000, 9000, 0)).toEqual({
+      width: 9000,
+      height: 9000,
+    });
+    expect(clampDimensionsToFit(9000, 9000, -1)).toEqual({
+      width: 9000,
+      height: 9000,
+    });
+  });
+});
+
 describe("buildTextureWorkerSource", () => {
   it("prepends the shared constants from tile-cache.ts to the worker source", () => {
     const source = buildTextureWorkerSource();
@@ -28,6 +72,9 @@ describe("buildTextureWorkerSource", () => {
     expect(source).toContain(
       `const SIMPLE_LOD_LEVELS = ${JSON.stringify(SIMPLE_LOD_LEVELS)};`,
     );
+    // The clamp helper is injected with a stable binding name (survives
+    // minifier renames because it is assigned, not referenced by name).
+    expect(source).toContain("const clampDimensionsToFit = ");
     // The worker body itself must not re-declare the injected constants.
     const [, workerBody] = source.split("\nlet originalImage");
     expect(workerBody).toBeDefined();
@@ -113,7 +160,11 @@ describe("TextureWorkerBridge", () => {
     const worker = WorkerMock.instances[0];
     const blob = new Blob(["photo"], { type: "image/jpeg" });
 
-    bridge.loadImage({ blob, url: "https://example.com/photo.jpg" });
+    bridge.loadImage({
+      blob,
+      maxTextureSize: 4096,
+      url: "https://example.com/photo.jpg",
+    });
     bridge.createTile({
       imageHeight: 3000,
       imageWidth: 4000,
@@ -127,6 +178,7 @@ describe("TextureWorkerBridge", () => {
     expect(worker.postMessage).toHaveBeenNthCalledWith(1, {
       payload: {
         blob,
+        maxTextureSize: 4096,
         url: "https://example.com/photo.jpg",
       },
       type: "load-image",

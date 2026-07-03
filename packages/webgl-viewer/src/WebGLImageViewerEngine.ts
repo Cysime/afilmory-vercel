@@ -6,24 +6,8 @@ import { WebGLInputController } from "./input-controller";
 import type { DebugInfo, WebGLImageViewerProps } from "./interface";
 import { WebGLViewerRenderer } from "./renderer";
 import { getLodQuality, TextureLodManager } from "./texture-lod-manager";
-import type { TileInfo, TileKey } from "./tile-cache";
-import {
-  createTileKey,
-  getTileGridSize as getTileGridSizeForLOD,
-  MAX_TILES_PER_FRAME,
-  parseTileKey,
-  SIMPLE_LOD_LEVELS,
-  TILE_CACHE_SIZE,
-} from "./tile-cache";
-import { TileRequestRuntime } from "./tile-request-runtime";
-import {
-  calculateVisibleTiles as calculateVisibleTilesForViewport,
-  createViewportHash,
-} from "./tile-scheduler";
-import {
-  cleanupTileTextures,
-  disposeAllTileTextures,
-} from "./tile-texture-cleanup";
+import { SIMPLE_LOD_LEVELS } from "./tile-cache";
+import { TileManager } from "./tile-manager";
 import type {
   TransformBounds,
   TransformState,
@@ -65,7 +49,6 @@ export class WebGLImageViewerEngine {
   private boundContextLost: (event: Event) => void = () => {};
   private boundContextRestored: () => void = () => {};
   private animationFrameId: number | null = null;
-  private tileUpdateTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private readonly animationController = new TransformAnimationController();
 
   // 简化的纹理管理
@@ -90,14 +73,15 @@ export class WebGLImageViewerEngine {
 
   private boundResizeCanvas: () => void;
 
-  // 瓦片系统
-  private tileCache = new Map<TileKey, TileInfo>();
-  private tileRequestRuntime = new TileRequestRuntime();
-  private tileProcessingFrameId: number | null = null;
+  // 瓦片系统（缓存/请求调度/可见集合/防抖全部由 TileManager 拥有）
+  private readonly tileManager: TileManager;
 
-  // 可视区域信息
-  private currentVisibleTiles = new Set<TileKey>();
-  private lastViewportHash = "";
+  // GPU 能力：单纹理最大边长，用于钳制 worker 生成的底图纹理
+  private readonly maxTextureSize: number;
+
+  // 调试用真实数据：帧计数与底图纹理实际尺寸
+  private frameCount = 0;
+  private baseTextureSize: { width: number; height: number } | null = null;
 
   // Promise resolvers for loadImage
   private loadImageResolve: (() => void) | null = null;
@@ -130,6 +114,33 @@ export class WebGLImageViewerEngine {
     }
     this.gl = gl;
     this.textureManager = new TextureLodManager(gl);
+    this.maxTextureSize = Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)) || 0;
+
+    this.tileManager = new TileManager({
+      getViewport: () => ({
+        canvasWidth: this.canvasWidth,
+        canvasHeight: this.canvasHeight,
+        imageWidth: this.imageWidth,
+        imageHeight: this.imageHeight,
+        imageLoaded: this.imageLoaded,
+        scale: this.scale,
+        translateX: this.translateX,
+        translateY: this.translateY,
+      }),
+      getSelectedLodLevel: () => this.selectOptimalLOD(),
+      createTexture: (source) => this.createWebGLTexture(source),
+      deleteTexture: (texture) => this.gl.deleteTexture(texture),
+      requestRender: () => this.render(),
+      canDispatchTiles: () =>
+        !this.isDestroyed &&
+        !this.isContextLost &&
+        this.workerBridge !== null &&
+        this.textureWorkerInitialized,
+      requestTileFromWorker: (request) => {
+        this.workerBridge?.createTile(request);
+      },
+      onVisibleLodReady: (lodLevel) => this.handleVisibleLodReady(lodLevel),
+    });
 
     this.boundResizeCanvas = () => this.resizeCanvas();
 
@@ -202,14 +213,11 @@ export class WebGLImageViewerEngine {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
-    if (this.tileProcessingFrameId !== null) {
-      cancelAnimationFrame(this.tileProcessingFrameId);
-      this.tileProcessingFrameId = null;
-    }
 
-    // All GPU textures are gone; drop our bookkeeping so a restore starts clean.
-    this.tileCache.clear();
-    this.tileRequestRuntime.clear();
+    // All GPU textures are gone; drop the tile bookkeeping so a restore starts
+    // clean.
+    this.tileManager.reset();
+    this.baseTextureSize = null;
 
     console.warn("WebGL context lost; pausing rendering until restored.");
   }
@@ -253,6 +261,11 @@ export class WebGLImageViewerEngine {
 
     const message = e.data;
 
+    // 瓦片相关消息（tile-created / tile-error）由瓦片子系统消化
+    if (this.tileManager.handleWorkerMessage(message)) {
+      return;
+    }
+
     if (message.type === "image-loaded") {
       const { imageBitmap, imageWidth, imageHeight, lodLevel } =
         message.payload;
@@ -265,11 +278,17 @@ export class WebGLImageViewerEngine {
 
         this.notifyLoadingStateChange(true, LoadingState.CREATE_TEXTURE);
 
+        const baseBitmapWidth = imageBitmap.width;
+        const baseBitmapHeight = imageBitmap.height;
         const texture = this.createWebGLTexture(imageBitmap);
         imageBitmap.close();
 
         if (texture) {
           this.textureManager.setBaseTexture(texture, lodLevel);
+          this.baseTextureSize = {
+            width: baseBitmapWidth,
+            height: baseBitmapHeight,
+          };
           this.currentQuality = getLodQuality(lodLevel);
         }
 
@@ -307,58 +326,7 @@ export class WebGLImageViewerEngine {
     if (message.type === "init-done") {
       this.textureWorkerInitialized = true;
       // After worker is initialized, we can start processing pending tiles.
-      this.updateTileCache();
-      return;
-    }
-
-    if (message.type === "tile-created") {
-      const { key, imageBitmap, lodLevel } = message.payload;
-      const loadingInfo = this.tileRequestRuntime.getLoadingInfo(key);
-      const tileInfoInCache = this.tileCache.get(key);
-
-      // Tile might have been loaded by other means or is no longer needed
-      if (!this.currentVisibleTiles.has(key)) {
-        imageBitmap.close();
-        if (loadingInfo) {
-          this.tileRequestRuntime.markLoaded(key);
-        }
-        return;
-      }
-
-      const texture = this.createWebGLTexture(imageBitmap);
-      imageBitmap.close(); // free memory
-
-      if (texture) {
-        const { x, y } = parseTileKey(key);
-        const tileInfo: TileInfo = {
-          x,
-          y,
-          lodLevel,
-          texture,
-          lastUsed: performance.now(),
-          isLoading: false,
-          priority: loadingInfo
-            ? loadingInfo.priority
-            : tileInfoInCache
-              ? tileInfoInCache.priority
-              : 0,
-        };
-        this.tileCache.set(key, tileInfo);
-
-        if (loadingInfo) {
-          this.tileRequestRuntime.markLoaded(key);
-        }
-
-        if (this.currentVisibleTiles.has(key)) {
-          this.render();
-        }
-      } else if (loadingInfo) {
-        this.tileRequestRuntime.markFailed(key);
-      }
-    } else if (message.type === "tile-error") {
-      const { key, error } = message.payload;
-      console.warn(`Worker failed to create tile: ${key}`, error);
-      this.tileRequestRuntime.markFailed(key);
+      this.tileManager.updateTileCache();
     }
   }
 
@@ -397,6 +365,7 @@ export class WebGLImageViewerEngine {
       this.workerBridge?.loadImage({
         url,
         blob: sourceBlob ?? null,
+        maxTextureSize: this.maxTextureSize,
       });
     });
   }
@@ -504,7 +473,7 @@ export class WebGLImageViewerEngine {
       this.render();
       this.notifyZoomChange();
       // 动画结束后，立即更新瓦片
-      this.updateTileCache();
+      this.tileManager.updateTileCache();
     }
   }
 
@@ -590,150 +559,22 @@ export class WebGLImageViewerEngine {
     );
   }
 
-  // 瓦片系统实现
-  private getTileKey(x: number, y: number, lodLevel: number): TileKey {
-    return createTileKey(x, y, lodLevel);
-  }
-
-  private getTileGridSize(lodLevel: number): { cols: number; rows: number } {
-    return getTileGridSizeForLOD({
-      imageWidth: this.imageWidth,
-      imageHeight: this.imageHeight,
-      lodLevel,
-    });
-  }
-
-  private calculateVisibleTiles(): Array<{
-    x: number;
-    y: number;
-    lodLevel: number;
-    priority: number;
-  }> {
-    return calculateVisibleTilesForViewport({
-      ...this.getViewportGeometry(),
-      imageLoaded: this.imageLoaded,
-      lodLevel: this.selectOptimalLOD(),
-      scale: this.scale,
-      translateX: this.translateX,
-      translateY: this.translateY,
-    });
-  }
-
-  private async updateTileCache(): Promise<void> {
-    if (this.isDestroyed) return;
-
-    const visibleTiles = this.calculateVisibleTiles();
-    const newVisibleTiles = new Set<TileKey>();
-
-    // 创建当前视口的哈希，用于检测视口变化
-    const viewportHash = createViewportHash({
-      scale: this.scale,
-      translateX: this.translateX,
-      translateY: this.translateY,
-    });
-    const viewportChanged = viewportHash !== this.lastViewportHash;
-    this.lastViewportHash = viewportHash;
-
-    let addedNewRequest = false;
-
-    // 标记需要的瓦片
-    for (const tile of visibleTiles) {
-      const key = this.getTileKey(tile.x, tile.y, tile.lodLevel);
-      newVisibleTiles.add(key);
-
-      addedNewRequest =
-        this.tileRequestRuntime.queueVisibleTile({
-          hasCachedTile: this.tileCache.has(key),
-          key,
-          priority: tile.priority,
-        }) || addedNewRequest;
-
-      if (this.tileCache.has(key)) {
-        // 更新使用时间
-        const tileInfo = this.tileCache.get(key)!;
-        tileInfo.lastUsed = performance.now();
-      }
-    }
-
-    this.currentVisibleTiles = newVisibleTiles;
-    // 丢弃已不可见但尚未派发的瓦片请求，避免把过期瓦片排到可见瓦片之前。
-    this.tileRequestRuntime.pruneInvisiblePending(newVisibleTiles);
-    this.cleanupOldTiles();
-
-    if (
-      viewportChanged ||
-      addedNewRequest ||
-      this.tileRequestRuntime.hasPendingWork
-    ) {
-      this.processPendingTileRequests();
-    }
-  }
-
-  private cleanupOldTiles(): void {
-    cleanupTileTextures({
-      currentVisibleTiles: this.currentVisibleTiles,
-      deleteTexture: (texture) => this.gl.deleteTexture(texture),
-      maxCacheSize: TILE_CACHE_SIZE,
-      now: performance.now(),
-      tileCache: this.tileCache,
-    });
-  }
-
-  private processPendingTileRequests(): void {
-    if (this.isDestroyed || this.isContextLost) return;
-
-    if (!this.workerBridge || !this.textureWorkerInitialized) {
-      return;
-    }
-
-    if (!this.tileRequestRuntime.hasPendingWork) {
-      if (this.tileProcessingFrameId !== null) {
-        cancelAnimationFrame(this.tileProcessingFrameId);
-        this.tileProcessingFrameId = null;
-      }
-      return;
-    }
-
-    const batch = this.tileRequestRuntime.selectBatch(MAX_TILES_PER_FRAME);
-
-    for (const request of batch) {
-      const { key } = request;
-
-      if (this.tileCache.has(key)) {
-        this.tileRequestRuntime.markLoaded(key);
-        continue;
-      }
-
-      // 解析瓦片坐标
-      const { x, y, lodLevel } = parseTileKey(key);
-      const lodConfig = SIMPLE_LOD_LEVELS[lodLevel];
-
-      this.workerBridge.createTile({
-        x,
-        y,
-        lodLevel,
-        lodConfig,
-        imageWidth: this.imageWidth,
-        imageHeight: this.imageHeight,
-        key,
-      });
-    }
-
-    if (
-      this.tileRequestRuntime.hasPendingWork &&
-      this.tileProcessingFrameId === null
-    ) {
-      this.tileProcessingFrameId = requestAnimationFrame(() => {
-        this.tileProcessingFrameId = null;
-        this.processPendingTileRequests();
-      });
-    }
+  /**
+   * 诚实的质量回调：只有当前选定 LOD 的可见瓦片全部就绪时才上报该 LOD 对应的
+   * 质量，且仅在质量实际变化时触发 onLoadingStateChange。
+   */
+  private handleVisibleLodReady(lodLevel: number) {
+    const quality = getLodQuality(lodLevel);
+    if (quality === this.currentQuality) return;
+    this.currentQuality = quality;
+    this.notifyLoadingStateChange(this.isLoadingTexture);
   }
 
   // 修改渲染方法以支持瓦片渲染
   private render() {
     if (this.isDestroyed || this.isContextLost) return;
 
+    this.frameCount++;
     this.renderer.prepareFrame(this.canvas.width, this.canvas.height);
 
     // 始终渲染一个低分辨率的底图作为回退，防止瓦片加载过程中出现空白
@@ -748,21 +589,13 @@ export class WebGLImageViewerEngine {
     const lodLevel = this.selectOptimalLOD();
     const outlinedTileMatrices: Float32Array[] = [];
 
-    for (const tileKey of this.currentVisibleTiles) {
-      const tileInfo = this.tileCache.get(tileKey);
-      if (!tileInfo || !tileInfo.texture || tileInfo.lodLevel !== lodLevel) {
-        continue;
-      }
-
-      // 计算瓦片的渲染变换矩阵
-      const tileMatrix = this.createTileMatrix(
-        tileInfo.x,
-        tileInfo.y,
-        tileInfo.lodLevel,
-      );
-      this.renderer.drawTexturedQuad(tileInfo.texture, tileMatrix);
+    for (const {
+      texture,
+      matrix,
+    } of this.tileManager.collectVisibleRenderTiles(lodLevel)) {
+      this.renderer.drawTexturedQuad(texture, matrix);
       if (this.tileOutlineEnabled) {
-        outlinedTileMatrices.push(tileMatrix);
+        outlinedTileMatrices.push(matrix);
       }
     }
 
@@ -775,20 +608,8 @@ export class WebGLImageViewerEngine {
     // 更新调试信息
     this.updateDebugInfo();
 
-    // 定期更新瓦片缓存
-    if (
-      !this.animationController.isAnimating &&
-      performance.now() - this.lastTileUpdateTime > 100
-    ) {
-      // 100ms 防抖
-      this.lastTileUpdateTime = performance.now();
-      if (this.tileUpdateTimeoutId === null) {
-        this.tileUpdateTimeoutId = setTimeout(() => {
-          this.tileUpdateTimeoutId = null;
-          void this.updateTileCache();
-        }, 0);
-      }
-    }
+    // 定期更新瓦片缓存（100ms 防抖，由 TileManager 负责）
+    this.tileManager.maybeScheduleUpdate(this.animationController.isAnimating);
   }
 
   private notifyImagePainted() {
@@ -807,76 +628,6 @@ export class WebGLImageViewerEngine {
     this.hasNotifiedImagePainted = true;
     this.onImagePainted?.();
   }
-
-  private createTileMatrix(
-    tileX: number,
-    tileY: number,
-    lodLevel: number,
-  ): Float32Array {
-    const { cols, rows } = this.getTileGridSize(lodLevel);
-
-    // 计算瓦片在原图中的区域
-    const tileWidthInImage = this.imageWidth / cols;
-    const tileHeightInImage = this.imageHeight / rows;
-
-    // 瓦片在原图中的边界
-    const tileLeftInImage = tileX * tileWidthInImage;
-    const tileTopInImage = tileY * tileHeightInImage;
-    const tileRightInImage = Math.min(
-      this.imageWidth,
-      tileLeftInImage + tileWidthInImage,
-    );
-    const tileBottomInImage = Math.min(
-      this.imageHeight,
-      tileTopInImage + tileHeightInImage,
-    );
-
-    // 瓦片的实际尺寸（处理边界情况）
-    const actualTileWidth = tileRightInImage - tileLeftInImage;
-    const actualTileHeight = tileBottomInImage - tileTopInImage;
-
-    // 瓦片中心在原图中的位置
-    const tileCenterInImageX = tileLeftInImage + actualTileWidth / 2;
-    const tileCenterInImageY = tileTopInImage + actualTileHeight / 2;
-
-    // 将瓦片中心转换到相对于图像中心的坐标
-    const tileCenterRelativeX = tileCenterInImageX - this.imageWidth / 2;
-    const tileCenterRelativeY = tileCenterInImageY - this.imageHeight / 2;
-
-    // 计算瓦片在 canvas 中的位置
-    const tileCenterInCanvasX =
-      this.canvasWidth / 2 + this.translateX + tileCenterRelativeX * this.scale;
-    const tileCenterInCanvasY =
-      this.canvasHeight / 2 +
-      this.translateY +
-      tileCenterRelativeY * this.scale;
-
-    // 计算瓦片在 canvas 中的尺寸
-    const tileWidthInCanvas = actualTileWidth * this.scale;
-    const tileHeightInCanvas = actualTileHeight * this.scale;
-
-    // 转换到 WebGL 归一化坐标系 (-1 到 1)
-    const scaleX = tileWidthInCanvas / this.canvasWidth;
-    const scaleY = tileHeightInCanvas / this.canvasHeight;
-
-    const translateX = (tileCenterInCanvasX * 2) / this.canvasWidth - 1;
-    const translateY = -((tileCenterInCanvasY * 2) / this.canvasHeight - 1);
-
-    return new Float32Array([
-      scaleX,
-      0,
-      0,
-      0,
-      scaleY,
-      0,
-      translateX,
-      translateY,
-      1,
-    ]);
-  }
-
-  // 添加瓦片更新时间追踪
-  private lastTileUpdateTime = 0;
 
   // 公共方法
   public zoomIn(animated = false) {
@@ -941,11 +692,6 @@ export class WebGLImageViewerEngine {
       this.animationFrameId = null;
     }
 
-    if (this.tileUpdateTimeoutId !== null) {
-      clearTimeout(this.tileUpdateTimeoutId);
-      this.tileUpdateTimeoutId = null;
-    }
-
     window.removeEventListener("resize", this.boundResizeCanvas);
     this.canvas.removeEventListener("webglcontextlost", this.boundContextLost);
     this.canvas.removeEventListener(
@@ -958,23 +704,15 @@ export class WebGLImageViewerEngine {
     // 清理 WebGL 资源
     this.textureManager.dispose();
     this.renderer.dispose();
-    // 释放所有瓦片纹理，避免复用同一 canvas/context 时 GPU 显存随换图累积泄漏。
-    disposeAllTileTextures({
-      deleteTexture: (texture) => this.gl.deleteTexture(texture),
-      tileCache: this.tileCache,
-    });
+    // 瓦片子系统：取消排队任务并释放所有瓦片纹理，避免复用同一 canvas/context
+    // 时 GPU 显存随换图累积泄漏。
+    this.tileManager.dispose();
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
     }
 
-    if (this.tileProcessingFrameId !== null) {
-      cancelAnimationFrame(this.tileProcessingFrameId);
-      this.tileProcessingFrameId = null;
-    }
-
     this.workerBridge?.dispose();
     this.workerBridge = null;
-    this.tileRequestRuntime.clear();
 
     // 最后显式释放 WebGL 上下文本身。删除纹理/缓冲只回收了 GL 对象，上下文的
     // 绘制缓冲与驱动侧内存要等 JS GC 才释放——iOS WebKit 的 GC 在内存压力下才跑、
@@ -1006,15 +744,16 @@ export class WebGLImageViewerEngine {
         userMaxScale,
         effectiveMaxScale,
         originalSizeScale,
-        maxTextureSize: this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE),
+        renderCount: this.frameCount,
+        maxTextureSize: this.maxTextureSize,
         quality: this.currentQuality,
         isLoading: this.isLoadingTexture,
         tileOutlineEnabled: this.tileOutlineEnabled,
-        lodTextureCount: this.textureManager.textureCount,
-        tileCache: this.tileCache,
-        currentVisibleTiles: this.currentVisibleTiles,
-        loadingTiles: this.tileRequestRuntime.loadingTiles,
-        pendingTileRequests: this.tileRequestRuntime.pendingTileRequests,
+        baseTextureSize: this.baseTextureSize,
+        tileCache: this.tileManager.tileCache,
+        currentVisibleTiles: this.tileManager.currentVisibleTiles,
+        loadingTiles: this.tileManager.loadingTiles,
+        pendingTileRequests: this.tileManager.pendingTileRequests,
       }),
     );
   }

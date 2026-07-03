@@ -2,13 +2,31 @@
   "name": "@afilmory/webgl-viewer",
   "type": "module",
   "version": "0.2.0",
-  "description": "",
+  "description": "High-performance WebGL image viewer for React with tiled LOD rendering, pinch/wheel/double-tap gestures, and worker-based texture decoding",
   "author": "Innei",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vsxd/afilmory-vercel",
+    "directory": "packages/webgl-viewer"
+  },
+  "keywords": [
+    "webgl",
+    "image-viewer",
+    "react",
+    "zoom",
+    "pan",
+    "tiles",
+    "lod",
+    "photo"
+  ],
   "exports": {
     ".": "./src/index.ts"
   },
   "main": "./src/index.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "vite build",
     "test": "pnpm --dir ../.. exec vitest run --project webgl-viewer",

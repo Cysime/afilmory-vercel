@@ -72,6 +72,7 @@ function createWebGLMock(): WebGLRenderingContext & {
     LINE_LOOP: 0x0002,
     LINEAR: 0x2601,
     LINK_STATUS: 0x8b82,
+    MAX_TEXTURE_SIZE: 0x0d33,
     ONE_MINUS_SRC_ALPHA: 0x0303,
     RGBA: 0x1908,
     SRC_ALPHA: 0x0302,
@@ -106,6 +107,7 @@ function createWebGLMock(): WebGLRenderingContext & {
     enable: vi.fn(),
     enableVertexAttribArray: vi.fn(),
     getAttribLocation: vi.fn(() => 0),
+    getParameter: vi.fn(() => 4096),
     getProgramInfoLog: vi.fn(() => ""),
     getProgramParameter: vi.fn(() => true),
     getShaderInfoLog: vi.fn(() => ""),
@@ -444,7 +446,7 @@ describe("WebGLImageViewerEngine lifecycle", () => {
     expect(gl.__loseContext).toHaveBeenCalledTimes(1);
   });
 
-  it("sends the decoded image blob to the texture worker when available", () => {
+  it("sends the decoded image blob and the GPU texture size cap to the texture worker", () => {
     const canvas = document.createElement("canvas");
     const gl = createWebGLMock();
     vi.spyOn(canvas, "getContext").mockReturnValue(gl);
@@ -464,10 +466,89 @@ describe("WebGLImageViewerEngine lifecycle", () => {
 
     void engine.loadImage("blob:photo", 100, 100, sourceBlob);
 
+    // maxTextureSize 必须随消息传入（按上下文查询），worker 据此钳制底图，
+    // 否则超大原图的 0.5x 底图超过老设备 MAX_TEXTURE_SIZE 会渲染成黑块。
     expect(WorkerMock.instances.at(-1)?.postMessage).toHaveBeenCalledWith({
       type: "load-image",
-      payload: { url: "blob:photo", blob: sourceBlob },
+      payload: { url: "blob:photo", blob: sourceBlob, maxTextureSize: 4096 },
     });
+    expect(gl.getParameter).toHaveBeenCalledWith(gl.MAX_TEXTURE_SIZE);
+
+    engine.destroy();
+  });
+
+  it("reports honest quality: upgrades only when the visible LOD tile set is fully cached", () => {
+    const onLoadingStateChange = vi.fn();
+    const canvas = document.createElement("canvas");
+    const gl = createWebGLMock();
+    vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    });
+
+    const engine = createEngine(canvas, { onLoadingStateChange });
+    const worker = WorkerMock.instances.at(-1)!;
+    const emit = (data: unknown) =>
+      worker.onmessage?.({ data } as MessageEvent);
+
+    void engine.loadImage("blob:photo", 100, 100);
+
+    // emit() 只接受 unknown，结构化位图夹具无需断言成 ImageBitmap
+    const makeBitmap = () => ({ width: 50, height: 50, close: vi.fn() });
+
+    // 底图（LOD 1 → low）就位
+    emit({
+      type: "image-loaded",
+      payload: {
+        imageBitmap: makeBitmap(),
+        imageWidth: 100,
+        imageHeight: 100,
+        lodLevel: 1,
+      },
+    });
+    expect(onLoadingStateChange).toHaveBeenLastCalledWith(
+      false,
+      undefined,
+      "low",
+    );
+
+    // worker 就绪 → 派发可见瓦片请求（100×100 图在 LOD 2 只有 1 片）
+    emit({ type: "init-done" });
+    const createTileCall = worker.postMessage.mock.calls.find(
+      ([message]) => message.type === "create-tile",
+    );
+    expect(createTileCall).toBeDefined();
+    const { key, lodLevel } = createTileCall![0].payload;
+    expect(lodLevel).toBe(2);
+
+    // 该 LOD 的可见瓦片全部就绪 → 质量升级为 medium，且只多触发一次回调
+    onLoadingStateChange.mockClear();
+    emit({
+      type: "tile-created",
+      payload: { key, imageBitmap: makeBitmap(), lodLevel },
+    });
+    expect(onLoadingStateChange).toHaveBeenCalledTimes(1);
+    expect(onLoadingStateChange).toHaveBeenCalledWith(
+      false,
+      undefined,
+      "medium",
+    );
+
+    // 同一 LOD 重复就绪 → 质量未变，不再触发
+    onLoadingStateChange.mockClear();
+    emit({
+      type: "tile-created",
+      payload: { key, imageBitmap: makeBitmap(), lodLevel },
+    });
+    expect(onLoadingStateChange).not.toHaveBeenCalled();
 
     engine.destroy();
   });
