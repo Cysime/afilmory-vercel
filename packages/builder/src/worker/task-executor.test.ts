@@ -142,6 +142,7 @@ describe("worker task executor", () => {
     expect(response).toEqual({
       type: "result",
       taskId: "task-1",
+      taskIndex: 1,
       result,
     });
     expect(processPhoto).toHaveBeenCalledWith(
@@ -181,6 +182,7 @@ describe("worker task executor", () => {
     ).resolves.toEqual({
       type: "error",
       taskId: "missing",
+      taskIndex: 42,
       error: "Invalid taskIndex: 42",
     });
     expect(processPhoto).not.toHaveBeenCalled();
@@ -216,6 +218,7 @@ describe("worker task executor", () => {
     expect(response.results[1]).toEqual({
       type: "error",
       taskId: "missing",
+      taskIndex: 99,
       error: "Invalid taskIndex: 99",
     });
     expect(processPhoto).toHaveBeenCalledTimes(2);

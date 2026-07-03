@@ -227,6 +227,7 @@ describe("ClusterPool", () => {
       results: batch.tasks.map((task) => ({
         result: `photo-${task.taskIndex}`,
         taskId: task.taskId,
+        taskIndex: task.taskIndex,
         type: "result",
       })),
       type: "batch-result",
@@ -307,11 +308,80 @@ describe("ClusterPool", () => {
     const batch = getLastBatchTaskMessage(worker);
     worker.emitMessage({
       results: [
-        { result: "photo-0", taskId: batch.tasks[0].taskId, type: "result" },
+        {
+          result: "photo-0",
+          taskId: batch.tasks[0].taskId,
+          taskIndex: batch.tasks[0].taskIndex,
+          type: "result",
+        },
       ],
       type: "batch-result",
     });
     await expect(run).resolves.toEqual(["photo-0"]);
+  });
+
+  it("walks a worker through starting → initializing → ready and fails fast on a mid-task crash", async () => {
+    // 局部子集 cast 而非 as unknown 双重断言：字段名/类型仍受编译器约束
+    const sharedData: ClusterWorkerSharedData = {
+      existingManifestMap: new Map<string, PhotoManifestItem>(),
+      livePhotoMap: new Map<string, StorageObject>(),
+      imageObjects: [],
+      builderConfig: {
+        output: {
+          manifestPath: "/tmp/manifest.json",
+          thumbnailsDir: "/tmp/thumbnails",
+          originalsDir: "/tmp/originals",
+        },
+      } as BuilderConfig,
+      builderOptions: {
+        isForceMode: false,
+        isForceManifest: false,
+        isForceThumbnails: false,
+      },
+    };
+
+    const pool = new ClusterPool<string>({
+      concurrency: 1,
+      sharedData,
+      totalTasks: 2,
+      workerConcurrency: 2,
+    });
+    const readyEvents: number[] = [];
+    pool.on("workerReady", (workerId: number) => readyEvents.push(workerId));
+
+    const run = pool.execute();
+    const worker = getWorker();
+    worker.emitOnline();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // starting：进程已 fork/上线但尚未握手，不发 init 也不派任务
+    expect(worker.sentMessages).toHaveLength(0);
+    expect(pool.getWorkerStats()).toEqual([
+      { workerId: 1, processedTasks: 0, isIdle: true, isReady: false },
+    ]);
+
+    // 首个 ready 消息 → initializing：下发 init 数据，但在 init-complete 前仍不派任务
+    worker.emitMessage({ type: "ready", workerId: 1 });
+    expect(worker.sentMessages.map((message) => message.type)).toEqual([
+      "init",
+    ]);
+    expect(readyEvents).toEqual([]);
+    expect(pool.getWorkerStats()[0]?.isReady).toBe(false);
+
+    // init-complete → ready：触发 workerReady 并立即分配批量任务
+    worker.emitMessage({ type: "init-complete", workerId: 1 });
+    expect(readyEvents).toEqual([1]);
+    expect(pool.getWorkerStats()[0]).toEqual({
+      workerId: 1,
+      processedTasks: 0,
+      isIdle: false,
+      isReady: true,
+    });
+    expect(getLastBatchTaskMessage(worker).tasks).toHaveLength(2);
+
+    // 任务仍在处理中时 worker 崩溃 → 整池 fail-fast（不做任务重入队）
+    worker.emitExit(1, null);
+    await expect(run).rejects.toThrow("Worker 1 exited unexpectedly");
   });
 
   it("rejects and shuts down remaining workers when a worker exits unexpectedly", async () => {
@@ -354,11 +424,13 @@ describe("ClusterPool", () => {
         {
           result: "photo-0",
           taskId: batch.tasks[0].taskId,
+          taskIndex: batch.tasks[0].taskIndex,
           type: "result",
         },
         {
           error: "Invalid taskIndex: 99",
           taskId: batch.tasks[1].taskId,
+          taskIndex: batch.tasks[1].taskIndex,
           type: "error",
         },
       ],
@@ -384,6 +456,7 @@ describe("ClusterPool", () => {
     worker.emitMessage({
       error: "worker crashed",
       taskId: batch.tasks[0].taskId,
+      taskIndex: batch.tasks[0].taskIndex,
       type: "error",
     });
 

@@ -36,6 +36,8 @@ export interface BatchTaskMessage {
 export interface TaskResult {
   type: "result" | "error";
   taskId: string;
+  // 结构化回传任务下标：主进程直接读取，无需从复合 taskId 字符串反解 index
+  taskIndex: number;
   result?: unknown;
   error?: string;
 }

@@ -106,6 +106,7 @@ export async function runAsWorker() {
       const response: TaskResult = {
         type: "error",
         taskId: message.taskId,
+        taskIndex: message.taskIndex,
         error: error instanceof Error ? error.message : String(error),
       };
 
@@ -132,6 +133,7 @@ export async function runAsWorker() {
       const results: TaskResult[] = message.tasks.map((task) => ({
         type: "error",
         taskId: task.taskId,
+        taskIndex: task.taskIndex,
         error: error instanceof Error ? error.message : String(error),
       }));
 

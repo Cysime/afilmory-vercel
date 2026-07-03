@@ -83,12 +83,14 @@ export async function executeWorkerTask(
     return {
       type: "result",
       taskId: message.taskId,
+      taskIndex: message.taskIndex,
       result: await executePhotoTask(message.taskIndex, runtime, processPhoto),
     };
   } catch (error) {
     return {
       type: "error",
       taskId: message.taskId,
+      taskIndex: message.taskIndex,
       error: normalizeWorkerError(error),
     };
   }
