@@ -19,7 +19,14 @@
  * lazy-loader 环境下 webServer 子进程可能解析不到 pnpm）。
  */
 import { spawn, spawnSync } from "node:child_process";
-import { copyFileSync, cpSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,11 +40,36 @@ const PREVIEW_HOST = "127.0.0.1";
 const PREVIEW_PORT = process.env.E2E_PROD_PORT ?? "4173";
 
 // 1. Stage the synthetic fixture where the build reads the manifest from.
-mkdirSync(path.join(root, "generated"), { recursive: true });
-copyFileSync(
-  path.join(fixturesDir, "photos-manifest.json"),
-  path.join(root, "generated/photos-manifest.json"),
+//    本地开发者的真实 manifest 先备份，退出时尽力恢复（见下方 restore）——
+//    否则跑一次 prod-smoke 就把 dev 环境的照片库换成合成数据，虽可
+//    `pnpm build:manifest` 重建，但那是一次完整的 S3 增量构建。
+const manifestPath = path.join(root, "generated/photos-manifest.json");
+const manifestBackupPath = path.join(
+  root,
+  "generated/photos-manifest.pre-e2e-backup.json",
 );
+mkdirSync(path.join(root, "generated"), { recursive: true });
+const fixtureContent = readFileSync(
+  path.join(fixturesDir, "photos-manifest.json"),
+  "utf-8",
+);
+if (
+  existsSync(manifestPath) &&
+  readFileSync(manifestPath, "utf-8") !== fixtureContent
+) {
+  copyFileSync(manifestPath, manifestBackupPath);
+}
+writeFileSync(manifestPath, fixtureContent);
+
+const restoreManifest = () => {
+  try {
+    if (existsSync(manifestBackupPath)) {
+      copyFileSync(manifestBackupPath, manifestPath);
+    }
+  } catch {
+    // 尽力而为：备份文件仍在磁盘上，用户可手动恢复。
+  }
+};
 
 const webRequire = createRequire(path.join(webDir, "package.json"));
 const viteBin = path.join(
@@ -52,6 +84,7 @@ const build = spawnSync(process.execPath, [viteBin, "build"], {
   stdio: "inherit",
 });
 if (build.status !== 0) {
+  restoreManifest();
   // 顶层 throw：非零退出且不再往下执行（拷贝缩略图 / 启动 preview）。
   throw new Error(`vite build failed with exit code ${build.status ?? "null"}`);
 }
@@ -82,7 +115,15 @@ const preview = spawn(
   { cwd: webDir, stdio: "inherit" },
 );
 preview.on("exit", (code) => {
+  restoreManifest();
   // 子进程退出后本进程事件循环随之排空，自然以该码退出（勿用 process.exit，
   // 避免截断尚未 flush 的 stdio）。
   process.exitCode = code ?? 0;
 });
+// Playwright 关停 webServer 时向进程组发信号：转发给 preview，restore 走
+// 上面的 exit 回调；事件循环随后自然排空。
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.on(signal, () => {
+    preview.kill(signal);
+  });
+}

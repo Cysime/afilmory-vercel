@@ -57,6 +57,10 @@ export default defineConfig({
     ? {
         command: "pnpm exec tsx scripts/e2e-prod-server.ts",
         env: { PATH: webServerPath },
+        // Playwright 默认 SIGKILL 整棵进程树，e2e-prod-server 的 manifest
+        // 备份恢复（SIGTERM → preview exit → restore）会被跳过：先给 SIGTERM
+        // 一个宽限期，恢复逻辑才有机会执行。
+        gracefulShutdown: { signal: "SIGTERM", timeout: 5000 },
         reuseExistingServer: !process.env.CI,
         // 完整生产构建（含 vite-plugin-checker 的 tsc）+ preview 启动。
         timeout: 420_000,
