@@ -299,6 +299,9 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   generatePublicUrl(key: string): string {
+    // 注意：这里各分支的 URL 风格（virtual-hosted vs path-style）必须与
+    // s3/client.ts 的 resolveForcePathStyle 推导保持一致——客户端取数和
+    // 对外公布的 URL 用同一种寻址风格，改动任一侧时同步另一侧及其测试。
     // 如果设置了自定义域名，直接使用自定义域名
     if (this.config.customDomain) {
       return joinPublicUrl(this.config.customDomain, key);

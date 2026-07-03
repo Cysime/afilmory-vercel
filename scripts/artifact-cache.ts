@@ -3,6 +3,7 @@ import "dotenv-expand/config";
 /* eslint-disable no-console */
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -89,15 +90,25 @@ const isLocalhostHostname = (hostname: string): boolean =>
   hostname === "[::1]" ||
   hostname === "::1";
 
-export const createAuthenticatedRepoUrl = (
-  repoUrl: string,
-  token: string,
-): string => {
+// REPO_TOKEN 通过 GIT_ASKPASS 提供，而不是嵌进 clone/push 的 URL：
+// URL 会进入子进程 argv（/proc、ps、CI 进程转储可见）并被持久化到
+// clone 的 .git/config，泄漏面太大。token 只进入 git 子进程的环境变量
+// （不落盘、不进 argv），askpass 脚本本身不含任何秘密。
+const ASKPASS_USERNAME = "x-access-token";
+const ASKPASS_PASSWORD_ENV = "AFILMORY_GIT_ASKPASS_PASSWORD";
+
+// URL 里固定写入用户名（用户名不是秘密），这样 git 只会向 askpass 询问
+// Password，脚本无需解析提示语（"Username for …"/"Password for …" 可能
+// 随 locale 变化），无条件输出 token 即可。
+const ASKPASS_SCRIPT = `#!/bin/sh\nprintf '%s\\n' "$${ASKPASS_PASSWORD_ENV}"\n`;
+
+export const createAskpassRepoUrl = (repoUrl: string): string => {
   let url: URL;
   try {
     url = new URL(repoUrl);
   } catch {
-    // Not a URL we can embed credentials into (e.g. scp-style git@host:repo).
+    // Not an http(s) URL (e.g. scp-style git@host:repo) — REPO_TOKEN is not
+    // used for ssh auth, so there is nothing to guard or rewrite here.
     return repoUrl;
   }
 
@@ -105,9 +116,10 @@ export const createAuthenticatedRepoUrl = (
     return repoUrl;
   }
 
-  // Never transmit REPO_TOKEN over plaintext HTTP (it would be sent in the
-  // clear, and is also embedded in the URL). Allow http only for localhost so
-  // local testing against a throwaway git server still works.
+  // Never transmit REPO_TOKEN over plaintext HTTP: even though the token is
+  // no longer embedded in the URL, git would still send it as basic-auth in
+  // the clear. Allow http only for localhost so local testing against a
+  // throwaway git server still works.
   if (url.protocol === "http:" && !isLocalhostHostname(url.hostname)) {
     throw new Error(
       "Refusing to send REPO_TOKEN over plaintext HTTP. " +
@@ -116,16 +128,40 @@ export const createAuthenticatedRepoUrl = (
   }
 
   if (!url.username) {
-    url.username = "x-access-token";
+    url.username = ASKPASS_USERNAME;
   }
-  url.password = token;
+  // 即便 REPO_URL 自带密码也剥掉：密码属于秘密，绝不允许进 argv 或
+  // .git/config，凭据统一由 askpass 从环境变量提供。
+  url.password = "";
   return url.toString();
+};
+
+// 在临时 0700 目录里落一个 askpass 脚本（内容不含 token），把 token 放进
+// gitEnv 传给回调内的每次 git spawn，结束后无论成败都清理临时目录。
+const withGitAskpass = async <T>(
+  config: ArtifactCacheConfig,
+  fn: (gitEnv: NodeJS.ProcessEnv) => Promise<T>,
+): Promise<T> => {
+  const askpassDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "afilmory-askpass-"),
+  );
+  const askpassPath = path.join(askpassDir, "askpass.sh");
+  await fs.writeFile(askpassPath, ASKPASS_SCRIPT, { mode: 0o700 });
+  try {
+    return await fn({
+      GIT_ASKPASS: askpassPath,
+      [ASKPASS_PASSWORD_ENV]: config.repoToken,
+    });
+  } finally {
+    await fs.rm(askpassDir, { force: true, recursive: true });
+  }
 };
 
 const run = async (
   config: ArtifactCacheConfig,
   command: string,
   args: string[],
+  gitEnv: NodeJS.ProcessEnv,
   cwd: string = config.rootDir,
 ): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -133,6 +169,7 @@ const run = async (
       cwd,
       env: {
         ...process.env,
+        ...gitEnv,
         GIT_TERMINAL_PROMPT: "0",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -165,6 +202,7 @@ const run = async (
 
 const cloneCacheRepository = async (
   config: ArtifactCacheConfig,
+  gitEnv: NodeJS.ProcessEnv,
 ): Promise<void> => {
   await fs.rm(config.cacheDir, { force: true, recursive: true });
   await fs.mkdir(path.dirname(config.cacheDir), { recursive: true });
@@ -173,12 +211,11 @@ const cloneCacheRepository = async (
   if (config.repoBranch) {
     args.push("--branch", config.repoBranch);
   }
-  args.push(
-    createAuthenticatedRepoUrl(config.repoUrl, config.repoToken),
-    config.cacheDir,
-  );
+  // 无凭据 URL：token 由 GIT_ASKPASS 提供，argv 和 .git/config 里只有
+  // 仓库地址和固定用户名。
+  args.push(createAskpassRepoUrl(config.repoUrl), config.cacheDir);
 
-  await run(config, "git", args);
+  await run(config, "git", args, gitEnv);
 };
 
 const copyArtifact = async (
@@ -197,7 +234,9 @@ const copyArtifact = async (
 };
 
 const restoreArtifacts = async (config: ArtifactCacheConfig): Promise<void> => {
-  await cloneCacheRepository(config);
+  await withGitAskpass(config, (gitEnv) =>
+    cloneCacheRepository(config, gitEnv),
+  );
 
   for (const pair of artifactPairs(config)) {
     try {
@@ -248,91 +287,100 @@ const ensureCacheReadme = async (
 export const saveArtifacts = async (
   config: ArtifactCacheConfig,
 ): Promise<void> => {
-  await cloneCacheRepository(config);
+  await withGitAskpass(config, async (gitEnv) => {
+    await cloneCacheRepository(config, gitEnv);
 
-  const gitPaths = ["README.md"];
-  for (const pair of artifactPairs(config)) {
-    if (!(await pathExists(pair.targetPath))) {
-      console.warn(`[artifact-cache] Missing local ${pair.label}; skipped.`);
-      continue;
+    const gitPaths = ["README.md"];
+    for (const pair of artifactPairs(config)) {
+      if (!(await pathExists(pair.targetPath))) {
+        console.warn(`[artifact-cache] Missing local ${pair.label}; skipped.`);
+        continue;
+      }
+      if (pair.validate) {
+        await pair.validate(pair.targetPath);
+      }
+      await copyArtifact(pair.targetPath, pair.cachePath);
+      gitPaths.push(path.relative(config.cacheDir, pair.cachePath));
+      console.info(`[artifact-cache] Staged ${pair.label}.`);
     }
-    if (pair.validate) {
-      await pair.validate(pair.targetPath);
+
+    await ensureCacheReadme(config);
+    await run(
+      config,
+      "git",
+      ["config", "user.name", "Afilmory Cache Bot"],
+      gitEnv,
+      config.cacheDir,
+    );
+    await run(
+      config,
+      "git",
+      ["config", "user.email", "afilmory-cache@users.noreply.github.com"],
+      gitEnv,
+      config.cacheDir,
+    );
+    await run(config, "git", ["add", ...gitPaths], gitEnv, config.cacheDir);
+
+    // 与刚 fetch 下来的远端 HEAD 树比较：产物没变就跳过推送。
+    const status = await run(
+      config,
+      "git",
+      ["status", "--porcelain"],
+      gitEnv,
+      config.cacheDir,
+    );
+    if (!status.trim()) {
+      console.info("[artifact-cache] Remote cache is already up to date.");
+      return;
     }
-    await copyArtifact(pair.targetPath, pair.cachePath);
-    gitPaths.push(path.relative(config.cacheDir, pair.cachePath));
-    console.info(`[artifact-cache] Staged ${pair.label}.`);
-  }
 
-  await ensureCacheReadme(config);
-  await run(
-    config,
-    "git",
-    ["config", "user.name", "Afilmory Cache Bot"],
-    config.cacheDir,
-  );
-  await run(
-    config,
-    "git",
-    ["config", "user.email", "afilmory-cache@users.noreply.github.com"],
-    config.cacheDir,
-  );
-  await run(config, "git", ["add", ...gitPaths], config.cacheDir);
+    // 推送目标分支：优先显式配置；否则取 clone 检出的分支名。
+    // 用 symbolic-ref 而非 rev-parse，空仓库（unborn branch）下也能拿到分支名。
+    const branch =
+      config.repoBranch ||
+      (
+        await run(
+          config,
+          "git",
+          ["symbolic-ref", "--short", "HEAD"],
+          gitEnv,
+          config.cacheDir,
+        )
+      ).trim();
 
-  // 与刚 fetch 下来的远端 HEAD 树比较：产物没变就跳过推送。
-  const status = await run(
-    config,
-    "git",
-    ["status", "--porcelain"],
-    config.cacheDir,
-  );
-  if (!status.trim()) {
-    console.info("[artifact-cache] Remote cache is already up to date.");
-    return;
-  }
-
-  // 推送目标分支：优先显式配置；否则取 clone 检出的分支名。
-  // 用 symbolic-ref 而非 rev-parse，空仓库（unborn branch）下也能拿到分支名。
-  const branch =
-    config.repoBranch ||
-    (
-      await run(
-        config,
-        "git",
-        ["symbolic-ref", "--short", "HEAD"],
-        config.cacheDir,
-      )
-    ).trim();
-
-  // 缓存仓库只需要最新一份产物（README 里明确它不是照片备份仓库）。
-  // 若每次部署都在旧历史上追加一个装满二进制缩略图的 commit，远端会无限增长
-  // （GitHub 在 1GB 时告警）。所以这里改成生成单个 orphan commit 并 force-push，
-  // 让远端历史永远只有一个提交。restore 每次都是全新 --depth=1 clone，
-  // 感知不到历史被重写，因此对读取方是完全透明的。
-  await run(
-    config,
-    "git",
-    ["checkout", "--orphan", "afilmory-cache-tmp"],
-    config.cacheDir,
-  );
-  // orphan checkout 会保留 index，这里再 add --all 兜底，确保旧 HEAD
-  // 带下来的所有文件（含未在 gitPaths 里的历史文件）都进入新提交。
-  await run(config, "git", ["add", "--all"], config.cacheDir);
-  await run(
-    config,
-    "git",
-    ["commit", "-m", "chore: update afilmory artifact cache"],
-    config.cacheDir,
-  );
-  await run(
-    config,
-    "git",
-    ["push", "--force", "origin", `HEAD:refs/heads/${branch}`],
-    config.cacheDir,
-  );
-  console.info(
-    "[artifact-cache] Remote cache updated (history reset to a single commit).",
-  );
+    // 缓存仓库只需要最新一份产物（README 里明确它不是照片备份仓库）。
+    // 若每次部署都在旧历史上追加一个装满二进制缩略图的 commit，远端会无限增长
+    // （GitHub 在 1GB 时告警）。所以这里改成生成单个 orphan commit 并 force-push，
+    // 让远端历史永远只有一个提交。restore 每次都是全新 --depth=1 clone，
+    // 感知不到历史被重写，因此对读取方是完全透明的。
+    await run(
+      config,
+      "git",
+      ["checkout", "--orphan", "afilmory-cache-tmp"],
+      gitEnv,
+      config.cacheDir,
+    );
+    // orphan checkout 会保留 index，这里再 add --all 兜底，确保旧 HEAD
+    // 带下来的所有文件（含未在 gitPaths 里的历史文件）都进入新提交。
+    await run(config, "git", ["add", "--all"], gitEnv, config.cacheDir);
+    await run(
+      config,
+      "git",
+      ["commit", "-m", "chore: update afilmory artifact cache"],
+      gitEnv,
+      config.cacheDir,
+    );
+    await run(
+      config,
+      "git",
+      ["push", "--force", "origin", `HEAD:refs/heads/${branch}`],
+      gitEnv,
+      config.cacheDir,
+    );
+    console.info(
+      "[artifact-cache] Remote cache updated (history reset to a single commit).",
+    );
+  });
 };
 
 const main = async (): Promise<void> => {

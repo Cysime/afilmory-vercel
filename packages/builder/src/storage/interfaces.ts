@@ -100,6 +100,16 @@ export type S3Config = {
   customDomain?: string;
   excludeRegex?: string;
   maxFileLimit?: number;
+  /**
+   * 是否强制 S3 客户端使用 path-style 请求（`endpoint/bucket/key`）。
+   *
+   * 不设置时由 resolveForcePathStyle（见 s3/client.ts）按 endpoint 推导，
+   * 与 S3StorageProvider.generatePublicUrl 的 URL 风格保持一致：
+   * AWS / 阿里云 OSS 用 virtual-hosted-style，其余自定义 endpoint
+   * （MinIO 等自建服务）用 path-style。只有当推导结果与实际服务不符时
+   * 才需要显式覆盖。
+   */
+  forcePathStyle?: boolean;
   // Network tuning (optional)
   keepAlive?: boolean;
   maxSockets?: number;

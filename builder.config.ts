@@ -82,6 +82,12 @@ export default defineBuilderConfig(() => ({
     prefix: env.S3_PREFIX,
     customDomain: env.S3_CUSTOM_DOMAIN,
     excludeRegex: env.S3_EXCLUDE_REGEX,
+    // S3 客户端寻址风格（path-style vs virtual-hosted-style）。
+    // 默认按 endpoint 自动推导，与公开 URL 生成规则保持一致：
+    // AWS / 阿里云 OSS → virtual-hosted-style；其余自定义 endpoint
+    // （MinIO 等自建服务）→ path-style。仅当推导不符合实际服务时才需要
+    // 显式设置，详见 packages/builder/src/storage/providers/README.md。
+    // forcePathStyle: true,
     keepAlive: true,
     maxSockets: 64,
     connectionTimeoutMs: 5_000,

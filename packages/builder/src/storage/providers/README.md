@@ -37,6 +37,7 @@ storage: {
   prefix: env.S3_PREFIX,
   customDomain: env.S3_CUSTOM_DOMAIN,
   excludeRegex: env.S3_EXCLUDE_REGEX,
+  // forcePathStyle: true,  // 默认按 endpoint 推导，见下方「寻址风格」
   keepAlive: true,
   maxSockets: 64,
   connectionTimeoutMs: 5_000,
@@ -92,6 +93,25 @@ Builder 刷新 manifest 时必需：
 4. 其他自定义 endpoint 时：`endpoint/<bucket>/<encoded key>`。
 
 所有 key 会按 URL path segment 安全编码。
+
+### 寻址风格（`forcePathStyle`）
+
+S3 客户端在构建期取数所用的寻址风格必须与 `generatePublicUrl` 对外公布的
+URL 风格一致，否则自建服务（如 MinIO）会出现「公开 URL 是 path-style、
+客户端却按 virtual-hosted-style 取数失败」的错配。默认推导矩阵
+（`resolveForcePathStyle`，见 `../../s3/client.ts`）：
+
+| endpoint                        | 客户端寻址风格             | `forcePathStyle` 默认值 |
+| ------------------------------- | -------------------------- | ----------------------- |
+| 未设置                          | virtual-hosted（AWS 默认） | `false`                 |
+| 包含 `amazonaws.com`            | virtual-hosted             | `false`                 |
+| 包含 `aliyuncs.com`             | virtual-hosted             | `false`                 |
+| 其他自定义 endpoint（MinIO 等） | path-style                 | `true`                  |
+
+显式配置 `forcePathStyle: true / false` 时跳过推导，以配置为准——用于
+推导不符合实际服务的场景（例如自定义域名指向的 S3 网关只支持
+virtual-hosted-style，或 AWS 兼容服务只支持 path-style）。
+`customDomain` 只影响公开 URL（走 CDN），不参与推导。
 
 ### 网络和重试
 
