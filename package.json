@@ -16,6 +16,7 @@
     "build:packages": "pnpm --filter @afilmory/builder build && pnpm --filter @afilmory/webgl-viewer build",
     "build:web": "pnpm --filter @afilmory/web build",
     "dev": "pnpm --filter @afilmory/web dev",
+    "fixture:e2e": "tsx scripts/create-synthetic-e2e-fixture.ts",
     "format": "prettier --write \"apps/**/*.{ts,tsx,js,jsx,json,css,md}\" \"packages/**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "generate:favicon": "tsx scripts/generate-favicon.ts",
     "lint": "eslint . --cache --cache-location node_modules/.cache/eslint/root",
@@ -26,6 +27,7 @@
     "test:coverage": "pnpm exec vitest run --coverage",
     "test:e2e": "env -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 playwright test",
     "test:e2e:install": "env -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 playwright install chromium",
+    "test:e2e:prod": "env -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 E2E_PROD_SMOKE=true playwright test",
     "type-check": "pnpm --filter @afilmory/schema type-check && pnpm --filter @afilmory/media type-check && pnpm --filter @afilmory/ui type-check && pnpm --filter @afilmory/builder type-check && pnpm --filter @afilmory/build-assets type-check && pnpm --filter @afilmory/webgl-viewer type-check && pnpm --filter @afilmory/web type-check"
   },
   "devDependencies": {

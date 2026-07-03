@@ -6,6 +6,7 @@ dist-ssr
 *.local
 *.tsbuildinfo
 playwright-report
+playwright-report-prod
 test-results
 coverage
 
