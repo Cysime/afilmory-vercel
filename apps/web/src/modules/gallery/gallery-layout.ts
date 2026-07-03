@@ -73,6 +73,14 @@ export function getPhotoSetKey(photos: PhotoManifest[]): string {
   return `${photos.length}:${hash >>> 0}:${photos[0]?.id ?? ""}:${photos.at(-1)?.id ?? ""}`;
 }
 
+/**
+ * 由「实测的瀑布流容器宽度」推导目标列宽。
+ *
+ * containerWidth 必须是 Masonry 容器元素的实测 clientWidth（ResizeObserver 提供，
+ * 已天然扣除页面 padding 与滚动条），而不是 window.innerWidth——旧实现用
+ * `innerWidth - 8/32` 硬编码猜测 padding，一旦壳层 padding 或滚动条槽变化，
+ * 列数判定就会和真实容器悄悄失配（经典滚动条的 Windows 上会多算 ~15px）。
+ */
 export function calculateGalleryColumnWidth({
   columns,
   containerWidth,
@@ -84,7 +92,7 @@ export function calculateGalleryColumnWidth({
 }): number {
   const { auto, min, max } = COLUMN_WIDTH_CONFIG;
   const gutter = 4;
-  const availableWidth = containerWidth - (isMobile ? 8 : 32);
+  const availableWidth = containerWidth;
 
   if (columns === "auto") {
     const autoWidth = isMobile ? auto.mobile : auto.desktop;

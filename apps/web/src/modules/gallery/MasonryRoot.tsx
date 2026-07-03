@@ -32,7 +32,6 @@ export const MasonryRoot = () => {
   const { columns } = useAtomValue(gallerySettingAtom);
   const hasAnimatedRef = useRef(false);
   const [showFloatingActions, setShowFloatingActions] = useState(false);
-  const [containerWidth, setContainerWidth] = useState(0);
 
   const photos = useContextPhotos();
   const masonryRef = useRef<MasonryRef>(null);
@@ -50,28 +49,16 @@ export const MasonryRoot = () => {
   }, []);
   const isMobile = useMobile();
 
-  // 监听容器宽度变化
-  useEffect(() => {
-    const updateContainerWidth = () => {
-      setContainerWidth(window.innerWidth);
-    };
-
-    updateContainerWidth();
-    window.addEventListener("resize", updateContainerWidth);
-
-    return () => {
-      window.removeEventListener("resize", updateContainerWidth);
-    };
-  }, []);
-
-  const columnWidth = useMemo(
-    () =>
+  // 目标列宽从 Masonry 实测的容器宽度推导（函数形式 prop）——不再监听
+  // window resize：innerWidth 与容器实测是两个会失配的来源（padding/滚动条槽）。
+  const columnWidth = useCallback(
+    (measuredContainerWidth: number) =>
       calculateGalleryColumnWidth({
         columns,
-        containerWidth,
+        containerWidth: measuredContainerWidth,
         isMobile,
       }),
-    [columns, containerWidth, isMobile],
+    [columns, isMobile],
   );
 
   // 监听滚动，控制浮动组件的显示

@@ -31,7 +31,11 @@ export interface MasonryRenderProps<Item> {
 export interface MasonryProps<Item> {
   ref?: React.Ref<MasonryRef>;
   items: Item[];
-  columnWidth: number;
+  /**
+   * 目标列宽。函数形式接收本组件 ResizeObserver 实测的容器宽度——列宽推导与
+   * 实际布局由此共享同一个宽度来源（消除 window.innerWidth 与容器实测的双源失配）。
+   */
+  columnWidth: number | ((measuredContainerWidth: number) => number);
   columnGutter?: number;
   rowGutter?: number;
   /** 上下各预渲染多少个视口高度作为缓冲，默认 2。 */
@@ -133,18 +137,25 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
     return () => observer.disconnect();
   }, []);
 
+  // 目标列宽与实际布局共用同一个实测宽度：函数形式的 columnWidth 吃的就是
+  // 本组件 ResizeObserver 的 containerWidth，双源失配从构造上消除。
+  const targetColumnWidth =
+    typeof columnWidth === "function"
+      ? columnWidth(containerWidth)
+      : columnWidth;
+
   // 列数按"目标列宽"推导，但实际列宽要把容器**填满**：否则固定列宽会在右侧留黑边。
   // effectiveColumnWidth = (容器宽 - 所有 gutter) / 列数。
   const columnCount = resolveMasonryColumnCount({
-    containerWidth: containerWidth || columnWidth,
-    columnWidth,
+    containerWidth: containerWidth || targetColumnWidth,
+    columnWidth: targetColumnWidth,
     columnGutter,
   });
   const effectiveColumnWidth = resolveEffectiveColumnWidth({
     containerWidth,
     columnCount,
     columnGutter,
-    fallbackColumnWidth: columnWidth,
+    fallbackColumnWidth: targetColumnWidth,
   });
   // 喂给 itemHeight / metrics 的列宽取整，与 computeMasonryLayout 内部的 cell 宽
   // 取整保持同源 —— 否则 render 拿到的 width 与算高度用的 width 差出小数，壳与
@@ -183,16 +194,17 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
     ],
   );
 
-  const overscanPx = Math.max(viewportHeight || columnWidth, 1) * overscanBy;
+  const overscanPx =
+    Math.max(viewportHeight || targetColumnWidth, 1) * overscanBy;
   const { visible, startIndex, stopIndex } = React.useMemo(
     () =>
       selectVisibleMasonryCells({
         cells: layout.cells,
         scrollTop,
-        viewportHeight: viewportHeight || columnWidth,
+        viewportHeight: viewportHeight || targetColumnWidth,
         overscanPx,
       }),
-    [layout.cells, scrollTop, viewportHeight, overscanPx, columnWidth],
+    [layout.cells, scrollTop, viewportHeight, overscanPx, targetColumnWidth],
   );
 
   React.useEffect(() => {

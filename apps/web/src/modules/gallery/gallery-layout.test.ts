@@ -58,7 +58,9 @@ describe("gallery-layout helpers", () => {
     expect(getMasonryItemKey(photos[0])).toBe("a");
   });
 
-  it("calculates responsive column width", () => {
+  it("calculates responsive column width from the measured container width", () => {
+    // containerWidth 是 Masonry 实测的容器 clientWidth（已扣除页面 padding/滚动条），
+    // 不再是 window.innerWidth——函数内部也不再做 -8/-32 的 padding 猜测。
     expect(
       calculateGalleryColumnWidth({
         columns: "auto",
@@ -72,14 +74,14 @@ describe("gallery-layout helpers", () => {
         containerWidth: 2500,
         isMobile: false,
       }),
-    ).toBe(305);
+    ).toBe(309);
     expect(
       calculateGalleryColumnWidth({
         columns: 3,
         containerWidth: 900,
         isMobile: false,
       }),
-    ).toBeCloseTo(286.67, 2);
+    ).toBeCloseTo(297.33, 2);
   });
 
   it("estimates virtual photo rect with a desktop header occupying the first column", () => {
