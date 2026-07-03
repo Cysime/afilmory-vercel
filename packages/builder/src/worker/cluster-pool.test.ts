@@ -184,6 +184,33 @@ async function startReadyWorkers<T>(
   return { run, workers };
 }
 
+// 有任务的池必须携带 sharedData（构造期防静默死锁的守卫）；测试用最小合法子集。
+function createTestSharedData(): ClusterWorkerSharedData {
+  return {
+    existingManifestMap: new Map([["a.jpg", { id: "a" } as PhotoManifestItem]]),
+    livePhotoMap: new Map([["a.jpg", { key: "a.mov" } as StorageObject]]),
+    imageObjects: [
+      {
+        key: "a.jpg",
+        lastModified: new Date("2026-06-06T00:00:00.000Z"),
+      } as StorageObject,
+    ],
+    builderConfig: {
+      output: {
+        manifestPath: "/tmp/manifest.json",
+        thumbnailsDir: "/tmp/thumbnails",
+        originalsDir: "/tmp/originals",
+      },
+    } as BuilderConfig,
+    builderOptions: {
+      isForceMode: false,
+      isForceManifest: false,
+      isForceThumbnails: false,
+    },
+    photoIdCollisionKeys: ["dup.jpg"],
+  };
+}
+
 describe("ClusterPool", () => {
   beforeEach(() => {
     clusterMocks.fork.mockClear();
@@ -208,6 +235,18 @@ describe("ClusterPool", () => {
     expect(clusterMocks.fork).not.toHaveBeenCalled();
   });
 
+  it("throws at construction when tasks exist but sharedData is missing", () => {
+    // 没有 sharedData 的 worker 永远等不到 init-complete —— 静默死锁，必须在构造期暴露。
+    expect(
+      () =>
+        new ClusterPool<string>({
+          concurrency: 1,
+          totalTasks: 1,
+          workerConcurrency: 1,
+        }),
+    ).toThrow(/sharedData/);
+  });
+
   it("resolves successful batch results and shuts down workers", async () => {
     const completed: Array<{
       completed: number;
@@ -217,6 +256,7 @@ describe("ClusterPool", () => {
     const pool = new ClusterPool<string>({
       concurrency: 1,
       onTaskCompleted: (payload) => completed.push(payload),
+      sharedData: createTestSharedData(),
       totalTasks: 2,
       workerConcurrency: 2,
     });
@@ -244,32 +284,7 @@ describe("ClusterPool", () => {
   });
 
   it("enables advanced IPC serialization and sends shared data (Maps included) natively", async () => {
-    // 局部子集 cast 而非 as unknown 双重断言：字段名/类型仍受编译器约束
-    const sharedData: ClusterWorkerSharedData = {
-      existingManifestMap: new Map([
-        ["a.jpg", { id: "a" } as PhotoManifestItem],
-      ]),
-      livePhotoMap: new Map([["a.jpg", { key: "a.mov" } as StorageObject]]),
-      imageObjects: [
-        {
-          key: "a.jpg",
-          lastModified: new Date("2026-06-06T00:00:00.000Z"),
-        } as StorageObject,
-      ],
-      builderConfig: {
-        output: {
-          manifestPath: "/tmp/manifest.json",
-          thumbnailsDir: "/tmp/thumbnails",
-          originalsDir: "/tmp/originals",
-        },
-      } as BuilderConfig,
-      builderOptions: {
-        isForceMode: false,
-        isForceManifest: false,
-        isForceThumbnails: false,
-      },
-      photoIdCollisionKeys: ["dup.jpg"],
-    };
+    const sharedData = createTestSharedData();
 
     const pool = new ClusterPool<string>({
       concurrency: 1,
@@ -387,6 +402,7 @@ describe("ClusterPool", () => {
   it("rejects and shuts down remaining workers when a worker exits unexpectedly", async () => {
     const pool = new ClusterPool<string>({
       concurrency: 2,
+      sharedData: createTestSharedData(),
       totalTasks: 4,
       workerConcurrency: 2,
     });
@@ -413,6 +429,7 @@ describe("ClusterPool", () => {
   it("rejects and shuts down when a batch result contains a worker error", async () => {
     const pool = new ClusterPool<string>({
       concurrency: 1,
+      sharedData: createTestSharedData(),
       totalTasks: 2,
       workerConcurrency: 2,
     });
@@ -447,6 +464,7 @@ describe("ClusterPool", () => {
   it("rejects and shuts down when a single task message contains a worker error", async () => {
     const pool = new ClusterPool<string>({
       concurrency: 1,
+      sharedData: createTestSharedData(),
       totalTasks: 1,
       workerConcurrency: 1,
     });

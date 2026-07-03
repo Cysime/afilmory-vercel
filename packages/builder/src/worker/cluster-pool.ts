@@ -94,6 +94,14 @@ export class ClusterPool<T> extends EventEmitter {
     this.sharedData = options.sharedData;
     this.onTaskCompleted = options.onTaskCompleted;
 
+    // 没有 sharedData 的 worker 无法重建 builder，也永远等不到 init-complete——
+    // 那是静默死锁。有任务就必须有共享数据，缺了在构造期就大声失败。
+    if (this.totalTasks > 0 && !this.sharedData) {
+      throw new Error(
+        "ClusterPool requires sharedData when totalTasks > 0 (workers cannot initialize without it).",
+      );
+    }
+
     this.results = Array.from({ length: this.totalTasks });
   }
 

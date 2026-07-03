@@ -114,13 +114,18 @@ export async function saveManifest(
   );
 }
 
-// 检测并处理已删除的图片
+// 检测并处理已删除的图片。
+// keepPhotoIds：额外保留的照片 ID（通常是"存储中仍存在"的全集）。孤儿判定必须以
+// "存储里已不存在"为准，而不是"不在本次 manifest 里"——本次处理失败的照片不进
+// manifest，但它们的缩略图不能被连坐删除，否则一次网络故障（如批量下载超时）
+// 会把可复用的缩略图全部清掉，再由 artifact-cache 把缩水状态持久化。
 export async function handleDeletedPhotos(
   items: PhotoManifestItem[],
+  keepPhotoIds?: ReadonlySet<string>,
 ): Promise<number> {
   const { thumbnailsDir } = getScopedBuilderOutputSettings();
   logger.main.info("🔍 检查已删除的图片...");
-  if (items.length === 0) {
+  if (items.length === 0 && (keepPhotoIds?.size ?? 0) === 0) {
     // Clear all thumbnails
     await fs.rm(thumbnailsDir, { recursive: true, force: true });
     logger.main.info("🔍 没有图片，清空缩略图...");
@@ -145,7 +150,8 @@ export async function handleDeletedPhotos(
     // 只清理 *.jpg 缩略图：目录里还住着 .encoding 编码签名标记（见 image/thumbnail.ts），
     // 误删它会在构建中途崩溃后触发下一次全量重生成缩略图，废掉 artifact-cache 增量路径。
     if (!thumbnail.endsWith(".jpg")) continue;
-    if (!manifestKeySet.has(basename(thumbnail, ".jpg"))) {
+    const photoId = basename(thumbnail, ".jpg");
+    if (!manifestKeySet.has(photoId) && !keepPhotoIds?.has(photoId)) {
       await fs.unlink(path.join(thumbnailsDir, thumbnail));
       deletedCount++;
     }

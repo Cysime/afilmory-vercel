@@ -240,9 +240,20 @@ export class AfilmoryBuilder {
         },
       });
 
+      // 存储中仍存在的照片全集：本次处理失败的照片不进 manifest，但它们的
+      // 缩略图不能被孤儿清理连坐删除（否则一次批量下载超时就清空可复用缩略图，
+      // 再被 artifact-cache 持久化成缩水状态）。
+      const keepPhotoIds = new Set<string>();
+      for (const key of s3ImageKeys) {
+        keepPhotoIds.add(
+          session.getPhotoIdForKey(key, existingManifestMap.get(key)),
+        );
+      }
+
       const { deletedCount } = await new ArtifactWriter().write(
         session,
         manifest,
+        { keepPhotoIds },
       );
 
       if (this.config.system.observability.showDetailedStats) {

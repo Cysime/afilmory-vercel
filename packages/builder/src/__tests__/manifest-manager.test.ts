@@ -84,6 +84,32 @@ describe("handleDeletedPhotos", () => {
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("keeps thumbnails of photos still present in storage (failed this run)", async () => {
+    await fs.mkdir(thumbnailsDir, { recursive: true });
+    await fs.writeFile(path.join(thumbnailsDir, "keep.jpg"), "");
+    await fs.writeFile(path.join(thumbnailsDir, "failed.jpg"), "");
+    await fs.writeFile(path.join(thumbnailsDir, "gone.jpg"), "");
+
+    // failed 不在 manifest（本次处理失败）但仍在存储中 → 缩略图必须保留；
+    // gone 既不在 manifest 也不在存储 → 才是真正的孤儿。
+    const deletedCount = await runWithBuilderOutputSettings(
+      outputSettings,
+      () =>
+        handleDeletedPhotos(
+          [createPhotoManifestItem("keep")],
+          new Set(["keep", "failed"]),
+        ),
+    );
+
+    expect(deletedCount).toBe(1);
+    await expect(
+      fs.access(path.join(thumbnailsDir, "failed.jpg")),
+    ).resolves.toBeUndefined();
+    await expect(
+      fs.access(path.join(thumbnailsDir, "gone.jpg")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("leaves non-jpg files like the .encoding marker untouched", async () => {
     await fs.mkdir(thumbnailsDir, { recursive: true });
     await fs.writeFile(path.join(thumbnailsDir, "keep.jpg"), "");
