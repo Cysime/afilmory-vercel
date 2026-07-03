@@ -25,6 +25,14 @@ export type ManifestSource =
       customDomain?: string;
     }
   | {
+      /** 本地文件系统构建源（builder 的 LocalFileSystemProvider） */
+      provider: "local";
+      /** 照片源目录（本地文件系统路径） */
+      basePath?: string;
+      /** 生成 originalUrl 时的公共 URL 前缀（builder 默认 "/photos"） */
+      baseUrl?: string;
+    }
+  | {
       provider: "unknown";
     };
 

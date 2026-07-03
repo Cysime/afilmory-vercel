@@ -66,7 +66,7 @@ How the dev story fits together:
 2. Run `pnpm build:manifest` with the config above — the builder scans `basePath`, generates thumbnails, and writes a manifest whose `originalUrl`s look like `/photos/dir/img.jpg` (the `baseUrl` prefix plus the encoded key).
 3. Run `pnpm dev` — `apps/web/plugins/vite/photos-static.ts` already serves `/photos/*` from the repo-root `photos/` directory in dev, so the gallery loads originals straight from disk.
 
-The manifest `source` field is recorded as `{ provider: "unknown" }` for local runs because `@afilmory/schema`'s `ManifestSource` currently only models `s3`/`unknown` (its `normalizeSource` coerces any non-S3 provider to `unknown` on reload anyway).
+The manifest `source` field records local runs faithfully as `{ provider: "local", basePath, baseUrl }` — `@afilmory/schema`'s `ManifestSource` models `s3`/`local`/`unknown`, and its normalizer preserves the `local` variant on reload.
 
 ## CLI Usage
 

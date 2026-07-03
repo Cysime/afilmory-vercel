@@ -4,6 +4,7 @@ import type {
   LensInfo,
   LocationAdminInfo,
   LocationInfo,
+  ManifestIndexes,
   ManifestSource,
   PhotoManifestItem,
   PickedExif,
@@ -48,6 +49,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+const isString = (value: unknown): value is string => typeof value === "string";
+
+const isBoolean = (value: unknown): value is boolean =>
+  typeof value === "boolean";
+
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -58,393 +64,406 @@ function isStringArray(value: unknown): value is string[] {
   );
 }
 
-function pushIssue(
-  issues: string[],
-  condition: boolean,
+// ---------------------------------------------------------------------------
+// 字段描述符：同一形状只描述一次，严格校验（check → issues）与宽松抢救
+// （normalize → 默认值/丢弃）都从这一份描述派生，不再维护 validateX/normalizeX
+// 双胞胎。check 返回相对路径 issue（以 " 自身文案"、".子字段" 或 "[下标]" 开头），
+// 由上层拼接完整路径。
+// ---------------------------------------------------------------------------
+
+interface Field<T> {
+  check: (value: unknown) => string[];
+  normalize: (value: unknown) => T;
+  /** normalize 时该字段不合法则整个对象放弃（判别/寻址字段，如 camera.model） */
+  required?: boolean;
+  /** normalize 结果为 undefined 时不写入键（保持历史输出形状：photo.isHDR/video 缺席） */
+  omitUndefined?: boolean;
+}
+
+type Shape = Record<string, Field<unknown>>;
+
+function field<T>(
+  guard: (value: unknown) => value is T,
   message: string,
-): void {
-  if (!condition) {
-    issues.push(message);
-  }
-}
-
-function normalizeSource(value: unknown): ManifestSource {
-  if (!isRecord(value)) return UNKNOWN_SOURCE;
-  if (value.provider !== "s3") return UNKNOWN_SOURCE;
-
+  fallback: T,
+): Field<T> {
   return {
-    provider: "s3",
-    bucket: typeof value.bucket === "string" ? value.bucket : undefined,
-    region: typeof value.region === "string" ? value.region : undefined,
-    endpoint: typeof value.endpoint === "string" ? value.endpoint : undefined,
-    prefix: typeof value.prefix === "string" ? value.prefix : undefined,
-    customDomain:
-      typeof value.customDomain === "string" ? value.customDomain : undefined,
+    check: (value) => (guard(value) ? [] : [` ${message}`]),
+    normalize: (value) => (guard(value) ? value : fallback),
   };
 }
 
-function validateSource(
-  value: unknown,
-  issues: string[],
-): ManifestSource | null {
-  if (!isRecord(value)) {
-    issues.push("source must be an object");
-    return null;
-  }
+function requiredField<T>(
+  guard: (value: unknown) => value is T,
+  message: string,
+): Field<T> {
+  return {
+    check: (value) => (guard(value) ? [] : [` ${message}`]),
+    // guard 失败时 normalizeShape 已放弃整个对象，这里不会拿到非法值
+    normalize: (value) => value as T,
+    required: true,
+  };
+}
 
-  if (value.provider === "unknown") {
-    return UNKNOWN_SOURCE;
-  }
+function optionalField<T>(
+  guard: (value: unknown) => value is T,
+  message: string,
+  omitUndefined = false,
+): Field<T | undefined> {
+  return {
+    check: (value) =>
+      value === undefined || guard(value) ? [] : [` ${message}`],
+    normalize: (value) => (guard(value) ? value : undefined),
+    omitUndefined,
+  };
+}
 
-  if (value.provider !== "s3") {
-    issues.push("source.provider must be 's3' or 'unknown'");
-    return null;
-  }
-
-  for (const field of [
-    "bucket",
-    "region",
-    "endpoint",
-    "prefix",
-    "customDomain",
-  ]) {
-    const fieldValue = value[field];
-    if (fieldValue !== undefined && typeof fieldValue !== "string") {
-      issues.push(`source.${field} must be a string when present`);
+function checkShape(shape: Shape, value: Record<string, unknown>): string[] {
+  const issues: string[] = [];
+  for (const [key, item] of Object.entries(shape)) {
+    for (const message of item.check(value[key])) {
+      issues.push(`.${key}${message}`);
     }
   }
-
-  return normalizeSource(value);
+  return issues;
 }
 
-function normalizeIndexes(value: unknown): {
-  cameras: CameraInfo[];
-  lenses: LensInfo[];
-} {
-  if (!isRecord(value)) {
-    return { cameras: [], lenses: [] };
+function normalizeShape<T>(
+  shape: Shape,
+  value: Record<string, unknown>,
+): T | null {
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(shape)) {
+    if (item.required && item.check(value[key]).length > 0) return null;
+    const normalized = item.normalize(value[key]);
+    if (normalized === undefined && item.omitUndefined) continue;
+    result[key] = normalized;
   }
+  return result as T;
+}
 
+function arrayField<T>(shape: Shape): Field<T[]> {
   return {
-    cameras: Array.isArray(value.cameras)
-      ? value.cameras.flatMap((camera) => {
-          const normalized = normalizeCameraInfo(camera);
-          return normalized ? [normalized] : [];
-        })
-      : [],
-    lenses: Array.isArray(value.lenses)
-      ? value.lenses.flatMap((lens) => {
-          const normalized = normalizeLensInfo(lens);
-          return normalized ? [normalized] : [];
-        })
-      : [],
-  };
-}
-
-function normalizeCameraInfo(value: unknown): CameraInfo | null {
-  if (!isRecord(value)) return null;
-  if (
-    typeof value.make !== "string" ||
-    typeof value.model !== "string" ||
-    typeof value.displayName !== "string"
-  ) {
-    return null;
-  }
-  return {
-    make: value.make,
-    model: value.model,
-    displayName: value.displayName,
-  };
-}
-
-function normalizeLensInfo(value: unknown): LensInfo | null {
-  if (!isRecord(value)) return null;
-  if (
-    typeof value.model !== "string" ||
-    typeof value.displayName !== "string"
-  ) {
-    return null;
-  }
-  return {
-    make: typeof value.make === "string" ? value.make : undefined,
-    model: value.model,
-    displayName: value.displayName,
-  };
-}
-
-function validateIndexes(
-  value: unknown,
-  issues: string[],
-): AfilmoryManifest["indexes"] | null {
-  if (!isRecord(value)) {
-    issues.push("indexes must be an object");
-    return null;
-  }
-
-  if (!Array.isArray(value.cameras)) {
-    issues.push("indexes.cameras must be an array");
-  } else {
-    for (const [index, camera] of value.cameras.entries()) {
-      const path = `indexes.cameras[${index}]`;
-      pushIssue(issues, isRecord(camera), `${path} must be an object`);
-      if (!isRecord(camera)) continue;
-      pushIssue(
-        issues,
-        typeof camera.make === "string",
-        `${path}.make must be a string`,
-      );
-      pushIssue(
-        issues,
-        typeof camera.model === "string",
-        `${path}.model must be a string`,
-      );
-      pushIssue(
-        issues,
-        typeof camera.displayName === "string",
-        `${path}.displayName must be a string`,
-      );
-    }
-  }
-
-  if (!Array.isArray(value.lenses)) {
-    issues.push("indexes.lenses must be an array");
-  } else {
-    for (const [index, lens] of value.lenses.entries()) {
-      const path = `indexes.lenses[${index}]`;
-      pushIssue(issues, isRecord(lens), `${path} must be an object`);
-      if (!isRecord(lens)) continue;
-      if (lens.make !== undefined) {
-        pushIssue(
-          issues,
-          typeof lens.make === "string",
-          `${path}.make must be a string`,
-        );
+    check: (value) => {
+      if (!Array.isArray(value)) return [" must be an array"];
+      const issues: string[] = [];
+      for (const [index, item] of value.entries()) {
+        if (!isRecord(item)) {
+          issues.push(`[${index}] must be an object`);
+          continue;
+        }
+        for (const message of checkShape(shape, item)) {
+          issues.push(`[${index}]${message}`);
+        }
       }
-      pushIssue(
-        issues,
-        typeof lens.model === "string",
-        `${path}.model must be a string`,
-      );
-      pushIssue(
-        issues,
-        typeof lens.displayName === "string",
-        `${path}.displayName must be a string`,
-      );
+      return issues;
+    },
+    normalize: (value) =>
+      Array.isArray(value)
+        ? value.flatMap((item) => {
+            const normalized = isRecord(item)
+              ? normalizeShape<T>(shape, item)
+              : null;
+            return normalized ? [normalized] : [];
+          })
+        : [],
+  };
+}
+
+// 常用字段的简写工厂（文案与历史 issue 逐字一致）
+const str = () => field(isString, "must be a string", "");
+const num = (fallback: number) =>
+  field(isFiniteNumber, "must be a number", fallback);
+const requiredStr = () => requiredField(isString, "must be a string");
+const optStr = (message = "must be a string") =>
+  optionalField(isString, message);
+const presentStr = () => optStr("must be a string when present");
+
+// —— source ——
+
+const s3SourceShape: Shape = {
+  bucket: presentStr(),
+  region: presentStr(),
+  endpoint: presentStr(),
+  prefix: presentStr(),
+  customDomain: presentStr(),
+};
+
+const localSourceShape: Shape = {
+  basePath: presentStr(),
+  baseUrl: presentStr(),
+};
+
+type S3Source = Extract<ManifestSource, { provider: "s3" }>;
+type LocalSource = Extract<ManifestSource, { provider: "local" }>;
+
+const sourceField: Field<ManifestSource> = {
+  check: (value) => {
+    if (!isRecord(value)) return [" must be an object"];
+    if (value.provider === "unknown") return [];
+    if (value.provider === "s3") return checkShape(s3SourceShape, value);
+    if (value.provider === "local") return checkShape(localSourceShape, value);
+    return [".provider must be 's3', 'local' or 'unknown'"];
+  },
+  normalize: (value) => {
+    if (!isRecord(value)) return UNKNOWN_SOURCE;
+    if (value.provider === "s3") {
+      return {
+        provider: "s3",
+        ...normalizeShape<Omit<S3Source, "provider">>(s3SourceShape, value),
+      };
     }
-  }
+    if (value.provider === "local") {
+      return {
+        provider: "local",
+        ...normalizeShape<Omit<LocalSource, "provider">>(
+          localSourceShape,
+          value,
+        ),
+      };
+    }
+    return UNKNOWN_SOURCE;
+  },
+};
 
-  return normalizeIndexes(value);
+// —— indexes ——
+
+const cameraShape: Shape = {
+  make: requiredStr(),
+  model: requiredStr(),
+  displayName: requiredStr(),
+};
+
+const lensShape: Shape = {
+  make: optStr(),
+  model: requiredStr(),
+  displayName: requiredStr(),
+};
+
+const indexesShape: Shape = {
+  cameras: arrayField<CameraInfo>(cameraShape),
+  lenses: arrayField<LensInfo>(lensShape),
+};
+
+function normalizeIndexes(value: unknown): ManifestIndexes {
+  return (
+    (isRecord(value) &&
+      normalizeShape<ManifestIndexes>(indexesShape, value)) || {
+      cameras: [],
+      lenses: [],
+    }
+  );
 }
 
-function validateLocation(
-  value: unknown,
-  issues: string[],
-  path: string,
-): void {
-  if (value === null) return;
-  pushIssue(issues, isRecord(value), `${path} must be null or an object`);
-  if (!isRecord(value)) return;
-  pushIssue(
-    issues,
-    isFiniteNumber(value.latitude),
-    `${path}.latitude must be a number`,
-  );
-  pushIssue(
-    issues,
-    isFiniteNumber(value.longitude),
-    `${path}.longitude must be a number`,
-  );
+// —— toneAnalysis / location（null 表示"缺失"，undefined 与其他类型都非法）——
+
+function nullableObjectField<T>(shape: Shape): Field<T | null> {
+  return {
+    check: (value) => {
+      if (value === null) return [];
+      if (!isRecord(value)) return [" must be null or an object"];
+      return checkShape(shape, value);
+    },
+    normalize: (value) =>
+      isRecord(value) ? normalizeShape<T>(shape, value) : null,
+  };
 }
 
-function normalizeStringRecord(
+const isToneType = (value: unknown): value is ToneType =>
+  typeof value === "string" && VALID_TONE_TYPES.has(value as ToneType);
+
+const toneAnalysisField = nullableObjectField<ToneAnalysis>({
+  toneType: field(isToneType, "is invalid", "normal" as ToneType),
+  brightness: num(0),
+  contrast: num(0),
+  shadowRatio: num(0),
+  highlightRatio: num(0),
+});
+
+const locationShape: Shape = {
+  latitude: num(0),
+  longitude: num(0),
+};
+
+// 键值对逐条抢救：坏值丢弃，全空则整体视为缺失（undefined）
+function normalizeRecordOf<T>(
   value: unknown,
-): Record<string, string> | undefined {
+  normalizeItem: (item: unknown) => T | undefined,
+): Record<string, T> | undefined {
   if (!isRecord(value)) return undefined;
-  const record: Record<string, string> = {};
+  const record: Record<string, T> = {};
   for (const [key, item] of Object.entries(value)) {
-    if (typeof item === "string") {
-      record[key] = item;
-    }
+    const normalized = normalizeItem(item);
+    if (normalized !== undefined) record[key] = normalized;
   }
   return Object.keys(record).length > 0 ? record : undefined;
 }
+
+const adminInfoShape: Shape = {
+  country: optStr(),
+  countryCode: optStr(),
+  region: optStr(),
+  city: optStr(),
+  district: optStr(),
+};
 
 function normalizeAdminInfo(value: unknown): LocationAdminInfo | undefined {
   if (!isRecord(value)) return undefined;
-  const admin: LocationAdminInfo = {
-    country: typeof value.country === "string" ? value.country : undefined,
-    countryCode:
-      typeof value.countryCode === "string" ? value.countryCode : undefined,
-    region: typeof value.region === "string" ? value.region : undefined,
-    city: typeof value.city === "string" ? value.city : undefined,
-    district: typeof value.district === "string" ? value.district : undefined,
-  };
+  const admin = normalizeShape<LocationAdminInfo>(
+    adminInfoShape,
+    value,
+  ) as LocationAdminInfo;
   return Object.values(admin).some(Boolean) ? admin : undefined;
 }
 
-function normalizeAdminInfoRecord(
-  value: unknown,
-): Record<string, LocationAdminInfo> | undefined {
-  if (!isRecord(value)) return undefined;
-  const record: Record<string, LocationAdminInfo> = {};
-  for (const [key, item] of Object.entries(value)) {
-    const admin = normalizeAdminInfo(item);
-    if (admin) {
-      record[key] = admin;
+const locationField: Field<LocationInfo | null> = {
+  check: nullableObjectField<LocationInfo>(locationShape).check,
+  // admin/i18n 等字段严格模式从不校验（历史行为），仅在归一化时尽力抢救
+  normalize: (value) => {
+    if (!isRecord(value)) return null;
+    const location = normalizeShape<LocationInfo>(
+      locationShape,
+      value,
+    ) as LocationInfo;
+    const admin = normalizeAdminInfo(value.admin);
+    if (admin) location.admin = admin;
+    const adminI18n = normalizeRecordOf(value.adminI18n, normalizeAdminInfo);
+    if (adminI18n) location.adminI18n = adminI18n;
+    const adminKey = normalizeAdminInfo(value.adminKey);
+    if (adminKey) location.adminKey = adminKey;
+    if (typeof value.country === "string") location.country = value.country;
+    if (typeof value.city === "string") location.city = value.city;
+    if (typeof value.locationName === "string") {
+      location.locationName = value.locationName;
     }
-  }
-  return Object.keys(record).length > 0 ? record : undefined;
-}
-
-function normalizeLocation(value: unknown): LocationInfo | null {
-  if (!isRecord(value)) return null;
-  const location: LocationInfo = {
-    latitude: isFiniteNumber(value.latitude) ? value.latitude : 0,
-    longitude: isFiniteNumber(value.longitude) ? value.longitude : 0,
-  };
-
-  const admin = normalizeAdminInfo(value.admin);
-  if (admin) location.admin = admin;
-  const adminI18n = normalizeAdminInfoRecord(value.adminI18n);
-  if (adminI18n) location.adminI18n = adminI18n;
-  const adminKey = normalizeAdminInfo(value.adminKey);
-  if (adminKey) location.adminKey = adminKey;
-  if (typeof value.country === "string") location.country = value.country;
-  if (typeof value.city === "string") location.city = value.city;
-  if (typeof value.locationName === "string") {
-    location.locationName = value.locationName;
-  }
-  const locationNameI18n = normalizeStringRecord(value.locationNameI18n);
-  if (locationNameI18n) location.locationNameI18n = locationNameI18n;
-
-  return location;
-}
-
-function validateToneAnalysis(
-  value: unknown,
-  issues: string[],
-  path: string,
-): void {
-  if (value === null) return;
-  pushIssue(issues, isRecord(value), `${path} must be null or an object`);
-  if (!isRecord(value)) return;
-  pushIssue(
-    issues,
-    typeof value.toneType === "string" &&
-      VALID_TONE_TYPES.has(value.toneType as ToneType),
-    `${path}.toneType is invalid`,
-  );
-  for (const field of [
-    "brightness",
-    "contrast",
-    "shadowRatio",
-    "highlightRatio",
-  ]) {
-    pushIssue(
-      issues,
-      isFiniteNumber(value[field]),
-      `${path}.${field} must be a number`,
+    const locationNameI18n = normalizeRecordOf(
+      value.locationNameI18n,
+      (item) => (typeof item === "string" ? item : undefined),
     );
-  }
-}
+    if (locationNameI18n) location.locationNameI18n = locationNameI18n;
+    return location;
+  },
+};
 
-function isToneType(value: unknown): value is ToneType {
-  return typeof value === "string" && VALID_TONE_TYPES.has(value as ToneType);
-}
+// —— video（可选字段：undefined 合法；type 判别的联合）——
 
-function normalizeToneAnalysis(value: unknown): ToneAnalysis | null {
-  if (!isRecord(value)) return null;
-  return {
-    toneType: isToneType(value.toneType) ? value.toneType : "normal",
-    brightness: isFiniteNumber(value.brightness) ? value.brightness : 0,
-    contrast: isFiniteNumber(value.contrast) ? value.contrast : 0,
-    shadowRatio: isFiniteNumber(value.shadowRatio) ? value.shadowRatio : 0,
-    highlightRatio: isFiniteNumber(value.highlightRatio)
-      ? value.highlightRatio
-      : 0,
-  };
-}
+type LivePhoto = Extract<VideoSource, { type: "live-photo" }>;
+type MotionPhoto = Extract<VideoSource, { type: "motion-photo" }>;
 
-function validateVideo(value: unknown, issues: string[], path: string): void {
-  if (value === undefined) return;
-  pushIssue(issues, isRecord(value), `${path} must be an object`);
-  if (!isRecord(value)) return;
+const livePhotoShape: Shape = {
+  videoUrl: requiredStr(),
+  s3Key: requiredStr(),
+};
 
-  if (value.type === "live-photo") {
-    pushIssue(
-      issues,
-      typeof value.videoUrl === "string",
-      `${path}.videoUrl must be a string`,
-    );
-    pushIssue(
-      issues,
-      typeof value.s3Key === "string",
-      `${path}.s3Key must be a string`,
-    );
-    return;
-  }
+const motionPhotoShape: Shape = {
+  offset: requiredField(isFiniteNumber, "must be a number"),
+  size: optionalField(isFiniteNumber, "must be a number"),
+  presentationTimestamp: optionalField(isFiniteNumber, "must be a number"),
+};
 
-  if (value.type === "motion-photo") {
-    pushIssue(
-      issues,
-      isFiniteNumber(value.offset),
-      `${path}.offset must be a number`,
-    );
-    if (value.size !== undefined) {
-      pushIssue(
-        issues,
-        isFiniteNumber(value.size),
-        `${path}.size must be a number`,
-      );
+const videoField: Field<VideoSource | undefined> = {
+  check: (value) => {
+    if (value === undefined) return [];
+    if (!isRecord(value)) return [" must be an object"];
+    if (value.type === "live-photo") return checkShape(livePhotoShape, value);
+    if (value.type === "motion-photo") {
+      return checkShape(motionPhotoShape, value);
     }
-    if (value.presentationTimestamp !== undefined) {
-      pushIssue(
-        issues,
-        isFiniteNumber(value.presentationTimestamp),
-        `${path}.presentationTimestamp must be a number`,
+    return [".type is invalid"];
+  },
+  normalize: (value) => {
+    if (!isRecord(value)) return;
+    if (value.type === "live-photo") {
+      const live = normalizeShape<Omit<LivePhoto, "type">>(
+        livePhotoShape,
+        value,
       );
+      return live ? { type: "live-photo", ...live } : undefined;
+    }
+    if (value.type === "motion-photo") {
+      const motion = normalizeShape<Omit<MotionPhoto, "type">>(
+        motionPhotoShape,
+        value,
+      );
+      return motion ? { type: "motion-photo", ...motion } : undefined;
     }
     return;
-  }
+  },
+  omitUndefined: true,
+};
 
-  issues.push(`${path}.type is invalid`);
+// —— EXIF 消毒：丢弃结构性危险值，而非字段白名单 ——
+// PickedExif 表面很宽、web 端 formatter 本身是防御式的；这里只保证"已验证"的
+// manifest 不携带函数/类实例等无法 JSON 序列化或有原型污染风险的值。
+// 浅层判定：值必须是基元、普通对象或由它们组成的数组；普通对象内部不再深查。
+
+function isPlainObject(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === null || proto === Object.prototype;
 }
 
-function normalizeVideo(value: unknown): VideoSource | undefined {
-  if (!isRecord(value)) return undefined;
-
-  if (value.type === "live-photo") {
-    if (typeof value.videoUrl !== "string" || typeof value.s3Key !== "string") {
-      return undefined;
-    }
-    return {
-      type: "live-photo",
-      videoUrl: value.videoUrl,
-      s3Key: value.s3Key,
-    };
-  }
-
-  if (value.type === "motion-photo") {
-    if (!isFiniteNumber(value.offset)) return undefined;
-    return {
-      type: "motion-photo",
-      offset: value.offset,
-      size: isFiniteNumber(value.size) ? value.size : undefined,
-      presentationTimestamp: isFiniteNumber(value.presentationTimestamp)
-        ? value.presentationTimestamp
-        : undefined,
-    };
-  }
-
-  return undefined;
+function isSafeExifValue(value: unknown): boolean {
+  if (value === null) return true;
+  const type = typeof value;
+  if (type === "string" || type === "number" || type === "boolean") return true;
+  if (Array.isArray(value)) return value.every((item) => isSafeExifValue(item));
+  return isPlainObject(value);
 }
 
 function normalizeExif(value: unknown): PickedExif | null {
-  if (value === null || !isRecord(value)) return null;
-  const exif: PickedExif = {};
-  Object.assign(exif, value);
-  return exif;
+  if (!isRecord(value)) return null;
+  const exif: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    // JSON.parse 会把 "__proto__" 还原成自有键，直接赋值会触发原型污染——显式跳过
+    if (key === "__proto__") continue;
+    if (isSafeExifValue(item)) exif[key] = item;
+  }
+  return exif as PickedExif;
 }
+
+// —— photo ——
+// 键顺序即历史上 item 字面量的构造顺序，保证归一化输出的 JSON 键序不变。
+
+const photoShape: Shape = {
+  id: str(),
+  originalUrl: str(),
+  thumbnailUrl: str(),
+  thumbHash: field(
+    (value): value is string | null =>
+      value === null || typeof value === "string",
+    "must be null or a string",
+    null,
+  ),
+  width: num(0),
+  height: num(0),
+  aspectRatio: num(1),
+  s3Key: str(),
+  lastModified: str(),
+  size: num(0),
+  // etag 历史上从不参与校验（严格模式也放行任意类型），仅归一化
+  etag: {
+    check: () => [],
+    normalize: (value) => (typeof value === "string" ? value : undefined),
+  },
+  exif: {
+    check: (value) =>
+      value === null || isRecord(value) ? [] : [" must be null or an object"],
+    normalize: normalizeExif,
+  },
+  toneAnalysis: toneAnalysisField,
+  location: locationField,
+  title: str(),
+  dateTaken: str(),
+  tags: {
+    check: (value) => (isStringArray(value) ? [] : [" must be a string array"]),
+    // 每次返回新数组，避免共享的 fallback 实例被调用方原地修改后串扰
+    normalize: (value) => (isStringArray(value) ? value : []),
+  },
+  description: str(),
+  isHDR: optionalField(isBoolean, "must be a boolean", true),
+  video: videoField,
+};
 
 function validatePhoto(
   value: unknown,
@@ -452,97 +471,19 @@ function validatePhoto(
 ): { item: PhotoManifestItem | null; issues: string[] } {
   // 每张照片用独立的 issues 数组，避免一张坏照片污染整个 manifest 的校验结果。
   // 严格模式由调用方把这些 issues 汇入共享数组；宽松模式据此只丢弃出错的照片。
-  const issues: string[] = [];
   const path = `photos[${index}]`;
-  pushIssue(issues, isRecord(value), `${path} must be an object`);
-  if (!isRecord(value)) return { item: null, issues };
-
-  for (const field of [
-    "id",
-    "originalUrl",
-    "thumbnailUrl",
-    "s3Key",
-    "lastModified",
-    "title",
-    "dateTaken",
-    "description",
-  ]) {
-    pushIssue(
-      issues,
-      typeof value[field] === "string",
-      `${path}.${field} must be a string`,
-    );
+  if (!isRecord(value)) {
+    return { item: null, issues: [`${path} must be an object`] };
   }
-
-  for (const field of ["width", "height", "aspectRatio", "size"]) {
-    pushIssue(
-      issues,
-      isFiniteNumber(value[field]),
-      `${path}.${field} must be a number`,
-    );
-  }
-
-  pushIssue(
-    issues,
-    isStringArray(value.tags),
-    `${path}.tags must be a string array`,
+  const issues = checkShape(photoShape, value).map(
+    (message) => `${path}${message}`,
   );
-  pushIssue(
-    issues,
-    value.thumbHash === null || typeof value.thumbHash === "string",
-    `${path}.thumbHash must be null or a string`,
-  );
-  pushIssue(
-    issues,
-    value.exif === null || isRecord(value.exif),
-    `${path}.exif must be null or an object`,
-  );
-  validateToneAnalysis(value.toneAnalysis, issues, `${path}.toneAnalysis`);
-  validateLocation(value.location, issues, `${path}.location`);
-  validateVideo(value.video, issues, `${path}.video`);
-
-  if (value.isHDR !== undefined) {
-    pushIssue(
-      issues,
-      typeof value.isHDR === "boolean",
-      `${path}.isHDR must be a boolean`,
-    );
-  }
-
-  const item: PhotoManifestItem = {
-    id: typeof value.id === "string" ? value.id : "",
-    originalUrl: typeof value.originalUrl === "string" ? value.originalUrl : "",
-    thumbnailUrl:
-      typeof value.thumbnailUrl === "string" ? value.thumbnailUrl : "",
-    thumbHash:
-      typeof value.thumbHash === "string" || value.thumbHash === null
-        ? value.thumbHash
-        : null,
-    width: isFiniteNumber(value.width) ? value.width : 0,
-    height: isFiniteNumber(value.height) ? value.height : 0,
-    aspectRatio: isFiniteNumber(value.aspectRatio) ? value.aspectRatio : 1,
-    s3Key: typeof value.s3Key === "string" ? value.s3Key : "",
-    lastModified:
-      typeof value.lastModified === "string" ? value.lastModified : "",
-    size: isFiniteNumber(value.size) ? value.size : 0,
-    etag: typeof value.etag === "string" ? value.etag : undefined,
-    exif: normalizeExif(value.exif),
-    toneAnalysis: normalizeToneAnalysis(value.toneAnalysis),
-    location: normalizeLocation(value.location),
-    title: typeof value.title === "string" ? value.title : "",
-    dateTaken: typeof value.dateTaken === "string" ? value.dateTaken : "",
-    tags: isStringArray(value.tags) ? value.tags : [],
-    description: typeof value.description === "string" ? value.description : "",
-  };
-
-  if (typeof value.isHDR === "boolean") {
-    item.isHDR = value.isHDR;
-  }
-  const video = normalizeVideo(value.video);
-  if (video) {
-    item.video = video;
-  }
-
+  // photoShape 没有 required 字段：任何对象都能归一化出 item；
+  // 是否保留由宽松入口按寻址字段（id/originalUrl/s3Key）另行判定。
+  const item = normalizeShape<PhotoManifestItem>(
+    photoShape,
+    value,
+  ) as PhotoManifestItem;
   return { item, issues };
 }
 
@@ -581,9 +522,36 @@ export function isAfilmoryManifest(input: unknown): input is AfilmoryManifest {
   return validateManifest(input).success;
 }
 
-export function validateManifest(input: unknown): ManifestValidationResult {
+/**
+ * 信封层校验：schema/version/generatedAt/source/photos-是数组，是严格与宽松
+ * 两个入口共用的硬性前提，只在这里描述一次。`collectMore` 供严格模式在 source
+ * 与 photos 检查之间插入 indexes 校验，保持历史 issue 顺序。
+ */
+function validateEnvelope(
+  input: Record<string, unknown>,
+  collectMore?: (issues: string[]) => void,
+): string[] {
   const issues: string[] = [];
+  if (input.schema !== AFILMORY_MANIFEST_SCHEMA) {
+    issues.push(`schema must be '${AFILMORY_MANIFEST_SCHEMA}'`);
+  }
+  if (input.version !== CURRENT_MANIFEST_VERSION) {
+    issues.push(`version must be ${CURRENT_MANIFEST_VERSION}`);
+  }
+  if (typeof input.generatedAt !== "string") {
+    issues.push("generatedAt must be a string");
+  }
+  issues.push(
+    ...sourceField.check(input.source).map((message) => `source${message}`),
+  );
+  collectMore?.(issues);
+  if (!Array.isArray(input.photos)) {
+    issues.push("photos must be an array");
+  }
+  return issues;
+}
 
+export function validateManifest(input: unknown): ManifestValidationResult {
   if (!isRecord(input)) {
     return {
       success: false,
@@ -591,29 +559,21 @@ export function validateManifest(input: unknown): ManifestValidationResult {
     };
   }
 
-  pushIssue(
-    issues,
-    input.schema === AFILMORY_MANIFEST_SCHEMA,
-    `schema must be '${AFILMORY_MANIFEST_SCHEMA}'`,
-  );
-  pushIssue(
-    issues,
-    input.version === CURRENT_MANIFEST_VERSION,
-    `version must be ${CURRENT_MANIFEST_VERSION}`,
-  );
-  pushIssue(
-    issues,
-    typeof input.generatedAt === "string",
-    "generatedAt must be a string",
-  );
-
-  const source = validateSource(input.source, issues);
-  const indexes = validateIndexes(input.indexes, issues);
+  const issues = validateEnvelope(input, (envelope) => {
+    // indexes 只在严格模式整体校验；宽松模式视为派生数据、逐条抢救
+    if (!isRecord(input.indexes)) {
+      envelope.push("indexes must be an object");
+    } else {
+      envelope.push(
+        ...checkShape(indexesShape, input.indexes).map(
+          (message) => `indexes${message}`,
+        ),
+      );
+    }
+  });
 
   const photos: PhotoManifestItem[] = [];
-  if (!Array.isArray(input.photos)) {
-    issues.push("photos must be an array");
-  } else {
+  if (Array.isArray(input.photos)) {
     for (const [index, photo] of input.photos.entries()) {
       const { item, issues: photoIssues } = validatePhoto(photo, index);
       issues.push(...photoIssues);
@@ -623,7 +583,7 @@ export function validateManifest(input: unknown): ManifestValidationResult {
     }
   }
 
-  if (issues.length > 0 || !source || !indexes) {
+  if (issues.length > 0) {
     return {
       success: false,
       issues,
@@ -634,9 +594,9 @@ export function validateManifest(input: unknown): ManifestValidationResult {
     success: true,
     manifest: createManifest({
       generatedAt: input.generatedAt as string,
-      source,
+      source: sourceField.normalize(input.source),
       photos,
-      indexes,
+      indexes: normalizeIndexes(input.indexes),
     }),
   };
 }
@@ -683,39 +643,14 @@ export function parseManifestLenient(
     throw new ManifestValidationError(["manifest must be an object"]);
   }
 
-  const envelopeIssues: string[] = [];
-  pushIssue(
-    envelopeIssues,
-    input.schema === AFILMORY_MANIFEST_SCHEMA,
-    `schema must be '${AFILMORY_MANIFEST_SCHEMA}'`,
-  );
-  pushIssue(
-    envelopeIssues,
-    input.version === CURRENT_MANIFEST_VERSION,
-    `version must be ${CURRENT_MANIFEST_VERSION}`,
-  );
-  const generatedAt =
-    typeof input.generatedAt === "string" ? input.generatedAt : null;
-  pushIssue(
-    envelopeIssues,
-    generatedAt !== null,
-    "generatedAt must be a string",
-  );
-  const source = validateSource(input.source, envelopeIssues);
+  const envelopeIssues = validateEnvelope(input);
+  if (envelopeIssues.length > 0) {
+    throw new ManifestValidationError(envelopeIssues);
+  }
+
   // indexes 是派生数据：逐条容错。坏的 camera/lens 条目由 normalizeIndexes 丢弃，
   // 绝不因单个坏索引条目抛掉整个 manifest（normalizeIndexes 永远返回一个对象）。
   const indexes = normalizeIndexes(input.indexes);
-  const photosAreArray = Array.isArray(input.photos);
-  pushIssue(envelopeIssues, photosAreArray, "photos must be an array");
-
-  if (
-    envelopeIssues.length > 0 ||
-    !source ||
-    generatedAt === null ||
-    !photosAreArray
-  ) {
-    throw new ManifestValidationError(envelopeIssues);
-  }
 
   const photos: PhotoManifestItem[] = [];
   const skipped: SkippedPhoto[] = [];
@@ -734,7 +669,12 @@ export function parseManifestLenient(
   }
 
   return {
-    manifest: createManifest({ generatedAt, source, photos, indexes }),
+    manifest: createManifest({
+      generatedAt: input.generatedAt as string,
+      source: sourceField.normalize(input.source),
+      photos,
+      indexes,
+    }),
     skipped,
   };
 }

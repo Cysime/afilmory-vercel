@@ -326,11 +326,13 @@ export class AfilmoryBuilder {
         };
       }
       case "local": {
-        // schema 的 ManifestSource 目前只建模 s3 / unknown 两种来源
-        // （@afilmory/schema 的 normalizeSource 也会把任何非 s3 provider 归一成
-        // unknown）。在 schema 增加 local 变体之前，本地文件系统源如实记录为
-        // unknown，而不是像旧代码那样硬编码谎报成 s3。
-        return { provider: "unknown" };
+        // schema 的 ManifestSource 已有 local 变体：如实记录本地文件系统源，
+        // 而不是像旧代码那样归一成 unknown 或谎报成 s3。
+        return {
+          provider: "local",
+          basePath: storage.basePath,
+          baseUrl: storage.baseUrl,
+        };
       }
     }
   }

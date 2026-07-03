@@ -17,6 +17,24 @@ There are two deliberate entry points, and they are not interchangeable:
 
 Rule of thumb: fresh output → strict; anything read back from storage → lenient.
 
+## Versioning
+
+`CURRENT_MANIFEST_VERSION` is pinned in `src/version.ts`, and **both** parsers
+hard-reject any other version. There is no migration code, deliberately:
+
+- **Version bump = full rebuild.** The builder discards any cached manifest
+  that fails to parse and regenerates from scratch; the web app surfaces a
+  `BootstrapError` diagnostic page on a version mismatch. This is cheap because
+  thumbnails regenerate incrementally via the `.encoding` signature marker and
+  the artifact cache — only the manifest itself is rebuilt.
+- **Bumping the version** therefore never needs migration logic, but the bump
+  must be propagated. Grep list:
+  - `packages/schema/src/version.ts` (the constant itself),
+  - test fixtures and assertions across packages
+    (grep `version: 2` / `"version": 2` / `toBe(2)`),
+  - `apps/web/e2e/fixtures/photos-manifest.json` — regenerate it with
+    `scripts/create-synthetic-e2e-fixture.ts` (`pnpm fixture:e2e`).
+
 ## Constraints
 
 - **Zero runtime dependencies.** This package is imported by the browser

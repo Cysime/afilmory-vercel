@@ -81,7 +81,7 @@ describe("manifest v2 schema", () => {
           }),
         ],
       }),
-      source: { provider: "local" },
+      source: { provider: "ftp" },
       indexes: {
         cameras: [{ make: "Sony", model: 7 }],
         lenses: "none",
@@ -93,7 +93,7 @@ describe("manifest v2 schema", () => {
     expect(result.success).toBe(false);
     expect(result).toMatchObject({
       issues: expect.arrayContaining([
-        "source.provider must be 's3' or 'unknown'",
+        "source.provider must be 's3', 'local' or 'unknown'",
         "indexes.cameras[0].model must be a string",
         "indexes.cameras[0].displayName must be a string",
         "indexes.lenses must be an array",
