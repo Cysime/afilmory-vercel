@@ -44,12 +44,6 @@ const restrictedImports = {
       importNames: ["jotaiStore", "createAtomAccessor"],
       message: "Use the Provider-scoped Jotai store from AppRuntime.",
     },
-    {
-      name: "../output-paths.js",
-      importNames: ["setBuilderOutputSettings", "getBuilderOutputSettings"],
-      message:
-        "Use runWithBuilderOutputSettings/getScopedBuilderOutputSettings.",
-    },
   ],
   patterns: [
     {
