@@ -6,7 +6,6 @@ import type { BuilderConfig } from "../../types/config.js";
 import type { PhotoManifestItem } from "../../types/photo.js";
 import type {
   BuilderServices,
-  OutputPathsService,
   PhotoIdService,
   StorageService,
 } from "../contracts/services.js";
@@ -27,7 +26,6 @@ export interface BuilderServicesBacking {
   hasPhotoIdCollision: (key: string) => boolean;
   getPhotoIdForKey: (key: string, existingItem?: PhotoManifestItem) => string;
   setPhotoIdCollisionKeys: (keys: Iterable<string>) => void;
-  getOutputSettings: () => BuilderConfig["output"];
 }
 
 export function createBuilderServices(
@@ -37,10 +35,6 @@ export function createBuilderServices(
     createManager: (config) => backing.createStorageManager(config),
     getConfig: () => backing.getStorageConfig(),
     getManager: () => backing.getStorageManager(),
-  };
-
-  const output: OutputPathsService = {
-    getSettings: () => backing.getOutputSettings(),
   };
 
   const photoId: PhotoIdService = {
@@ -53,7 +47,6 @@ export function createBuilderServices(
   return {
     exif: backing.getExifService(),
     storage,
-    output,
     photoId,
     config: backing.config,
     logger: backing.logger,

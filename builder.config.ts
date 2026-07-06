@@ -68,7 +68,6 @@ export default defineBuilderConfig(() => ({
     manifestPath: path.resolve(__dirname, "generated/photos-manifest.json"),
     thumbnailsDir: path.resolve(__dirname, "apps/web/public/thumbnails"),
     originalsDir: path.resolve(__dirname, "apps/web/public/originals"),
-    geocodingCachePath,
   },
 
   // 使用 S3 存储

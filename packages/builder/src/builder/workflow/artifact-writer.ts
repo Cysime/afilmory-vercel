@@ -20,7 +20,9 @@ export class ArtifactWriter {
   ): Promise<ArtifactWriteResult> {
     // keepPhotoIds = 存储中仍存在的照片全集：处理失败的照片不在 manifest 里，
     // 但缩略图必须保留（见 handleDeletedPhotos 的注释）。
+    const { output } = session.config;
     const deletedCount = await handleDeletedPhotos(
+      output,
       manifest,
       options?.keepPhotoIds,
     );
@@ -41,7 +43,13 @@ export class ArtifactWriter {
       lenses,
     });
 
-    await saveManifest(manifest, cameras, lenses, session.getManifestSource());
+    await saveManifest(
+      output,
+      manifest,
+      cameras,
+      lenses,
+      session.getManifestSource(),
+    );
 
     await session.emit("afterSaveManifest", {
       options: session.options,

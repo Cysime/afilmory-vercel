@@ -1,11 +1,7 @@
 import process from "node:process";
 
-import type { BuilderOptions } from "./builder/builder.js";
 import { AfilmoryBuilder } from "./builder/builder.js";
 import { ExifService } from "./image/exif.js";
-import type { PluginRunState } from "./plugins/manager.js";
-import type { StorageObject } from "./storage/interfaces";
-import type { PhotoManifestItem } from "./types/photo";
 import type {
   BatchTaskMessage,
   BatchTaskResult,
@@ -36,53 +32,40 @@ export async function runAsWorker() {
   const workerId = Number.parseInt(process.env.WORKER_ID || "0");
 
   // 立即注册消息监听器，避免被异步初始化阻塞
-  let isInitialized = false;
+  let taskRuntime: WorkerTaskRuntime | null = null;
 
-  let imageObjects: StorageObject[];
-  let existingManifestMap: Map<string, PhotoManifestItem>;
-  let livePhotoMap: Map<string, StorageObject>;
-  let builder: AfilmoryBuilder;
-  let builderOptions: BuilderOptions;
-  let pluginRunState: PluginRunState;
-
-  // 初始化函数，从主进程接收共享数据
+  // 初始化函数，从主进程接收共享数据。运行期依赖在这里组装一次，
+  // 之后每个任务直接复用（与主进程侧 processWithWorkers 的组装完全同形）。
   const initializeWorker = async (sharedData: ClusterWorkerSharedData) => {
-    if (isInitialized) return;
+    if (taskRuntime) return;
 
     // IPC 通道使用 advanced（v8）序列化，Map 等结构已在传输层原生还原，
     // 这里直接使用共享数据即可，无需手动 Buffer.from + v8.deserialize。
-    imageObjects = sharedData.imageObjects;
-    existingManifestMap = sharedData.existingManifestMap;
-    livePhotoMap = sharedData.livePhotoMap;
-    builderOptions = sharedData.builderOptions;
-    builder = new AfilmoryBuilder(sharedData.builderConfig, {
+    const builder = new AfilmoryBuilder(sharedData.builderConfig, {
       exifService: workerExifService,
       ownsExifService: false,
     });
     builder.setPhotoIdCollisionKeys(sharedData.photoIdCollisionKeys ?? []);
     await builder.ensurePluginsReady();
-    pluginRunState = builder.createPluginRunState();
 
-    isInitialized = true;
-  };
-
-  const createTaskRuntime = (): WorkerTaskRuntime => {
-    if (!isInitialized) {
-      throw new Error("Worker 未初始化，请先发送 init 消息");
-    }
-
-    return {
+    taskRuntime = {
       workerId,
-      imageObjects,
-      existingManifestMap,
-      livePhotoMap,
-      builderOptions,
-      outputSettings: builder.getConfig().output,
+      imageObjects: sharedData.imageObjects,
+      existingManifestMap: sharedData.existingManifestMap,
+      livePhotoMap: sharedData.livePhotoMap,
+      builderOptions: sharedData.builderOptions,
       services: builder.services,
-      pluginRunState,
+      runState: builder.createPluginRunState(),
       emitPluginEvent: (runState, event, payload) =>
         builder.emitPluginEvent(runState, event, payload),
     };
+  };
+
+  const getTaskRuntime = (): WorkerTaskRuntime => {
+    if (!taskRuntime) {
+      throw new Error("Worker 未初始化，请先发送 init 消息");
+    }
+    return taskRuntime;
   };
 
   const loadProcessPhoto = async (): Promise<WorkerProcessPhoto> => {
@@ -94,7 +77,7 @@ export async function runAsWorker() {
     try {
       const response = await executeWorkerTask(
         message,
-        createTaskRuntime(),
+        getTaskRuntime(),
         await loadProcessPhoto(),
       );
 
@@ -121,7 +104,7 @@ export async function runAsWorker() {
     try {
       const response = await executeWorkerBatchTask(
         message,
-        createTaskRuntime(),
+        getTaskRuntime(),
         await loadProcessPhoto(),
       );
 
@@ -156,20 +139,11 @@ export async function runAsWorker() {
         | TaskMessage
         | BatchTaskMessage
         | WorkerInitMessage
-        | { type: "shutdown" }
-        | { type: "ping" },
+        | { type: "shutdown" },
     ) => {
       if (message.type === "shutdown") {
         process.removeAllListeners("message");
         process.exit(0);
-        return;
-      }
-
-      if (message.type === "ping") {
-        // 响应主进程的 ping，表示 worker 已准备好
-        if (process.send) {
-          process.send({ type: "pong", workerId });
-        }
         return;
       }
 

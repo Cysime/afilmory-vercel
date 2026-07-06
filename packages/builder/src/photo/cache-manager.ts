@@ -2,6 +2,7 @@ import type { PhotoProcessorOptions } from "../core/contracts/photo-processing.j
 import { thumbnailExists } from "../image/thumbnail.js";
 import type { StorageObject } from "../storage/interfaces.js";
 import type { PhotoManifestItem } from "../types/photo.js";
+import { getPhotoExecutionContext } from "./execution-context.js";
 import { decidePhotoWork } from "./work-decision.js";
 
 export interface CacheableData {
@@ -28,7 +29,7 @@ export async function shouldProcessPhoto(
   options: PhotoProcessorOptions,
 ): Promise<{ shouldProcess: boolean; reason: string }> {
   return decidePhotoWork(existingItem, obj, options, () =>
-    thumbnailExists(photoId),
+    thumbnailExists(photoId, getPhotoExecutionContext().output.thumbnailsDir),
   );
 }
 

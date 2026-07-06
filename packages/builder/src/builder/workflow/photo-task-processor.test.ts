@@ -38,7 +38,8 @@ const processorMocks = vi.hoisted(() => ({
   }>,
 }));
 
-vi.mock("../../photo/processor.js", () => ({
+vi.mock("../../photo/processor.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../photo/processor.js")>()),
   processPhoto: processorMocks.processPhoto,
 }));
 
@@ -156,9 +157,6 @@ function createBuilderServicesFixture(config: BuilderConfig): BuilderServices {
       read: vi.fn(async () => ({ SourceFile: "fixture.jpg" })),
     },
     logger,
-    output: {
-      getSettings: () => config.output,
-    },
     photoId: {
       getIdForKey: (key) => key.replace(/\.[^.]+$/, ""),
       hasCollision: (key) => key === "collision.jpg",
@@ -253,8 +251,8 @@ describe("PhotoTaskProcessor", () => {
       createResult("skipped"),
       createResult("failed"),
     ];
-    processorMocks.processPhoto.mockImplementation(async (_object, index) => {
-      return results[index];
+    processorMocks.processPhoto.mockImplementation(async (task) => {
+      return results[task.index];
     });
 
     const output = await new PhotoTaskProcessor().process(
@@ -297,22 +295,18 @@ describe("PhotoTaskProcessor", () => {
       },
     );
     expect(processorMocks.processPhoto).toHaveBeenCalledWith(
-      tasks[0],
-      0,
-      10,
-      tasks.length,
-      existingManifestMap,
-      livePhotoMap,
-      output.processorOptions,
-      session.services,
-      expect.any(Function),
+      { obj: tasks[0], index: 0, workerId: 10, totalImages: tasks.length },
       {
-        builderOptions: session.options,
+        existingManifestMap,
+        livePhotoMap,
+        services: session.services,
+        emitPluginEvent: expect.any(Function),
         runState: session.runState,
+        builderOptions: session.options,
       },
     );
 
-    const pluginBridge = getFirstProcessPhotoCall()[8];
+    const pluginBridge = getFirstProcessPhotoCall()[1].emitPluginEvent;
     await pluginBridge(session.runState, "afterImagesListed", {
       imageObjects: tasks,
       options: session.options,

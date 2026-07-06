@@ -3,7 +3,7 @@ import path from "node:path";
 
 import sharp from "sharp";
 
-import { getScopedBuilderOutputSettings } from "../output-paths.js";
+import { getPhotoExecutionContext } from "../photo/execution-context.js";
 import { getPhotoProcessingLoggers } from "../photo/logger-adapter.js";
 import type { ThumbnailResult } from "../types/photo.js";
 import { SOURCE_SHARP_OPTIONS } from "./sharp-options.js";
@@ -54,9 +54,9 @@ export async function writeThumbnailEncodingMarker(
   );
 }
 
-// 获取缩略图路径信息
+// 获取缩略图路径信息（照片作用域内调用；构建作用域的读者走显式参数，见 thumbnailExists）
 function getThumbnailPaths(photoId: string) {
-  const { thumbnailsDir } = getScopedBuilderOutputSettings();
+  const { thumbnailsDir } = getPhotoExecutionContext().output;
   const filename = `${photoId}.jpg`;
   const thumbnailPath = path.join(thumbnailsDir, filename);
   const thumbnailUrl = getThumbnailPublicUrl(photoId);
@@ -92,15 +92,20 @@ function createSuccessResult(
 
 // 确保缩略图目录存在
 async function ensureThumbnailDir(): Promise<void> {
-  const { thumbnailsDir } = getScopedBuilderOutputSettings();
+  const { thumbnailsDir } = getPhotoExecutionContext().output;
   await fs.mkdir(thumbnailsDir, { recursive: true });
 }
 
-// 检查缩略图是否存在
-export async function thumbnailExists(photoId: string): Promise<boolean> {
+// 检查缩略图是否存在。
+// 目录显式传参：这是唯一同时被两种作用域调用的函数——DiffPlanner 在主进程
+// 规划阶段（无照片上下文，取 session.config.output）与照片管道内（取
+// 上下文 output）都要用它。
+export async function thumbnailExists(
+  photoId: string,
+  thumbnailsDir: string,
+): Promise<boolean> {
   try {
-    const { thumbnailPath } = getThumbnailPaths(photoId);
-    await fs.access(thumbnailPath);
+    await fs.access(path.join(thumbnailsDir, `${photoId}.jpg`));
     return true;
   } catch {
     return false;
@@ -181,7 +186,13 @@ export async function generateThumbnailAndThumbHash(
     await ensureThumbnailDir();
 
     // 如果不是强制模式且缩略图已存在，尝试复用现有文件
-    if (!forceRegenerate && (await thumbnailExists(photoId))) {
+    if (
+      !forceRegenerate &&
+      (await thumbnailExists(
+        photoId,
+        getPhotoExecutionContext().output.thumbnailsDir,
+      ))
+    ) {
       const existingResult = await processExistingThumbnail(photoId);
 
       if (existingResult) {

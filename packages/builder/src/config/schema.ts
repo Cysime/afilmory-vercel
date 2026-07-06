@@ -77,7 +77,6 @@ const OUTPUT_FIELDS: FieldSpecMap = {
   manifestPath: { kind: "string", ignoreEmpty: true },
   thumbnailsDir: { kind: "string", ignoreEmpty: true },
   originalsDir: { kind: "string", ignoreEmpty: true },
-  geocodingCachePath: { kind: "string", ignoreEmpty: true },
 };
 
 // storage 是判别联合（见 storage/interfaces.ts），按 provider 分别登记键集；

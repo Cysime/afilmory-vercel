@@ -13,7 +13,7 @@ export interface ClusterWorkerSharedData {
 }
 
 export interface WorkerReadyMessage {
-  type: "ready" | "pong";
+  type: "ready";
   workerId: number;
 }
 

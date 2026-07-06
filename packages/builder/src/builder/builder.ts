@@ -4,7 +4,7 @@ import { ExifService } from "../image/exif.js";
 import { logger } from "../logger/index.js";
 import { loadExistingManifest } from "../manifest/manager.js";
 import { CURRENT_MANIFEST_VERSION } from "../manifest/version.js";
-import { runWithBuilderOutputSettings } from "../output-paths.js";
+import { normalizeBuilderOutputSettings } from "../output-paths.js";
 import { createPhotoId } from "../photo/id.js";
 import type { PluginRunState } from "../plugins/manager.js";
 import { PluginManager } from "../plugins/manager.js";
@@ -50,7 +50,12 @@ export class AfilmoryBuilder {
   private readonly ownsExifService: boolean;
 
   constructor(config: BuilderConfig, runtime: AfilmoryBuilderRuntime = {}) {
-    this.config = config;
+    // resolveBuilderConfig 已归一化过；这里再归一一次（幂等）覆盖绕过 resolve
+    // 直接 new 的路径——cluster worker 用 IPC 传来的 config 重建 builder 就是这种。
+    this.config = {
+      ...config,
+      output: normalizeBuilderOutputSettings(config.output),
+    };
     this.exifService = runtime.exifService ?? new ExifService();
     this.ownsExifService = runtime.ownsExifService ?? !runtime.exifService;
 
@@ -71,7 +76,6 @@ export class AfilmoryBuilder {
       getPhotoIdForKey: (key, existingItem) =>
         this.getPhotoIdForKey(key, existingItem),
       setPhotoIdCollisionKeys: (keys) => this.setPhotoIdCollisionKeys(keys),
-      getOutputSettings: () => this.config.output,
     });
   }
 
@@ -86,16 +90,14 @@ export class AfilmoryBuilder {
   }
 
   async buildManifest(options: BuilderOptions): Promise<BuilderResult> {
-    return await runWithBuilderOutputSettings(this.config.output, async () => {
-      try {
-        await this.ensurePluginsReady();
-        this.ensureStorageManager();
-        return await this.#buildManifest(options);
-      } catch (error) {
-        logger.main.error("❌ 构建 manifest 失败：", error);
-        throw error;
-      }
-    });
+    try {
+      await this.ensurePluginsReady();
+      this.ensureStorageManager();
+      return await this.#buildManifest(options);
+    } catch (error) {
+      logger.main.error("❌ 构建 manifest 失败：", error);
+      throw error;
+    }
   }
   /**
    * 构建照片清单
@@ -320,7 +322,7 @@ export class AfilmoryBuilder {
           photos: [],
           indexes: { cameras: [], lenses: [] },
         }
-      : await loadExistingManifest();
+      : await loadExistingManifest(this.config.output);
   }
 
   private getManifestSource(): ManifestSource {

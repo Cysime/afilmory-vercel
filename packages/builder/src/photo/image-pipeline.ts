@@ -1,7 +1,7 @@
 import { uint8ArrayToHex } from "@afilmory/media";
 import sharp from "sharp";
 
-import type { PhotoProcessorOptions } from "../core/contracts/photo-processing.js";
+import type { PhotoProcessingContext } from "../core/contracts/photo-processing.js";
 import type { PluginRunState } from "../core/contracts/plugin-ref.js";
 import {
   convertBmpToJpegSharpInstance,
@@ -11,7 +11,6 @@ import {
 } from "../image/processor.js";
 import { SOURCE_SHARP_OPTIONS } from "../image/sharp-options.js";
 import { THUMBNAIL_PLUGIN_DATA_KEY } from "../plugins/thumbnail-storage/shared.js";
-import type { StorageObject } from "../storage/interfaces.js";
 import type { BuilderOptions } from "../types/options.js";
 import type { PhotoManifestItem, ProcessPhotoResult } from "../types/photo.js";
 import { shouldProcessPhoto } from "./cache-manager.js";
@@ -20,12 +19,11 @@ import {
   processThumbnailAndThumbHash,
   processToneAnalysis,
 } from "./data-processors.js";
+import { getPhotoExecutionContext } from "./execution-context.js";
 import { detectGainMap } from "./gainmap-detector.js";
 import { extractPhotoInfo } from "./info-extractor.js";
 import { processLivePhoto } from "./live-photo-handler.js";
 import { detectMotionPhoto } from "./motion-photo-detector.js";
-import type { PhotoPipelineRuntime } from "./pipeline-runtime.js";
-import { createPhotoPipelineRuntime } from "./pipeline-runtime.js";
 
 export interface ProcessedImageData {
   sharpInstance: sharp.Sharp;
@@ -33,24 +31,14 @@ export interface ProcessedImageData {
   metadata: { width: number; height: number };
 }
 
-export interface PhotoProcessingContext {
-  photoKey: string;
-  obj: StorageObject;
-  existingItem: PhotoManifestItem | undefined;
-  livePhotoMap: Map<string, StorageObject>;
-  options: PhotoProcessorOptions;
-  pluginData: Record<string, unknown>;
-}
-
 /**
  * 预处理图片数据
  * 包括获取原始数据、格式转换、BMP 处理等
  */
-export async function preprocessImage(
+async function preprocessImage(
   photoKey: string,
-  runtime: PhotoPipelineRuntime = createPhotoPipelineRuntime(),
 ): Promise<{ rawBuffer: Buffer; processedBuffer: Buffer } | null> {
-  const { loggers, storageManager } = runtime;
+  const { loggers, storageManager } = getPhotoExecutionContext();
 
   try {
     // 获取图片数据
@@ -83,12 +71,11 @@ export async function preprocessImage(
  * 处理图片并创建 Sharp 实例
  * 包括 BMP 转换和元数据提取
  */
-export async function processImageWithSharp(
+async function processImageWithSharp(
   imageBuffer: Buffer,
   photoKey: string,
-  runtime: PhotoPipelineRuntime = createPhotoPipelineRuntime(),
 ): Promise<ProcessedImageData | null> {
-  const { loggers } = runtime;
+  const { loggers } = getPhotoExecutionContext();
 
   try {
     // 创建 Sharp 实例，复用于多个操作
@@ -129,26 +116,24 @@ export async function processImageWithSharp(
 /**
  * 完整的照片处理管道
  * 整合所有处理步骤
+ * photoId 由调用方（processPhotoWithPipeline）计算一次传入，避免双算。
  */
-export async function executePhotoProcessingPipeline(
+async function executePhotoProcessingPipeline(
   context: PhotoProcessingContext,
-  runtime: PhotoPipelineRuntime = createPhotoPipelineRuntime(),
+  photoId: string,
 ): Promise<PhotoManifestItem | null> {
   const { photoKey, obj, existingItem, livePhotoMap, options } = context;
-  const { loggers, storageManager } = runtime;
-  // Generate the actual photo ID with digest suffix
-  const photoId = runtime.services.photoId.getIdForKey(photoKey, existingItem);
+  const { loggers, storageManager, services } = getPhotoExecutionContext();
 
   try {
     // 1. 预处理图片
-    const imageData = await preprocessImage(photoKey, runtime);
+    const imageData = await preprocessImage(photoKey);
     if (!imageData) return null;
 
     // 2. 处理图片并创建 Sharp 实例
     const processedData = await processImageWithSharp(
       imageData.processedBuffer,
       photoKey,
-      runtime,
     );
     if (!processedData) return null;
 
@@ -183,7 +168,7 @@ export async function executePhotoProcessingPipeline(
       photoKey,
       existingItem,
       options,
-      runtime.services.exif,
+      services.exif,
     );
 
     // 5. 检测 HDR GainMap（Ultra HDR 图片）
@@ -284,19 +269,15 @@ export async function executePhotoProcessingPipeline(
 export async function processPhotoWithPipeline(
   context: PhotoProcessingContext,
   runtime: { runState: PluginRunState; builderOptions: BuilderOptions },
-  pipelineRuntime: PhotoPipelineRuntime = createPhotoPipelineRuntime(),
 ): Promise<{
   item: PhotoManifestItem | null;
   type: "new" | "processed" | "skipped" | "failed";
   pluginData: Record<string, unknown>;
 }> {
   const { photoKey, existingItem, obj, options } = context;
-  const { emitPluginEvent, loggers } = pipelineRuntime;
+  const { emitPluginEvent, loggers, services } = getPhotoExecutionContext();
 
-  const photoId = pipelineRuntime.services.photoId.getIdForKey(
-    photoKey,
-    existingItem,
-  );
+  const photoId = services.photoId.getIdForKey(photoKey, existingItem);
 
   await emitPluginEvent(runtime.runState, "beforePhotoProcess", {
     options: runtime.builderOptions,
@@ -338,10 +319,7 @@ export async function processPhotoWithPipeline(
   let resultType: ProcessPhotoResult["type"] = isNewPhoto ? "new" : "processed";
 
   try {
-    processedItem = await executePhotoProcessingPipeline(
-      context,
-      pipelineRuntime,
-    );
+    processedItem = await executePhotoProcessingPipeline(context, photoId);
     if (!processedItem) {
       resultType = "failed";
     }

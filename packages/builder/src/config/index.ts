@@ -1,6 +1,7 @@
 import { loadConfig } from "c12";
 import consola from "consola";
 
+import { normalizeBuilderOutputSettings } from "../output-paths.js";
 import type { BuilderConfig, BuilderConfigInput } from "../types/config.js";
 import { clone } from "../utils/clone.js";
 import { createDefaultBuilderConfig } from "./defaults.js";
@@ -21,6 +22,9 @@ export function resolveBuilderConfig(
     // builder.config.ts 是每个 self-hoster 都要编辑的文件，拼写错误必须大声可见
     consola.warn(warning);
   }
+  // 输出路径在这里就归一成绝对路径：全链路（主进程、cluster worker、CLI 的
+  // .encoding 检查）从此只见同一份归一化值，不存在"入 scope 前后两种状态"。
+  config.output = normalizeBuilderOutputSettings(config.output);
   return config;
 }
 

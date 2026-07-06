@@ -2,20 +2,13 @@ import type { ExifReaderService } from "../../image/exif.js";
 import type { Logger } from "../../logger/index.js";
 import type { StorageManager } from "../../storage/index.js";
 import type { StorageConfig } from "../../storage/interfaces.js";
-import type {
-  BuilderConfig,
-  BuilderOutputSettings,
-} from "../../types/config.js";
+import type { BuilderConfig } from "../../types/config.js";
 import type { PhotoManifestItem } from "../../types/photo.js";
 
 export interface StorageService {
   createManager: (config: StorageConfig) => StorageManager;
   getConfig: () => StorageConfig;
   getManager: () => StorageManager;
-}
-
-export interface OutputPathsService {
-  getSettings: () => BuilderOutputSettings;
 }
 
 export interface PhotoIdService {
@@ -32,7 +25,6 @@ export interface PhotoIdService {
 export interface BuilderServices {
   exif: ExifReaderService;
   storage: StorageService;
-  output: OutputPathsService;
   photoId: PhotoIdService;
   config: BuilderConfig;
   logger: Logger;

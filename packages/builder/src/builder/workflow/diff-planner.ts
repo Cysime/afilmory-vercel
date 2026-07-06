@@ -75,7 +75,12 @@ export class DiffPlanner {
         existingItem,
         obj,
         options,
-        () => thumbnailExists(session.getPhotoIdForKey(key, existingItem)),
+        // 主进程规划阶段没有照片上下文，缩略图目录走 session 配置显式传入。
+        () =>
+          thumbnailExists(
+            session.getPhotoIdForKey(key, existingItem),
+            session.config.output.thumbnailsDir,
+          ),
       );
 
       if (shouldProcess) {

@@ -225,8 +225,7 @@ export class ClusterPool<T> extends EventEmitter {
 
       worker.on("message", (message: ClusterWorkerMessage) => {
         switch (message.type) {
-          case "ready":
-          case "pong": {
+          case "ready": {
             this.handleWorkerReady(workerId);
 
             break;
@@ -293,7 +292,7 @@ export class ClusterPool<T> extends EventEmitter {
       handle.state = "initializing";
       workerLogger.info(`Worker ${workerId} 已接收初始化请求，等待初始化完成`);
     } else {
-      // 后续的 ready/pong 消息（如 pong 响应）：worker 已初始化，直接标记就绪
+      // 重复的 ready 消息：worker 已初始化，直接标记就绪
       handle.state = "ready";
       workerLogger.info(`Worker ${workerId} 已准备就绪`);
       this.emit("workerReady", workerId);

@@ -12,6 +12,17 @@ vi.mock("../image/thumbnail.js", () => ({
   thumbnailExists: vi.fn(async () => false),
 }));
 
+// 生产路径里 processThumbnailAndThumbHash 只从照片上下文读 output.thumbnailsDir。
+vi.mock("./execution-context.js", () => ({
+  getPhotoExecutionContext: () => ({
+    output: {
+      manifestPath: "/test-out/photos-manifest.json",
+      thumbnailsDir: "/test-out/thumbnails",
+      originalsDir: "/test-out/originals",
+    },
+  }),
+}));
+
 vi.mock("./logger-adapter.js", () => {
   const makeLogger = () => ({
     info: vi.fn(),

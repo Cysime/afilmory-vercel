@@ -104,9 +104,6 @@ function createBuilderServicesFixture(config: BuilderConfig): BuilderServices {
       read: vi.fn(async () => emptyTags),
     },
     logger,
-    output: {
-      getSettings: () => config.output,
-    },
     photoId: {
       getIdForKey: (key) => key.replace(/\.[^.]+$/, ""),
       hasCollision: () => false,
@@ -317,6 +314,7 @@ describe("builder workflow modules", () => {
 
     expect(result.deletedCount).toBe(1);
     expect(manifestManagerMocks.saveManifest).toHaveBeenCalledWith(
+      session.config.output,
       manifest,
       [{ make: "Sony", model: "A7C", displayName: "Sony A7C" }],
       [{ make: "Sony", model: "FE 35mm", displayName: "Sony FE 35mm" }],

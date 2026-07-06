@@ -14,12 +14,12 @@ import {
   getThumbnailPublicUrl,
   thumbnailExists,
 } from "../image/thumbnail.js";
-import { getScopedBuilderOutputSettings } from "../output-paths.js";
 import type {
   PhotoManifestItem,
   PickedExif,
   ToneAnalysis,
 } from "../types/photo.js";
+import { getPhotoExecutionContext } from "./execution-context.js";
 import { getPhotoProcessingLoggers } from "./logger-adapter.js";
 
 export interface ThumbnailResult {
@@ -39,16 +39,16 @@ export async function processThumbnailAndThumbHash(
   options: PhotoProcessorOptions,
 ): Promise<ThumbnailResult | null> {
   const loggers = getPhotoProcessingLoggers();
+  const { thumbnailsDir } = getPhotoExecutionContext().output;
 
   // 检查是否可以复用现有数据
   if (
     !options.isForceMode &&
     !options.isForceThumbnails &&
     existingItem?.thumbHash &&
-    (await thumbnailExists(photoId))
+    (await thumbnailExists(photoId, thumbnailsDir))
   ) {
     try {
-      const { thumbnailsDir } = getScopedBuilderOutputSettings();
       const thumbnailPath = path.join(thumbnailsDir, `${photoId}.jpg`);
       const thumbnailBuffer = await fs.readFile(thumbnailPath);
       const thumbnailUrl = getThumbnailPublicUrl(photoId);

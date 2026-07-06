@@ -1,6 +1,6 @@
 import type { PhotoProcessingLoggers } from "../../photo/logger-types.js";
 import type { StorageManager } from "../../storage/index.js";
-import type { StorageConfig } from "../../storage/interfaces.js";
+import type { BuilderOutputSettings } from "../../types/config.js";
 import type {
   BuilderPluginEvent,
   BuilderPluginEventPayloads,
@@ -23,12 +23,17 @@ export type EmitPluginEventFn = <TEvent extends BuilderPluginEvent>(
  * The async-local-storage context that photo pipeline stages can access
  * via getPhotoExecutionContext(). The `services` field replaces the
  * previous `builder: AfilmoryBuilder` reference, breaking the cycle.
+ *
+ * 组装只有一个入口：createPhotoExecutionContext（photo/execution-context.ts）。
+ * 所有字段均为必填——写入方（processor / geocoding 插件）都经过工厂，不存在
+ * "半初始化"的合法状态。
  */
 export interface PhotoExecutionContext {
   services: BuilderServices;
   emitPluginEvent: EmitPluginEventFn;
   storageManager: StorageManager;
-  storageConfig: StorageConfig;
   normalizeStorageKey: (key: string) => string;
-  loggers?: PhotoProcessingLoggers;
+  /** 归一化后的输出路径（services.config.output）；照片作用域内的唯一读取入口。 */
+  output: BuilderOutputSettings;
+  loggers: PhotoProcessingLoggers;
 }

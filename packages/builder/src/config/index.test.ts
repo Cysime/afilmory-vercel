@@ -44,7 +44,6 @@ describe("resolveBuilderConfig — old merge semantics preserved", () => {
         manifestPath: "/repo/generated/photos-manifest.json",
         thumbnailsDir: "/repo/apps/web/public/thumbnails",
         originalsDir: "/repo/apps/web/public/originals",
-        geocodingCachePath: "/repo/generated/geocoding-cache.json",
       },
       storage,
       system: {
@@ -94,7 +93,6 @@ describe("resolveBuilderConfig — old merge semantics preserved", () => {
         manifestPath: "/repo/generated/photos-manifest.json",
         thumbnailsDir: "/repo/apps/web/public/thumbnails",
         originalsDir: "/repo/apps/web/public/originals",
-        geocodingCachePath: "/repo/generated/geocoding-cache.json",
       },
       plugins: [{ plugin: "geocoding", options: { enable: true } }],
     });

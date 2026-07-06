@@ -1,7 +1,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import type { PhotoExecutionContext } from "../core/contracts/execution-context.js";
+import type {
+  EmitPluginEventFn,
+  PhotoExecutionContext,
+} from "../core/contracts/execution-context.js";
+import type { BuilderServices } from "../core/contracts/services.js";
 import type { StorageConfig } from "../storage/interfaces.js";
+import { createPhotoProcessingLoggers } from "./logger-adapter.js";
 
 export type {
   EmitPluginEventFn,
@@ -9,6 +14,27 @@ export type {
 } from "../core/contracts/execution-context.js";
 
 const photoContextStorage = new AsyncLocalStorage<PhotoExecutionContext>();
+
+/**
+ * 照片执行上下文的唯一组装入口：主进程池、cluster worker、geocoding 插件的
+ * 批量回填共用这一个工厂，字段推导（storageManager / key 归一化 / 输出路径 /
+ * 按 workerId 打标的 loggers）不再散落在各写入点。
+ */
+export function createPhotoExecutionContext(
+  services: BuilderServices,
+  emitPluginEvent: EmitPluginEventFn,
+  workerId: number,
+): PhotoExecutionContext {
+  const storageConfig = services.storage.getConfig();
+  return {
+    services,
+    emitPluginEvent,
+    storageManager: services.storage.getManager(),
+    normalizeStorageKey: createStorageKeyNormalizer(storageConfig),
+    output: services.config.output,
+    loggers: createPhotoProcessingLoggers(workerId, services.logger),
+  };
+}
 
 export function runWithPhotoExecutionContext<T>(
   context: PhotoExecutionContext,
