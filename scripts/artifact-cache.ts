@@ -233,7 +233,11 @@ const copyArtifact = async (
   });
 };
 
-const restoreArtifacts = async (config: ArtifactCacheConfig): Promise<void> => {
+// Exported for tests (the fake `git clone` in the spawn recorder populates
+// cacheDir with fixtures; the copy/validate/symlink-filter logic runs for real).
+export const restoreArtifacts = async (
+  config: ArtifactCacheConfig,
+): Promise<void> => {
   await withGitAskpass(config, (gitEnv) =>
     cloneCacheRepository(config, gitEnv),
   );

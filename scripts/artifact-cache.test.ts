@@ -1,11 +1,17 @@
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { createEmptyManifest } from "@afilmory/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ArtifactCacheConfig } from "./artifact-cache";
-import { createAskpassRepoUrl, saveArtifacts } from "./artifact-cache";
+import {
+  createAskpassRepoUrl,
+  restoreArtifacts,
+  saveArtifacts,
+} from "./artifact-cache";
 
 const TOKEN = "secret-token";
 
@@ -313,5 +319,146 @@ describe("saveArtifacts", () => {
     }
     expect(message).toContain("[REPO_TOKEN]");
     expect(message).not.toContain(TOKEN);
+  });
+});
+
+describe("restoreArtifacts", () => {
+  let rootDir: string;
+  let config: ArtifactCacheConfig;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  // fixture 必须在假 `git clone` 的现场（spawn mock 内、同步 fs）写入：
+  // cloneCacheRepository 在 spawn 之前会先 rm 掉 cacheDir，beforeEach 里
+  // 预置的文件会被抹掉。
+  const setCloneFixtures = (populate: (cacheDir: string) => void): void => {
+    spawnState.respond = (args) => {
+      if (args[0] === "clone") {
+        const cloneDir = args.at(-1)!;
+        mkdirSync(cloneDir, { recursive: true });
+        populate(cloneDir);
+      }
+      return { code: 0, stderr: "", stdout: "" };
+    };
+  };
+
+  const warnings = (): string[] =>
+    warnSpy.mock.calls.map((call) => String(call[0]));
+
+  beforeEach(async () => {
+    spawnState.recorded = [];
+    spawnState.recordedEnvs = [];
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "artifact-cache-test-"));
+    config = {
+      cacheDir: path.join(rootDir, "apps/web/assets-git"),
+      repoBranch: undefined,
+      repoToken: TOKEN,
+      repoUrl: "https://github.com/owner/cache.git",
+      rootDir,
+    };
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await fs.rm(rootDir, { force: true, recursive: true });
+  });
+
+  it("restores a valid manifest, geocoding cache and thumbnails into the build tree", async () => {
+    const manifest = JSON.stringify(createEmptyManifest());
+    setCloneFixtures((cacheDir) => {
+      writeFileSync(path.join(cacheDir, "photos-manifest.json"), manifest);
+      writeFileSync(path.join(cacheDir, "geocoding-cache.json"), "{}");
+      mkdirSync(path.join(cacheDir, "thumbnails"));
+      writeFileSync(path.join(cacheDir, "thumbnails/a.jpg"), "jpeg-bytes");
+    });
+
+    await restoreArtifacts(config);
+
+    await expect(
+      fs.readFile(
+        path.join(rootDir, "generated/photos-manifest.json"),
+        "utf-8",
+      ),
+    ).resolves.toBe(manifest);
+    await expect(
+      fs.readFile(
+        path.join(rootDir, "generated/geocoding-cache.json"),
+        "utf-8",
+      ),
+    ).resolves.toBe("{}");
+    await expect(
+      fs.readFile(
+        path.join(rootDir, "apps/web/public/thumbnails/a.jpg"),
+        "utf-8",
+      ),
+    ).resolves.toBe("jpeg-bytes");
+    expect(warnings()).toEqual([]);
+  });
+
+  it("keeps a corrupt cached manifest out of generated/ but still restores later pairs", async () => {
+    setCloneFixtures((cacheDir) => {
+      // 合法 JSON 但不是合法 manifest——必须被 assertManifest 闸门拦下。
+      writeFileSync(
+        path.join(cacheDir, "photos-manifest.json"),
+        '{"not":"a manifest"}',
+      );
+      mkdirSync(path.join(cacheDir, "thumbnails"));
+      writeFileSync(path.join(cacheDir, "thumbnails/a.jpg"), "jpeg-bytes");
+    });
+
+    await restoreArtifacts(config);
+
+    // 坏 manifest 绝不能落进 generated/……
+    await expect(
+      fs.access(path.join(rootDir, "generated/photos-manifest.json")),
+    ).rejects.toThrow();
+    // ……但第一个 pair 失败不阻断后续 pair（缩略图照常恢复）。
+    await expect(
+      fs.access(path.join(rootDir, "apps/web/public/thumbnails/a.jpg")),
+    ).resolves.toBeUndefined();
+    expect(warnings()).toContainEqual(
+      expect.stringContaining("Could not restore photos manifest"),
+    );
+  });
+
+  it("never copies symlinks from the untrusted cache repo", async () => {
+    const secretPath = path.join(rootDir, "secret.txt");
+    setCloneFixtures((cacheDir) => {
+      writeFileSync(secretPath, "not-for-public");
+      mkdirSync(path.join(cacheDir, "thumbnails"));
+      writeFileSync(path.join(cacheDir, "thumbnails/real.jpg"), "jpeg-bytes");
+      // 缓存仓库可被恶意 push：symlink 指向服务目录之外的文件，跟随复制的话
+      // 会被静态站点从 public/ 直接对外提供。
+      symlinkSync(secretPath, path.join(cacheDir, "thumbnails/evil.jpg"));
+    });
+
+    await restoreArtifacts(config);
+
+    await expect(
+      fs.access(path.join(rootDir, "apps/web/public/thumbnails/real.jpg")),
+    ).resolves.toBeUndefined();
+    await expect(
+      fs.lstat(path.join(rootDir, "apps/web/public/thumbnails/evil.jpg")),
+    ).rejects.toThrow();
+  });
+
+  it("warns and continues when cached artifacts are missing", async () => {
+    const manifest = JSON.stringify(createEmptyManifest());
+    setCloneFixtures((cacheDir) => {
+      writeFileSync(path.join(cacheDir, "photos-manifest.json"), manifest);
+    });
+
+    await restoreArtifacts(config);
+
+    await expect(
+      fs.access(path.join(rootDir, "generated/photos-manifest.json")),
+    ).resolves.toBeUndefined();
+    expect(warnings()).toContainEqual(
+      expect.stringContaining("Missing cached geocoding cache"),
+    );
+    expect(warnings()).toContainEqual(
+      expect.stringContaining("Missing cached thumbnails"),
+    );
   });
 });
