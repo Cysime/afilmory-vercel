@@ -254,6 +254,12 @@ export class TileManager {
             ? tileInfoInCache.priority
             : 0,
       };
+      // 上下文丢失时 reset() 清空 requestRuntime 但 worker 仍存活，恢复后重发的
+      // 请求可能与迟到的旧响应对同一 key 各产出一张纹理；覆盖前必须删旧纹理，
+      // 否则它脱离缓存后 cleanup/disposeAll 都遍历不到，泄漏到上下文销毁为止。
+      if (tileInfoInCache?.texture) {
+        this.host.deleteTexture(tileInfoInCache.texture);
+      }
       this.cache.set(key, tileInfo);
 
       if (loadingInfo) {

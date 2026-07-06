@@ -17,6 +17,13 @@ self.onmessage = async (e) => {
 
   switch (type) {
     case "load-image": {
+      // 上下文恢复会通过同一个存活 worker 重新 loadImage：旧的全尺寸 bitmap
+      // （48MP 约 190MB）若等 GC 释放，恰好撞上引发上下文丢失的内存压力窗口。
+      // 先置 null 再解码，解码期间到达的 create-tile 会走 !originalImage 守卫安全失败。
+      if (originalImage) {
+        originalImage.close();
+        originalImage = null;
+      }
       const { url, blob: sourceBlob, maxTextureSize } = payload;
       try {
         const blob =

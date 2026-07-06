@@ -711,6 +711,14 @@ export class WebGLImageViewerEngine {
       this.resizeObserver.disconnect();
     }
 
+    // destroy 是 superseded 之外另一条需要结算旧 promise 的路径：worker 一旦
+    // terminate 就不会再有 image-loaded/load-error 消息，不拒绝则 promise 永远挂起。
+    if (this.loadImageReject) {
+      this.loadImageReject(new Error("viewer destroyed"));
+      this.loadImageResolve = null;
+      this.loadImageReject = null;
+    }
+
     this.workerBridge?.dispose();
     this.workerBridge = null;
 

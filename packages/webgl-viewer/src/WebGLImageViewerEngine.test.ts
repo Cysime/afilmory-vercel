@@ -215,7 +215,8 @@ describe("WebGLImageViewerEngine lifecycle", () => {
     });
 
     const engine = createEngine(canvas);
-    void engine.loadImage("blob:photo", 100, 100);
+    // destroy 会拒绝仍挂起的 loadImage promise，测试侧需吞掉这个预期内的拒绝
+    engine.loadImage("blob:photo", 100, 100).catch(() => {});
     engine.resetView();
     engine.destroy();
 
@@ -464,7 +465,8 @@ describe("WebGLImageViewerEngine lifecycle", () => {
     const sourceBlob = new Blob(["photo"], { type: "image/jpeg" });
     const engine = createEngine(canvas);
 
-    void engine.loadImage("blob:photo", 100, 100, sourceBlob);
+    // destroy 会拒绝仍挂起的 loadImage promise，测试侧需吞掉这个预期内的拒绝
+    engine.loadImage("blob:photo", 100, 100, sourceBlob).catch(() => {});
 
     // maxTextureSize 必须随消息传入（按上下文查询），worker 据此钳制底图，
     // 否则超大原图的 0.5x 底图超过老设备 MAX_TEXTURE_SIZE 会渲染成黑块。
