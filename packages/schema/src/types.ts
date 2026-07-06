@@ -72,20 +72,6 @@ export interface LocationInfo {
 
 export type ToneType = "low-key" | "high-key" | "normal" | "high-contrast";
 
-export interface CompressedHistogramData {
-  red: number[];
-  green: number[];
-  blue: number[];
-  luminance: number[];
-}
-
-export interface HistogramData {
-  red: number[];
-  green: number[];
-  blue: number[];
-  luminance: number[];
-}
-
 export interface ToneAnalysis {
   toneType: ToneType;
   brightness: number;
@@ -108,12 +94,6 @@ export interface PhotoInfo {
   dateTaken: string;
   tags: string[];
   description: string;
-}
-
-export interface ImageMetadata {
-  width: number;
-  height: number;
-  format: string;
 }
 
 export interface PhotoManifestItem extends PhotoInfo {

@@ -523,12 +523,16 @@ export function isAfilmoryManifest(input: unknown): input is AfilmoryManifest {
 }
 
 /**
- * 信封层校验：schema/version/generatedAt/source/photos-是数组，是严格与宽松
- * 两个入口共用的硬性前提，只在这里描述一次。`collectMore` 供严格模式在 source
- * 与 photos 检查之间插入 indexes 校验，保持历史 issue 顺序。
+ * 信封层校验：schema/version/generatedAt/photos-是数组，是严格与宽松
+ * 两个入口共用的硬性前提，只在这里描述一次。source 全仓无读方且 normalize
+ * 总能抢救成合法值（最差退回 UNKNOWN_SOURCE），因此只在严格模式
+ * （`strictSource`）算作致命——例如新增 provider 值不应砖掉已部署的旧解析方。
+ * `collectMore` 供严格模式在 source 与 photos 检查之间插入 indexes 校验，
+ * 保持历史 issue 顺序。
  */
 function validateEnvelope(
   input: Record<string, unknown>,
+  strictSource: boolean,
   collectMore?: (issues: string[]) => void,
 ): string[] {
   const issues: string[] = [];
@@ -541,9 +545,11 @@ function validateEnvelope(
   if (typeof input.generatedAt !== "string") {
     issues.push("generatedAt must be a string");
   }
-  issues.push(
-    ...sourceField.check(input.source).map((message) => `source${message}`),
-  );
+  if (strictSource) {
+    issues.push(
+      ...sourceField.check(input.source).map((message) => `source${message}`),
+    );
+  }
   collectMore?.(issues);
   if (!Array.isArray(input.photos)) {
     issues.push("photos must be an array");
@@ -559,7 +565,7 @@ export function validateManifest(input: unknown): ManifestValidationResult {
     };
   }
 
-  const issues = validateEnvelope(input, (envelope) => {
+  const issues = validateEnvelope(input, true, (envelope) => {
     // indexes 只在严格模式整体校验；宽松模式视为派生数据、逐条抢救
     if (!isRecord(input.indexes)) {
       envelope.push("indexes must be an object");
@@ -625,9 +631,12 @@ export interface LenientManifestParseResult {
 }
 
 /**
- * 宽松解析：信封层（schema/version/generatedAt/source、photos 是否为数组）仍严格——
+ * 宽松解析：信封层（schema/version/generatedAt、photos 是否为数组）仍严格——
  * 任一项无效都抛 {@link ManifestValidationError}，由调用方决定如何降级（运行时显示诊断页，
  * 构建期丢弃缓存做全量重建）。
+ *
+ * source 不算信封的一部分：全仓没有任何读方，损坏时由 sourceField.normalize 抢救
+ * （最差退回 provider "unknown"），绝不因它砖掉一个本可正常渲染的图库。
  *
  * 派生 indexes 与照片逐条容错：坏的 camera/lens 条目由 normalizeIndexes 丢弃；照片仅在
  * 无法寻址（非对象，或缺 id/originalUrl/s3Key 核心字段）时丢弃并记入 `skipped`，可恢复的
@@ -643,7 +652,7 @@ export function parseManifestLenient(
     throw new ManifestValidationError(["manifest must be an object"]);
   }
 
-  const envelopeIssues = validateEnvelope(input);
+  const envelopeIssues = validateEnvelope(input, false);
   if (envelopeIssues.length > 0) {
     throw new ManifestValidationError(envelopeIssues);
   }

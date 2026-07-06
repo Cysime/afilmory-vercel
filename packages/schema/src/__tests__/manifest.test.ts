@@ -192,6 +192,24 @@ describe("manifest v2 schema", () => {
       ).toThrow(ManifestValidationError);
     });
 
+    it("salvages a corrupted source instead of failing the whole manifest", () => {
+      const input = {
+        ...createManifest({
+          generatedAt: "2026-06-06T00:00:00.000Z",
+          photos: [createValidPhoto({ id: "a" })],
+        }),
+        // source 全仓无读方：未知 provider（例如更新版 builder 新增的值）
+        // 不应让一个本可正常渲染的图库进诊断页/触发全量重建
+        source: { provider: "ftp", bucket: 123 },
+      };
+
+      const { manifest, skipped } = parseManifestLenient(input);
+
+      expect(skipped).toEqual([]);
+      expect(manifest.photos.map((photo) => photo.id)).toEqual(["a"]);
+      expect(manifest.source).toEqual({ provider: "unknown" });
+    });
+
     it("drops malformed index entries instead of failing the whole manifest", () => {
       const input = {
         ...createManifest({

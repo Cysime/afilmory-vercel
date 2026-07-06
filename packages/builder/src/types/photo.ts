@@ -1,8 +1,5 @@
 export type {
-  CompressedHistogramData,
   FujiRecipe,
-  HistogramData,
-  ImageMetadata,
   LocationAdminInfo,
   LocationInfo,
   PhotoInfo,
