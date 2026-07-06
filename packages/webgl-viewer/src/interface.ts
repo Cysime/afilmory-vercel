@@ -17,16 +17,6 @@ export interface DoubleClickConfig {
 }
 export interface PanningConfig {
   disabled?: boolean;
-  velocityDisabled?: boolean;
-}
-export interface AlignmentAnimationConfig {
-  sizeX: number;
-  sizeY: number;
-  velocityAlignmentTime: number;
-}
-export interface VelocityAnimationConfig {
-  sensitivity: number;
-  animationTime: number;
 }
 export interface WebGLImageViewerProps {
   src: string;
@@ -44,10 +34,7 @@ export interface WebGLImageViewerProps {
   limitToBounds?: boolean;
   centerOnInit?: boolean;
   smooth?: boolean;
-  alignmentAnimation?: AlignmentAnimationConfig;
-  velocityAnimation?: VelocityAnimationConfig;
   onZoomChange?: (originalScale: number, relativeScale: number) => void;
-  onImageCopied?: () => void;
   onLoadingStateChange?: (
     isLoading: boolean,
     state?: LoadingState,
@@ -82,13 +69,12 @@ export interface DebugInfo {
   quality: "high" | "medium" | "low" | "unknown";
   isLoading: boolean;
   memory: {
-    textures: number; // MiB
-    estimated: number; // MiB
-    budget: number; // MiB
-    pressure: number; // 百分比
+    /** 已缓存瓦片纹理的真实字节数（RGBA8，按每片实际尺寸累加）。 */
+    tileTextureBytes: number;
+    /** 底图回退纹理的真实字节数（按实际上传的位图尺寸）。 */
+    baseTextureBytes: number;
+    totalBytes: number;
     activeLODs: number;
-    maxConcurrentLODs: number;
-    onDemandStrategy?: boolean; // 是否使用按需策略
   };
   tileSystem?: {
     cacheSize: number;

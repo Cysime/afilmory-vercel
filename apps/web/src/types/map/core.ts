@@ -1,4 +1,5 @@
-import type { GeoRegionLevel, PhotoManifestItem } from "@afilmory/schema";
+import type { PhotoManifestItem } from "@afilmory/schema";
+import type { GeoRegionLevel } from "@afilmory/schema/geo";
 
 /**
  * GPS Cardinal directions enum

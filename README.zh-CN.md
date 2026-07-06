@@ -50,7 +50,7 @@
 ### 核心功能
 
 - 🖼️ **高性能 WebGL 渲染器** - React 19 WebGL 查看器，支持流畅缩放、平移、分块加载和错误回调。
-- 📱 **响应式瀑布流布局** - 基于 Masonic，适合大量照片虚拟滚动。
+- 📱 **响应式瀑布流布局** - 自研纯计算虚拟瀑布流，整数像素几何，滚动时不做 DOM 测量。
 - 🎨 **现代 UI 设计** - 使用 Tailwind CSS 4、Radix UI 和 Motion 构建毛玻璃风格界面。
 - ⚡ **增量构建** - 未变化照片会复用已有 manifest 数据、缩略图、EXIF 和影调分析。
 - 🌐 **国际化** - 语言资源来自 `locales/app/*.json`。
@@ -111,7 +111,7 @@
 2. 登录 Vercel，并 fork/import 仓库。
 3. 配置必需的 S3 变量。
 4. 点击 **Deploy**。
-5. Vercel 构建会运行 `scripts/build-static.sh`；S3 凭据完整时执行完整构建。
+5. Vercel 构建会运行 `scripts/build-static.sh`，其内部执行 `pnpm build`；S3 凭据完整时由 precheck 刷新 manifest。
 
 ---
 
@@ -182,6 +182,10 @@
 | `MAP_STYLE`      | 地图样式 | `builtin`  | `builtin` 或自定义 URL |
 | `MAP_PROJECTION` | 地图投影 | `mercator` | `globe` 或 `mercator`  |
 
+### 可选：构建期反向地理编码
+
+反向地理编码**默认开启**：只要构建处理了带 GPS 的照片，就会调用公共 Nominatim API 把坐标解析为地名写入 manifest。不希望构建期访问外部服务时，设置 `GEOCODING_ENABLED=false`。若保持开启，请按 [Nominatim 使用政策](https://operations.osmfoundation.org/policies/nominatim/) 提供真实的 `GEOCODING_USER_AGENT`（不超过 1 request/second）。也可以用 `GEOCODING_PROVIDER=mapbox` 搭配 `MAPBOX_TOKEN` 替代 Nominatim。完整 `GEOCODING_*` 配置项见 `.env.template`。
+
 ### 本地 `.env`
 
 ```bash
@@ -239,8 +243,13 @@ pnpm install
 # 开发服务器。会先运行 precheck。
 pnpm dev
 
-# 完整静态构建：precheck、包构建、Vite Web 构建。
+# 完整静态构建：precheck，然后 Vite Web 构建。workspace 包直接从
+# TypeScript 源码消费，部署构建不需要预先构建包的 dist/。
 pnpm build
+
+# 仅供发布 npm 包使用：为 @afilmory/builder 和 @afilmory/webgl-viewer
+# 构建 dist/，部署与 CI 构建链均不依赖它。
+pnpm build:packages
 
 # 只刷新 manifest 和缩略图。
 pnpm build:manifest
@@ -250,6 +259,9 @@ pnpm build:web
 
 # 本地预览 apps/web/dist。
 pnpm preview
+
+# 重新生成 favicon 资源到 apps/web/public。
+pnpm generate:favicon
 ```
 
 运行 `pnpm preview` 后打开 http://localhost:4173。
@@ -282,9 +294,9 @@ Vercel 使用：
 - **构建命令：** `sh scripts/build-static.sh`
 - **输出目录：** `apps/web/dist`
 
-配置了 `REPO_URL` 和 `REPO_TOKEN` 时，`scripts/build-static.sh` 会先恢复缓存中的 manifest、geocoding cache 和缩略图，再判断是否需要 S3。构建成功后，它会把最新构建产物同步回缓存仓库。
+配置了 `REPO_URL` 和 `REPO_TOKEN` 时，`scripts/build-static.sh` 会先恢复缓存中的 manifest、geocoding cache 和缩略图，再执行构建。构建成功后，它会把最新构建产物同步回缓存仓库。
 
-S3 凭据完整时，`scripts/build-static.sh` 会运行 `pnpm build`。缺少 S3 凭据但存在可复用 `generated/photos-manifest.json` 时，它会运行 `pnpm build:web`，让 Preview 部署仍可成功。
+`scripts/build-static.sh` 始终运行 `pnpm build`；所有新鲜度与降级决策统一由 `apps/web/scripts/precheck.ts` 负责。缺少 S3 凭据但存在可复用 `generated/photos-manifest.json` 时，precheck 会复用它，让 Preview 部署仍可成功。生产部署（`VERCEL_ENV=production`，其他平台可用 `REQUIRE_FRESH_BUILD=true`）则会失败，拒绝发布陈旧 manifest。
 
 ### 其他静态托管平台
 
@@ -330,7 +342,7 @@ S3 凭据完整时，`scripts/build-static.sh` 会运行 `pnpm build`。缺少 S
 - Sharp：图片处理和 Open Graph 图片生成
 - exiftool-vendored：EXIF 提取
 - AWS SDK v3：S3 访问
-- Worker threads 或 cluster workers：并发处理
+- node:cluster 多进程或单进程并发池：并发处理
 - thumbhash：紧凑图片占位符
 
 ---
@@ -342,13 +354,18 @@ afilmory/
 ├── apps/
 │   └── web/                   # 前端 SPA 应用
 ├── packages/
+│   ├── build-assets/          # 构建期 OG 图片、feed.xml 和 sitemap.xml 生成
 │   ├── builder/               # 照片处理与 manifest builder
-│   ├── data/                  # 共享 manifest 类型和解析工具
+│   ├── media/                 # 零依赖 thumbhash 字节/hex 编解码叶子包
+│   ├── schema/                # manifest 契约：类型与 strict/lenient 解析器
 │   ├── ui/                    # 共享 UI 基元与 hooks
 │   └── webgl-viewer/          # WebGL 图片查看器包
 ├── docs/
 │   ├── assets/                # README 图片
-│   └── rss-exif-extension.md  # RSS EXIF 扩展说明
+│   ├── CONTRIBUTING.md        # 贡献者环境与流程
+│   ├── rss-exif-extension.md  # RSS EXIF 扩展说明
+│   ├── security-notes.md      # 安全相关配置说明
+│   └── testing.md             # Vitest 与 Playwright 测试/CI 指南
 ├── generated/                 # 生成的 photos-manifest.json
 ├── locales/app/               # i18n JSON 资源
 ├── scripts/                   # 构建期辅助脚本

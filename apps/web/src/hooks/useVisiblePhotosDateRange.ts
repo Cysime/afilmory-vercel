@@ -21,7 +21,7 @@ interface ComputedRangeKey {
  * Hook to calculate the date range of currently visible photos in the viewport
  * Works with masonry onRender callback
  */
-export const useVisiblePhotosDateRange = (_photos: PhotoManifest[]) => {
+export const useVisiblePhotosDateRange = () => {
   const [dateRange, setDateRange] = useState<DateRange>({
     startDate: null,
     endDate: null,
@@ -31,10 +31,6 @@ export const useVisiblePhotosDateRange = (_photos: PhotoManifest[]) => {
   // 上一次已计算的输入签名：快速滚动时 onRender 每帧触发，可视 index 区间未变时
   // 直接早退，避免每帧 O(n) 的 slice/sort 与 setState。
   const lastComputedRef = useRef<ComputedRangeKey | null>(null);
-  const currentRange = useRef<{ start: number; end: number }>({
-    start: 0,
-    end: 0,
-  });
 
   const { i18n } = useTranslation();
 
@@ -156,9 +152,6 @@ export const useVisiblePhotosDateRange = (_photos: PhotoManifest[]) => {
           ? prev
           : { startDate, endDate, formattedRange },
       );
-
-      // 更新当前范围
-      currentRange.current = { start: startIndex, end: endIndex };
     },
     [formatDateRange, i18n.language],
   );
@@ -178,6 +171,5 @@ export const useVisiblePhotosDateRange = (_photos: PhotoManifest[]) => {
   return {
     dateRange,
     handleRender,
-    currentRange: currentRange.current,
   };
 };

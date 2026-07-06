@@ -20,7 +20,6 @@ export type {
   BuilderPluginHooks,
   BuilderPluginReference,
 } from "./plugins/types.js";
-export type { PhotoSourceAdapter } from "./source/adapter.js";
 export type {
   ProgressCallback,
   ScanProgress,

@@ -15,11 +15,9 @@ import {
 } from "react";
 
 import {
-  defaultAlignmentAnimation,
   defaultDoubleClickConfig,
   defaultPanningConfig,
   defaultPinchConfig,
-  defaultVelocityAnimation,
   defaultWheelConfig,
 } from "./constants";
 import DebugInfoComponent from "./DebugInfo";
@@ -46,10 +44,7 @@ export const WebGLImageViewer = ({
   limitToBounds = true,
   centerOnInit = true,
   smooth = true,
-  alignmentAnimation = defaultAlignmentAnimation,
-  velocityAnimation = defaultVelocityAnimation,
   onZoomChange,
-  onImageCopied,
   onLoadingStateChange,
   onImagePainted,
   onError,
@@ -85,13 +80,7 @@ export const WebGLImageViewer = ({
       limitToBounds,
       centerOnInit,
       smooth,
-      alignmentAnimation: {
-        ...defaultAlignmentAnimation,
-        ...alignmentAnimation,
-      },
-      velocityAnimation: { ...defaultVelocityAnimation, ...velocityAnimation },
       onZoomChange: onZoomChange || (() => {}),
-      onImageCopied: onImageCopied || (() => {}),
       onLoadingStateChange: onLoadingStateChange || (() => {}),
       onImagePainted: onImagePainted || (() => {}),
       onError: onError || (() => {}),
@@ -113,10 +102,7 @@ export const WebGLImageViewer = ({
       limitToBounds,
       centerOnInit,
       smooth,
-      alignmentAnimation,
-      velocityAnimation,
       onZoomChange,
-      onImageCopied,
       onLoadingStateChange,
       onImagePainted,
       onError,

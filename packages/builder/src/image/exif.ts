@@ -1,4 +1,5 @@
 import { mkdir, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { isNil, noop } from "es-toolkit";
@@ -48,11 +49,10 @@ export async function extractExifData(
 ): Promise<PickedExif | null> {
   const log = getPhotoProcessingLoggers().exif;
 
-  await mkdir("/tmp/image_process", { recursive: true });
-  const tempImagePath = path.resolve(
-    "/tmp/image_process",
-    `${crypto.randomUUID()}.jpg`,
-  );
+  // os.tmpdir() 而非硬编码 /tmp：Windows 没有 /tmp，macOS 沙箱下 /tmp 也可能不可写。
+  const tempDir = path.join(os.tmpdir(), "afilmory-exif");
+  await mkdir(tempDir, { recursive: true });
+  const tempImagePath = path.join(tempDir, `${crypto.randomUUID()}.jpg`);
 
   try {
     await writeFile(tempImagePath, originalBuffer || imageBuffer);

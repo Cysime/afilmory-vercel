@@ -2,7 +2,7 @@ import { Button } from "@afilmory/ui";
 import { WebGLImageViewer } from "@afilmory/webgl-viewer";
 import { useState } from "react";
 
-import { useBlobUrl } from "~/lib/blob-url-manager";
+import { useBlobUrl } from "~/lib/use-blob-url";
 
 export const Component = () => {
   const [file, setFile] = useState<File | null>(null);

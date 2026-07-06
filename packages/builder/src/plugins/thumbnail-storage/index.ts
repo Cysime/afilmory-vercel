@@ -173,6 +173,19 @@ export default function thumbnailStoragePlugin(
         const config = resolved;
         if (!config || !config.enabled) return;
 
+        // 与 manifest/manager.ts 的本地孤儿判定同一条规则：孤儿 = "存储中已
+        // 不存在"，而不是"不在本次 manifest 里"。空扫描或有照片处理失败时
+        // manifest 是缩水的，据它清理会把仍然有效的远端缩略图连坐删除
+        // （本地路径靠 keepPhotoIds 防护；远端直接跳过本轮，下次健康构建再收敛）。
+        if (payload.manifest.length === 0 || payload.result.failedCount > 0) {
+          logger.thumbnail.warn(
+            payload.manifest.length === 0
+              ? "跳过远端缩略图孤儿清理：本次 manifest 为空。"
+              : `跳过远端缩略图孤儿清理：本次有 ${payload.result.failedCount} 张照片处理失败。`,
+          );
+          return;
+        }
+
         const storageManager = config.useDefaultStorage
           ? services.storage.getManager()
           : externalStorageManager;

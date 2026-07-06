@@ -8,6 +8,7 @@ import { useNavigate } from "react-router";
 import { gallerySettingAtom } from "~/atoms/app";
 import { ThumbnailImage } from "~/components/ui/ThumbnailImage";
 import { useMobile } from "~/hooks/useMobile";
+import { usePanelDragDismiss } from "~/hooks/usePanelDragDismiss";
 import {
   getViewerPhotos,
   getViewerSourceMode,
@@ -16,7 +17,7 @@ import {
 import { buildGalleryFilterSearch } from "~/lib/gallery-filter-url";
 import { translateDynamicKey } from "~/lib/i18n-dynamic";
 import { buildPhotoDetailPathname } from "~/lib/photo-detail-route";
-import { FilterPanelContent } from "~/modules/gallery/panels/FilterPanel";
+import { FilterPanel } from "~/modules/gallery/panels/FilterPanel";
 import { useAfilmoryRuntime, usePhotoRepository } from "~/runtime/app-runtime";
 import type { PhotoManifest } from "~/types/photo";
 
@@ -41,7 +42,10 @@ interface CommandPaletteProps {
 }
 
 const DISMISS_DRAG_THRESHOLD = 72;
-type PanelDragInput = "pointer" | "mouse" | "touch";
+
+// 焦点陷阱用的可聚焦元素选择器：保持零依赖的小实现，覆盖面板内会出现的控件。
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
   const { t, i18n } = useTranslation();
@@ -71,17 +75,21 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
 
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [panelDragOffset, setPanelDragOffset] = useState(0);
-  const [isDraggingPanel, setIsDraggingPanel] = useState(false);
   const isMobile = useMobile();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const dragStartYRef = useRef<number | null>(null);
-  const dragInputRef = useRef<PanelDragInput | null>(null);
-  const dragPointerIdRef = useRef<number | null>(null);
-  const dragTouchIdRef = useRef<number | null>(null);
-  const cleanupDragListenersRef = useRef<(() => void) | null>(null);
-  const panelDragOffsetRef = useRef(0);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // 下拉关闭手势（鼠标 / 触摸 / 触控笔统一 Pointer Events 一套）
+  const {
+    offset: panelDragOffset,
+    isDragging: isDraggingPanel,
+    handleRef: dragHandleRef,
+  } = usePanelDragDismiss({
+    enabled: isOpen,
+    onDismiss: onClose,
+    threshold: DISMISS_DRAG_THRESHOLD,
+  });
 
   const activeFilterCount = getActiveFilterCount(gallerySetting);
 
@@ -94,208 +102,6 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
       applyGalleryCommandAction(prev, { type: "clear-filters" }),
     );
   }, [setGallerySetting]);
-
-  const setPanelDrag = useCallback((offset: number) => {
-    panelDragOffsetRef.current = offset;
-    setPanelDragOffset(offset);
-  }, []);
-
-  const cleanupDragListeners = useCallback(() => {
-    cleanupDragListenersRef.current?.();
-    cleanupDragListenersRef.current = null;
-  }, []);
-
-  const resetPanelDrag = useCallback(() => {
-    cleanupDragListeners();
-    dragStartYRef.current = null;
-    dragInputRef.current = null;
-    dragPointerIdRef.current = null;
-    dragTouchIdRef.current = null;
-    setIsDraggingPanel(false);
-    setPanelDrag(0);
-  }, [cleanupDragListeners, setPanelDrag]);
-
-  const startPanelDrag = useCallback(
-    (input: PanelDragInput, clientY: number) => {
-      if (dragInputRef.current !== null) {
-        return false;
-      }
-
-      dragInputRef.current = input;
-      dragStartYRef.current = clientY;
-      setIsDraggingPanel(true);
-      setPanelDrag(0);
-      return true;
-    },
-    [setPanelDrag],
-  );
-
-  const updatePanelDrag = useCallback(
-    (clientY: number) => {
-      if (dragStartYRef.current === null) {
-        return 0;
-      }
-
-      const nextOffset = Math.max(0, clientY - dragStartYRef.current);
-      setPanelDrag(nextOffset);
-      return nextOffset;
-    },
-    [setPanelDrag],
-  );
-
-  const finishPanelDrag = useCallback(() => {
-    if (panelDragOffsetRef.current >= DISMISS_DRAG_THRESHOLD) {
-      resetPanelDrag();
-      onClose();
-      return;
-    }
-
-    resetPanelDrag();
-  }, [onClose, resetPanelDrag]);
-
-  const handleDragHandlePointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      if (event.button !== 0 || event.pointerType === "mouse") {
-        return;
-      }
-
-      if (!startPanelDrag("pointer", event.clientY)) {
-        return;
-      }
-
-      event.currentTarget.setPointerCapture(event.pointerId);
-      dragPointerIdRef.current = event.pointerId;
-    },
-    [startPanelDrag],
-  );
-
-  const handleDragHandlePointerMove = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      if (
-        dragInputRef.current !== "pointer" ||
-        dragPointerIdRef.current !== event.pointerId
-      ) {
-        return;
-      }
-
-      const nextOffset = updatePanelDrag(event.clientY);
-      if (nextOffset > 0) {
-        event.preventDefault();
-      }
-    },
-    [updatePanelDrag],
-  );
-
-  const handleDragHandlePointerUp = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      if (
-        dragInputRef.current !== "pointer" ||
-        dragPointerIdRef.current !== event.pointerId
-      ) {
-        return;
-      }
-
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
-
-      finishPanelDrag();
-    },
-    [finishPanelDrag],
-  );
-
-  const handleDragHandlePointerCancel = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      if (
-        dragInputRef.current === "pointer" &&
-        dragPointerIdRef.current === event.pointerId
-      ) {
-        resetPanelDrag();
-      }
-    },
-    [resetPanelDrag],
-  );
-
-  const handleDragHandleMouseDown = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      if (event.button !== 0 || !startPanelDrag("mouse", event.clientY)) {
-        return;
-      }
-
-      event.preventDefault();
-
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const nextOffset = updatePanelDrag(moveEvent.clientY);
-        if (nextOffset > 0) {
-          moveEvent.preventDefault();
-        }
-      };
-      const handleMouseUp = () => finishPanelDrag();
-
-      cleanupDragListeners();
-      window.addEventListener("mousemove", handleMouseMove);
-      window.addEventListener("mouseup", handleMouseUp);
-      cleanupDragListenersRef.current = () => {
-        window.removeEventListener("mousemove", handleMouseMove);
-        window.removeEventListener("mouseup", handleMouseUp);
-      };
-    },
-    [cleanupDragListeners, finishPanelDrag, startPanelDrag, updatePanelDrag],
-  );
-
-  const handleDragHandleTouchStart = useCallback(
-    (event: React.TouchEvent<HTMLDivElement>) => {
-      const touch = event.changedTouches[0];
-      if (!touch || !startPanelDrag("touch", touch.clientY)) {
-        return;
-      }
-
-      event.preventDefault();
-      dragTouchIdRef.current = touch.identifier;
-
-      const findTrackedTouch = (touches: TouchList) => {
-        for (const touchItem of touches) {
-          if (touchItem.identifier === dragTouchIdRef.current) {
-            return touchItem;
-          }
-        }
-
-        return null;
-      };
-
-      const handleTouchMove = (moveEvent: TouchEvent) => {
-        const trackedTouch = findTrackedTouch(moveEvent.changedTouches);
-        if (!trackedTouch) {
-          return;
-        }
-
-        const nextOffset = updatePanelDrag(trackedTouch.clientY);
-        if (nextOffset > 0) {
-          moveEvent.preventDefault();
-        }
-      };
-      const handleTouchEnd = (endEvent: TouchEvent) => {
-        if (findTrackedTouch(endEvent.changedTouches)) {
-          finishPanelDrag();
-        }
-      };
-
-      cleanupDragListeners();
-      window.addEventListener("touchmove", handleTouchMove, {
-        passive: false,
-      });
-      window.addEventListener("touchend", handleTouchEnd);
-      window.addEventListener("touchcancel", handleTouchEnd);
-      cleanupDragListenersRef.current = () => {
-        window.removeEventListener("touchmove", handleTouchMove);
-        window.removeEventListener("touchend", handleTouchEnd);
-        window.removeEventListener("touchcancel", handleTouchEnd);
-      };
-    },
-    [cleanupDragListeners, finishPanelDrag, startPanelDrag, updatePanelDrag],
-  );
-
-  useEffect(() => cleanupDragListeners, [cleanupDragListeners]);
 
   const geoRegions = useMemo(
     () => createGalleryGeoRegions(allPhotos),
@@ -316,17 +122,16 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
     [gallerySetting, regionLabelMaps],
   );
 
-  // Reset state when opened
+  // Reset state when opened (drag offset resets inside usePanelDragDismiss via `enabled`)
   useEffect(() => {
     if (isOpen) {
       setQuery("");
       setSelectedIndex(0);
-      resetPanelDrag();
       if (isMobile) return;
       const timer = setTimeout(() => inputRef.current?.focus(), 50);
       return () => clearTimeout(timer);
     }
-  }, [isMobile, isOpen, resetPanelDrag]);
+  }, [isMobile, isOpen]);
 
   // Handle escape key
   useEffect(() => {
@@ -338,6 +143,55 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [isOpen, onClose]);
+
+  // a11y：对话框焦点管理。打开时记录先前焦点并把焦点移进面板 ——
+  // 桌面端由上面的 effect 聚焦搜索框，移动端聚焦面板本身（tabIndex=-1，
+  // 避免拉起虚拟键盘）；关闭 / 卸载时把焦点还原给打开前的元素。
+  useEffect(() => {
+    if (!isOpen) return;
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    if (isMobile) {
+      panelRef.current?.focus({ preventScroll: true });
+    }
+    return () => {
+      previouslyFocused?.focus({ preventScroll: true });
+    };
+  }, [isMobile, isOpen]);
+
+  // 焦点陷阱：Tab / Shift+Tab 在面板内循环，不让焦点跑到被遮住的页面内容上。
+  // 面板内点击非控件区域会把焦点落在面板本身（tabIndex=-1），keydown 仍会冒泡到这里。
+  const handleFocusTrapKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== "Tab") return;
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const focusable = [
+      ...panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+    ];
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (!first || !last) {
+      e.preventDefault();
+      return;
+    }
+
+    const active = document.activeElement;
+    const activeInPanel =
+      active instanceof HTMLElement && panel.contains(active);
+
+    if (e.shiftKey) {
+      if (!activeInPanel || active === first || active === panel) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else if (!activeInPanel || active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }, []);
 
   const openPhoto = useCallback(
     (photo: PhotoManifest) => {
@@ -479,7 +333,13 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
 
       {/* Command Palette Panel */}
       <div
-        className="animate-in fade-in slide-in-from-bottom-4 bg-material-thick border-fill-tertiary relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-[1.75rem] border-x border-t shadow-2xl backdrop-blur-2xl duration-200 lg:mb-6 lg:max-h-[min(86vh,46rem)] lg:rounded-[1.75rem] lg:border"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("action.search.unified.title")}
+        tabIndex={-1}
+        onKeyDown={handleFocusTrapKeyDown}
+        className="animate-in fade-in slide-in-from-bottom-4 bg-material-thick border-fill-tertiary relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-[1.75rem] border-x border-t shadow-2xl backdrop-blur-2xl duration-200 outline-none lg:mb-6 lg:max-h-[min(86vh,46rem)] lg:rounded-[1.75rem] lg:border"
         style={{
           boxShadow:
             "0 8px 32px color-mix(in srgb, var(--color-accent) 8%, transparent), 0 4px 16px color-mix(in srgb, var(--color-accent) 6%, transparent), 0 2px 8px rgba(0, 0, 0, 0.1)",
@@ -497,13 +357,8 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
           }}
         />
         <div
+          ref={dragHandleRef}
           className="flex h-11 shrink-0 cursor-grab touch-none items-center justify-center active:cursor-grabbing"
-          onPointerDown={handleDragHandlePointerDown}
-          onPointerMove={handleDragHandlePointerMove}
-          onPointerUp={handleDragHandlePointerUp}
-          onPointerCancel={handleDragHandlePointerCancel}
-          onMouseDown={handleDragHandleMouseDown}
-          onTouchStart={handleDragHandleTouchStart}
         >
           <div className="bg-fill-tertiary h-1.5 w-12 rounded-full" />
         </div>
@@ -602,7 +457,7 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-2"
         >
           {isBrowsingFilters ? (
-            <FilterPanelContent
+            <FilterPanel
               showHeader={false}
               className="max-h-none overflow-visible px-6 pt-3 pb-8"
             />

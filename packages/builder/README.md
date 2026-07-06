@@ -20,7 +20,7 @@ src/
 ├── photo/                   # per-photo processing pipeline
 ├── plugins/                 # geocoding and artifact helpers
 ├── s3/                      # S3 client construction
-├── storage/                 # storage interfaces, manager, S3 provider
+├── storage/                 # storage interfaces, manager, S3 + local providers
 ├── types/                   # public builder option/config/photo types
 ├── utils/                   # backoff, clone, semaphore helpers
 └── worker/                  # worker pool and cluster pool
@@ -28,7 +28,7 @@ src/
 
 The shared manifest and photo types are imported from `@afilmory/schema`, with builder-specific options kept under `packages/builder/src/types`.
 
-`AfilmoryBuilder` is intentionally thin. The build run is coordinated through `builder/workflow`: `BuildSession` carries explicit runtime state, `SourceScanner` reads S3 objects, `DiffPlanner` decides changed work, `PhotoTaskProcessor` runs worker/cluster execution, `ManifestAssembler` merges existing and processed items, and `ArtifactWriter` saves manifest artifacts. Keep new responsibilities in these workflow modules rather than growing the builder class again.
+`AfilmoryBuilder` is intentionally thin. The build run is coordinated through `builder/workflow`: `BuildSession` carries explicit runtime state, `SourceScanner` reads storage objects, `DiffPlanner` decides changed work, `PhotoTaskProcessor` runs worker/cluster execution, `ManifestAssembler` merges existing and processed items, and `ArtifactWriter` saves manifest artifacts. Keep new responsibilities in these workflow modules rather than growing the builder class again.
 
 ## Default Site Configuration
 
@@ -43,7 +43,30 @@ The root `builder.config.ts` is the source of truth for this repository:
 - `storage.endpoint`: `S3_ENDPOINT`, defaulted by `env.ts`
 - `storage.customDomain`: optional CDN/public domain
 
-The documented and implemented deployment path is S3-only. Future photo-source support should be added through a typed `PhotoSourceAdapter`, not through a global storage registry.
+The documented deployment path uses S3. `StorageConfig` is a discriminated union on `provider`; further photo-source support should be added as a new `StorageProvider` implementation dispatched in `StorageManager`, not through a global storage registry.
+
+## Local filesystem provider (zero-credential runs)
+
+The builder also ships a `provider: "local"` storage backend, so a full local run needs no object-storage credentials at all:
+
+```ts
+storage: {
+  provider: "local",
+  // photos source directory; keys are posix paths relative to this dir
+  basePath: path.resolve(__dirname, "photos"),
+  // public URL prefix used for originalUrl, defaults to "/photos"
+  // baseUrl: "/photos",
+  // excludeRegex: "^drafts/",
+}
+```
+
+How the dev story fits together:
+
+1. Put photos in a local directory (the repo-root `photos/` dir matches the defaults).
+2. Run `pnpm build:manifest` with the config above — the builder scans `basePath`, generates thumbnails, and writes a manifest whose `originalUrl`s look like `/photos/dir/img.jpg` (the `baseUrl` prefix plus the encoded key).
+3. Run `pnpm dev` — `apps/web/plugins/vite/photos-static.ts` already serves `/photos/*` from the repo-root `photos/` directory in dev, so the gallery loads originals straight from disk.
+
+The manifest `source` field records local runs faithfully as `{ provider: "local", basePath, baseUrl }` — `@afilmory/schema`'s `ManifestSource` models `s3`/`local`/`unknown`, and its normalizer preserves the `local` variant on reload.
 
 ## CLI Usage
 
@@ -57,7 +80,7 @@ pnpm build:manifest -- --force-manifest
 pnpm build:manifest -- --config
 ```
 
-The root script sets `BUILDER_CONFIG_PATH=builder.config.ts` and runs the builder CLI through `tsx`.
+The root script runs the builder CLI through `tsx`. The config file is `builder.config.ts` at the repo root, found by c12's `builder` name convention.
 
 Build modes:
 
@@ -158,5 +181,5 @@ Plugins are loaded from explicit `plugins` entries:
 ## Related Docs
 
 - [Photo pipeline](src/photo/README.md)
-- [S3 storage provider](src/storage/providers/README.md)
+- [Storage providers (S3 + local filesystem)](src/storage/providers/README.md)
 - [Shared schema types](../schema/src/types.ts)

@@ -4,7 +4,7 @@ import { ExifService } from "../image/exif.js";
 import { logger } from "../logger/index.js";
 import { loadExistingManifest } from "../manifest/manager.js";
 import { CURRENT_MANIFEST_VERSION } from "../manifest/version.js";
-import { runWithBuilderOutputSettings } from "../output-paths.js";
+import { normalizeBuilderOutputSettings } from "../output-paths.js";
 import { createPhotoId } from "../photo/id.js";
 import type { PluginRunState } from "../plugins/manager.js";
 import { PluginManager } from "../plugins/manager.js";
@@ -13,7 +13,7 @@ import type {
   BuilderPluginEventPayloads,
 } from "../plugins/types.js";
 import type { StorageConfig } from "../storage/index.js";
-import { StorageManager } from "../storage/index.js";
+import { normalizeStorageConfig, StorageManager } from "../storage/index.js";
 import type { BuilderConfig, UserBuilderSettings } from "../types/config.js";
 import type { AfilmoryManifest, ManifestSource } from "../types/manifest.js";
 import type { BuilderOptions, BuilderResult } from "../types/options.js";
@@ -50,7 +50,12 @@ export class AfilmoryBuilder {
   private readonly ownsExifService: boolean;
 
   constructor(config: BuilderConfig, runtime: AfilmoryBuilderRuntime = {}) {
-    this.config = config;
+    // resolveBuilderConfig 已归一化过；这里再归一一次（幂等）覆盖绕过 resolve
+    // 直接 new 的路径——cluster worker 用 IPC 传来的 config 重建 builder 就是这种。
+    this.config = {
+      ...config,
+      output: normalizeBuilderOutputSettings(config.output),
+    };
     this.exifService = runtime.exifService ?? new ExifService();
     this.ownsExifService = runtime.ownsExifService ?? !runtime.exifService;
 
@@ -71,7 +76,6 @@ export class AfilmoryBuilder {
       getPhotoIdForKey: (key, existingItem) =>
         this.getPhotoIdForKey(key, existingItem),
       setPhotoIdCollisionKeys: (keys) => this.setPhotoIdCollisionKeys(keys),
-      getOutputSettings: () => this.config.output,
     });
   }
 
@@ -86,16 +90,14 @@ export class AfilmoryBuilder {
   }
 
   async buildManifest(options: BuilderOptions): Promise<BuilderResult> {
-    return await runWithBuilderOutputSettings(this.config.output, async () => {
-      try {
-        await this.ensurePluginsReady();
-        this.ensureStorageManager();
-        return await this.#buildManifest(options);
-      } catch (error) {
-        logger.main.error("❌ 构建 manifest 失败：", error);
-        throw error;
-      }
-    });
+    try {
+      await this.ensurePluginsReady();
+      this.ensureStorageManager();
+      return await this.#buildManifest(options);
+    } catch (error) {
+      logger.main.error("❌ 构建 manifest 失败：", error);
+      throw error;
+    }
   }
   /**
    * 构建照片清单
@@ -240,9 +242,20 @@ export class AfilmoryBuilder {
         },
       });
 
+      // 存储中仍存在的照片全集：本次处理失败的照片不进 manifest，但它们的
+      // 缩略图不能被孤儿清理连坐删除（否则一次批量下载超时就清空可复用缩略图，
+      // 再被 artifact-cache 持久化成缩水状态）。
+      const keepPhotoIds = new Set<string>();
+      for (const key of s3ImageKeys) {
+        keepPhotoIds.add(
+          session.getPhotoIdForKey(key, existingManifestMap.get(key)),
+        );
+      }
+
       const { deletedCount } = await new ArtifactWriter().write(
         session,
         manifest,
+        { keepPhotoIds },
       );
 
       if (this.config.system.observability.showDetailedStats) {
@@ -309,19 +322,32 @@ export class AfilmoryBuilder {
           photos: [],
           indexes: { cameras: [], lenses: [] },
         }
-      : await loadExistingManifest();
+      : await loadExistingManifest(this.config.output);
   }
 
   private getManifestSource(): ManifestSource {
     const storage = this.getStorageConfig();
-    return {
-      provider: "s3",
-      bucket: storage.bucket,
-      region: storage.region,
-      endpoint: storage.endpoint,
-      prefix: storage.prefix,
-      customDomain: storage.customDomain,
-    };
+    switch (storage.provider) {
+      case "s3": {
+        return {
+          provider: "s3",
+          bucket: storage.bucket,
+          region: storage.region,
+          endpoint: storage.endpoint,
+          prefix: storage.prefix,
+          customDomain: storage.customDomain,
+        };
+      }
+      case "local": {
+        // schema 的 ManifestSource 已有 local 变体：如实记录本地文件系统源，
+        // 而不是像旧代码那样归一成 unknown 或谎报成 s3。
+        return {
+          provider: "local",
+          basePath: storage.basePath,
+          baseUrl: storage.baseUrl,
+        };
+      }
+    }
   }
 
   private logBuildStart(): void {
@@ -338,6 +364,12 @@ export class AfilmoryBuilder {
         logger.main.info(`🌐 自定义域名：${customDomain}`);
         logger.main.info(`🪣 存储桶：${bucket}`);
         logger.main.info(`📂 前缀：${prefix}`);
+        break;
+      }
+      case "local": {
+        logger.main.info("🚀 开始从本地文件系统获取照片列表...");
+        logger.main.info(`📂 照片目录：${storage.basePath}`);
+        logger.main.info(`🌐 公共 URL 前缀：${storage.baseUrl ?? "/photos"}`);
         break;
       }
     }
@@ -488,7 +520,9 @@ export class AfilmoryBuilder {
         "Storage configuration is missing. 请配置 system/user storage 设置。",
       );
     }
-    return storage;
+    // 兜底缺失的 provider 判别字段（历史配置默认 s3），使 getManifestSource /
+    // logBuildStart 的 switch 与 StorageManager 看到同一份归一化配置。
+    return normalizeStorageConfig(storage);
   }
 
   /**

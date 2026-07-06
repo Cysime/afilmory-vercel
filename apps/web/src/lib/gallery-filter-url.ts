@@ -11,6 +11,31 @@ export type GalleryFilterState = Pick<
   | "selectedGeoDistricts"
 >;
 
+const GALLERY_FILTER_KEYS = [
+  "selectedTags",
+  "selectedCameras",
+  "selectedLenses",
+  "selectedGeoCountries",
+  "selectedGeoRegions",
+  "selectedGeoCities",
+  "selectedGeoDistricts",
+] as const satisfies readonly (keyof GalleryFilterState)[];
+
+// getSearchList 按 URL 出现顺序确定性产出，逐元素比较即可判定语义相等，
+// 供恢复路径做引用保持（值未变时不换对象标识）。
+export const filtersEqual = (
+  a: GalleryFilterState,
+  b: GalleryFilterState,
+): boolean =>
+  GALLERY_FILTER_KEYS.every((key) => {
+    const left = a[key];
+    const right = b[key];
+    return (
+      left.length === right.length &&
+      left.every((value, index) => value === right[index])
+    );
+  });
+
 const getSearchList = (searchParams: URLSearchParams, key: string) => {
   const values = searchParams.getAll(key);
   if (values.length > 1) {

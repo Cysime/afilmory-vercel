@@ -1,4 +1,4 @@
-import { decompressUint8Array } from "@afilmory/media";
+import { hexToUint8Array } from "@afilmory/media";
 import { render } from "@testing-library/react";
 import { thumbHashToDataURL } from "thumbhash";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,9 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Thumbhash } from "../index";
 
 vi.mock("@afilmory/media", () => ({
-  decompressUint8Array: vi.fn(
-    (value: string) => new Uint8Array([value.length]),
-  ),
+  hexToUint8Array: vi.fn((value: string) => new Uint8Array([value.length])),
 }));
 
 vi.mock("thumbhash", () => ({
@@ -20,7 +18,7 @@ vi.mock("thumbhash", () => ({
 
 describe("Thumbhash", () => {
   beforeEach(() => {
-    vi.mocked(decompressUint8Array).mockClear();
+    vi.mocked(hexToUint8Array).mockClear();
     vi.mocked(thumbHashToDataURL).mockClear();
   });
 
@@ -35,7 +33,7 @@ describe("Thumbhash", () => {
 
     rerender(<Thumbhash thumbHash="cached-string-hash" className="second" />);
 
-    expect(decompressUint8Array).toHaveBeenCalledTimes(1);
+    expect(hexToUint8Array).toHaveBeenCalledTimes(1);
     expect(thumbHashToDataURL).toHaveBeenCalledTimes(1);
   });
 
@@ -47,7 +45,7 @@ describe("Thumbhash", () => {
 
     rerender(<Thumbhash thumbHash={thumbHash} className="second" />);
 
-    expect(decompressUint8Array).not.toHaveBeenCalled();
+    expect(hexToUint8Array).not.toHaveBeenCalled();
     expect(thumbHashToDataURL).toHaveBeenCalledTimes(1);
   });
 });

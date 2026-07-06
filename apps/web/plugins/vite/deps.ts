@@ -42,6 +42,8 @@ export function createDependencyChunksPlugin(
 
       const { output } = config.build.rollupOptions;
       const outputConfig = Array.isArray(output) ? output[0] : output;
+      // 产物命名模板集中在这里单一来源；vite.config.ts 里的同名字段会被本钩子覆盖。
+      outputConfig.entryFileNames = "assets/[name].[hash].js";
       outputConfig.assetFileNames = "assets/[name].[hash:6][extname]";
       // Let Rollup place shared helpers into a neutral shared chunk.
       // Forcing only-explicit manual chunks can make vendor chunks import the entry chunk,

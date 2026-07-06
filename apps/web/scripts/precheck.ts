@@ -88,7 +88,9 @@ export const precheck = async (options: PrecheckOptions = {}) => {
       }
       throw new Error(
         `[precheck] Missing required S3 environment variables: ${missingS3Vars.join(", ")}. ` +
-          `Either configure them or commit an existing manifest at ${manifestPath}.`,
+          `Either configure them or commit an existing manifest at ${manifestPath}. ` +
+          "Required: S3_BUCKET_NAME, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY. " +
+          "Optional: S3_REGION (default: us-east-1), S3_ENDPOINT, S3_PREFIX, S3_CUSTOM_DOMAIN.",
       );
     }
   }
@@ -111,10 +113,7 @@ export const precheck = async (options: PrecheckOptions = {}) => {
       })`pnpm --filter @afilmory/builder cli`);
 
   try {
-    await runBuilder({
-      ...env,
-      BUILDER_CONFIG_PATH: env.BUILDER_CONFIG_PATH || "builder.config.ts",
-    });
+    await runBuilder({ ...env });
   } catch (error) {
     if (!fallbackManifest || requireFreshBuild) {
       if (requireFreshBuild && fallbackManifest) {

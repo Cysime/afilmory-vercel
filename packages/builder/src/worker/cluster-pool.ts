@@ -3,7 +3,6 @@ import type { Worker } from "node:cluster";
 import cluster from "node:cluster";
 import { EventEmitter } from "node:events";
 import process from "node:process";
-import { serialize } from "node:v8";
 
 import type { Logger } from "../logger/index.js";
 import { logger } from "../logger/index.js";
@@ -14,7 +13,6 @@ import type {
   ClusterWorkerSharedData,
   TaskResult,
   WorkerInitMessage,
-  WorkerReadyMessage,
   WorkerStats,
 } from "./cluster-protocol.js";
 import type { QueuedClusterTask } from "./cluster-scheduler.js";
@@ -40,6 +38,22 @@ export type {
 
 const WORKER_SHUTDOWN_GRACE_MS = 5_000;
 
+// worker 生命周期（与 runAsWorker 的握手一一对应）：
+// starting（进程已 fork，等待首个 ready 消息）
+// → initializing（已下发 init 数据，等待 init-complete）
+// → ready（初始化完成，可接受任务）
+export type WorkerLifecycleState = "starting" | "initializing" | "ready";
+
+// 单个 worker 的全部运行时状态。之前分散在 workers / workerStats / readyWorkers /
+// workerTaskCounts / initializedWorkers 等平行 Map/Set 中，清理、失败、关闭路径
+// 必须手动保持同步；收敛为单一 handle 后按 worker 原子增删。
+interface WorkerHandle {
+  worker: Worker;
+  state: WorkerLifecycleState;
+  processedTasks: number; // 已成功处理的任务数
+  activeTaskCount: number; // 当前正在处理的任务数
+}
+
 export interface ClusterPoolOptions<T> {
   concurrency: number;
   totalTasks: number;
@@ -61,23 +75,14 @@ export class ClusterPool<T> extends EventEmitter {
   private onTaskCompleted?: (payload: TaskCompletedPayload<T>) => void;
 
   private taskQueue: QueuedClusterTask[] = [];
-  private workers = new Map<number, Worker>();
-  private workerStats = new Map<number, WorkerStats>();
-  private pendingTasks = new Map<
-    string,
-    { resolve: (value: T) => void; reject: (error: Error) => void }
-  >();
+  private workerHandles = new Map<number, WorkerHandle>();
+  // 已派发、尚未收到结果的任务 ID，用于过滤重复/未知的结果消息。
+  // 任务崩溃不做重入队：任何 worker 异常都会 fail-fast 整个构建。
+  private pendingTaskIds = new Set<string>();
   private results: T[] = [];
   private completedTasks = 0;
   private isShuttingDown = false;
   private hasFailed = false;
-  private readyWorkers = new Set<number>();
-  private workerTaskCounts = new Map<number, number>(); // 追踪每个 worker 当前正在处理的任务数
-  private initializedWorkers = new Set<number>(); // 追踪已初始化的 worker
-  private workerPendingTasks = new Map<
-    number,
-    Map<string, number> // taskId -> taskIndex
-  >(); // 跟踪每个 worker 正在处理的任务，以便在崩溃时重入队
 
   constructor(options: ClusterPoolOptions<T>) {
     super();
@@ -88,6 +93,14 @@ export class ClusterPool<T> extends EventEmitter {
     this.logger = options.logger ?? logger;
     this.sharedData = options.sharedData;
     this.onTaskCompleted = options.onTaskCompleted;
+
+    // 没有 sharedData 的 worker 无法重建 builder，也永远等不到 init-complete——
+    // 那是静默死锁。有任务就必须有共享数据，缺了在构造期就大声失败。
+    if (this.totalTasks > 0 && !this.sharedData) {
+      throw new Error(
+        "ClusterPool requires sharedData when totalTasks > 0 (workers cannot initialize without it).",
+      );
+    }
 
     this.results = Array.from({ length: this.totalTasks });
   }
@@ -158,6 +171,9 @@ export class ClusterPool<T> extends EventEmitter {
       exec: process.argv[1], // 使用当前脚本 (CLI) 作为 worker
       args: ["--cluster-worker"], // 传递 worker 标识参数
       silent: false,
+      // advanced = v8 结构化克隆序列化：Map/Date/Buffer 等可直接通过 IPC 传输，
+      // 共享数据无需手动 v8.serialize -> Array.from(buffer) -> JSON 的逐字节中转。
+      serialization: "advanced",
     });
 
     const { requiredWorkers, workersToStart } = calculateWorkersToStart({
@@ -186,14 +202,12 @@ export class ClusterPool<T> extends EventEmitter {
         ...this.workerEnv, // 传递自定义环境变量
       });
 
-      this.workers.set(workerId, worker);
-      this.workerStats.set(workerId, {
-        workerId,
+      this.workerHandles.set(workerId, {
+        worker,
+        state: "starting",
         processedTasks: 0,
-        isIdle: true,
-        isReady: false,
+        activeTaskCount: 0,
       });
-      this.workerTaskCounts.set(workerId, 0); // 初始化任务计数
 
       const workerLogger = this.logger.worker(workerId);
 
@@ -211,9 +225,8 @@ export class ClusterPool<T> extends EventEmitter {
 
       worker.on("message", (message: ClusterWorkerMessage) => {
         switch (message.type) {
-          case "ready":
-          case "pong": {
-            this.handleWorkerReady(workerId, message as WorkerReadyMessage);
+          case "ready": {
+            this.handleWorkerReady(workerId);
 
             break;
           }
@@ -235,7 +248,7 @@ export class ClusterPool<T> extends EventEmitter {
 
       worker.on("error", (error) => {
         workerLogger.error(`Worker ${workerId} 进程错误:`, error);
-        this.handleWorkerError(workerId, error);
+        this.fail(error);
       });
 
       worker.on("exit", (code, signal) => {
@@ -244,7 +257,7 @@ export class ClusterPool<T> extends EventEmitter {
             `Worker ${workerId} 意外退出 (code: ${code}, signal: ${signal})`,
           );
           clearTimeout(startupTimer);
-          this.clearWorkerState(workerId);
+          this.workerHandles.delete(workerId);
           this.fail(
             new Error(
               `Worker ${workerId} exited unexpectedly (code: ${code ?? "null"}, signal: ${signal ?? "null"})`,
@@ -257,84 +270,60 @@ export class ClusterPool<T> extends EventEmitter {
     });
   }
 
-  private handleWorkerReady(
-    workerId: number,
-    _message: WorkerReadyMessage,
-  ): void {
-    const stats = this.workerStats.get(workerId);
-    const worker = this.workers.get(workerId);
+  private handleWorkerReady(workerId: number): void {
+    const handle = this.workerHandles.get(workerId);
+    if (!handle) return;
+
     const workerLogger = this.logger.worker(workerId);
 
-    if (stats && worker && !this.initializedWorkers.has(workerId)) {
-      // 首次准备就绪时发送初始化数据，但不立即标记为 ready
+    if (handle.state === "starting") {
+      // 首次 ready：发送初始化数据，等待 init-complete 后才算真正就绪
       if (this.sharedData) {
-        // 使用 v8.serialize 序列化数据以保持类型完整性
-        const serializedBuffer = serialize({
-          existingManifestMap: this.sharedData.existingManifestMap,
-          livePhotoMap: this.sharedData.livePhotoMap,
-          imageObjects: this.sharedData.imageObjects,
-          builderConfig: this.sharedData.builderConfig,
-          builderOptions: this.sharedData.builderOptions,
-          photoIdCollisionKeys: this.sharedData.photoIdCollisionKeys,
-        });
-
-        // 将 Buffer 转换为数组以通过 IPC 传输
+        // IPC 通道已启用 advanced（v8）序列化，existingManifestMap / livePhotoMap
+        // 等 Map 结构可原生传输并在 worker 侧还原类型，直接发送共享数据本体。
         const initMessage: WorkerInitMessage = {
           type: "init",
-          sharedData: {
-            data: Array.from(serializedBuffer),
-            length: serializedBuffer.length,
-          },
+          sharedData: this.sharedData,
         };
-        worker.send(initMessage);
+        handle.worker.send(initMessage);
         workerLogger.info(`发送初始化数据到 Worker ${workerId}`);
       }
 
-      this.initializedWorkers.add(workerId);
+      handle.state = "initializing";
       workerLogger.info(`Worker ${workerId} 已接收初始化请求，等待初始化完成`);
-    } else if (stats) {
-      // 后续的 ready 消息（如 pong 响应）
-      stats.isReady = true;
-      this.readyWorkers.add(workerId);
+    } else {
+      // 重复的 ready 消息：worker 已初始化，直接标记就绪
+      handle.state = "ready";
       workerLogger.info(`Worker ${workerId} 已准备就绪`);
       this.emit("workerReady", workerId);
     }
   }
 
   private handleWorkerInitComplete(workerId: number): void {
-    const stats = this.workerStats.get(workerId);
-    const workerLogger = this.logger.worker(workerId);
+    const handle = this.workerHandles.get(workerId);
+    if (!handle) return;
 
-    if (stats) {
-      stats.isReady = true;
-      this.readyWorkers.add(workerId);
-      workerLogger.info(`Worker ${workerId} 初始化完成，可以接受任务`);
-      this.emit("workerReady", workerId);
+    handle.state = "ready";
+    this.logger
+      .worker(workerId)
+      .info(`Worker ${workerId} 初始化完成，可以接受任务`);
+    this.emit("workerReady", workerId);
 
-      // 立即为这个 worker 分配任务
-      this.assignBatchTasksToWorker(workerId);
-    }
+    // 立即为这个 worker 分配任务
+    this.assignBatchTasksToWorker(workerId);
   }
 
   private assignBatchTasksToWorker(workerId: number): void {
     if (this.hasFailed || this.isShuttingDown || this.taskQueue.length === 0)
       return;
 
-    const worker = this.workers.get(workerId);
-    const stats = this.workerStats.get(workerId);
-    const currentTaskCount = this.workerTaskCounts.get(workerId) || 0;
+    const handle = this.workerHandles.get(workerId);
 
-    // 确保 worker 已经完成初始化（包含在 initializedWorkers 中且 isReady 为 true）
-    if (
-      !worker ||
-      !stats ||
-      !stats.isReady ||
-      !this.initializedWorkers.has(workerId)
-    )
-      return;
+    // 只有完成初始化握手（state === "ready"）的 worker 才能接任务
+    if (!handle || handle.state !== "ready") return;
 
     const availableSlots = getAvailableWorkerSlots(
-      currentTaskCount,
+      handle.activeTaskCount,
       this.workerConcurrency,
     );
     if (availableSlots === 0) return;
@@ -348,26 +337,10 @@ export class ClusterPool<T> extends EventEmitter {
     this.taskQueue = remainingQueue;
     if (tasks.length === 0) return;
 
-    const workerPending =
-      this.workerPendingTasks.get(workerId) || new Map<string, number>();
-    this.workerPendingTasks.set(workerId, workerPending);
-
     for (const task of tasks) {
-      this.pendingTasks.set(task.taskId, {
-        resolve: (_value: T) => {
-          // Promise resolve callback
-        },
-        reject: (_error: Error) => {
-          // Promise reject callback
-        },
-      });
-
-      workerPending.set(task.taskId, task.taskIndex);
+      this.pendingTaskIds.add(task.taskId);
     }
-
-    // 更新 worker 状态
-    this.workerTaskCounts.set(workerId, currentTaskCount + tasks.length);
-    stats.isIdle = tasks.length === 0;
+    handle.activeTaskCount += tasks.length;
 
     // 发送批量任务
     const message: BatchTaskMessage = {
@@ -376,44 +349,39 @@ export class ClusterPool<T> extends EventEmitter {
       workerId,
     };
 
-    worker.send(message);
+    handle.worker.send(message);
 
-    const workerLogger = this.logger.worker(workerId);
-    workerLogger.info(
-      `分配 ${tasks.length} 个任务 (当前处理中：${currentTaskCount + tasks.length}/${this.workerConcurrency})`,
-    );
+    this.logger
+      .worker(workerId)
+      .info(
+        `分配 ${tasks.length} 个任务 (当前处理中：${handle.activeTaskCount}/${this.workerConcurrency})`,
+      );
   }
 
   private handleWorkerBatchResult(
     workerId: number,
     message: BatchTaskResult,
   ): void {
-    const stats = this.workerStats.get(workerId);
-    const workerLogger = this.logger.worker(workerId);
-    const currentTaskCount = this.workerTaskCounts.get(workerId) || 0;
+    const handle = this.workerHandles.get(workerId);
+    if (!handle) return;
 
-    if (!stats) return;
+    const workerLogger = this.logger.worker(workerId);
 
     let completedInBatch = 0;
     let successfulInBatch = 0;
 
     // 处理批量结果中的每个任务
     for (const taskResult of message.results) {
-      const pendingTask = this.pendingTasks.get(taskResult.taskId);
-      if (!pendingTask) {
+      if (!this.pendingTaskIds.has(taskResult.taskId)) {
         workerLogger.warn(`收到未知任务结果：${taskResult.taskId}`);
         continue;
       }
 
-      this.pendingTasks.delete(taskResult.taskId);
-      // 从 worker 待处理集合移除
-      const workerPending = this.workerPendingTasks.get(workerId);
-      if (workerPending) workerPending.delete(taskResult.taskId);
+      this.pendingTaskIds.delete(taskResult.taskId);
       completedInBatch++;
 
       if (taskResult.type === "result" && taskResult.result !== undefined) {
-        // 从 taskId 中提取 taskIndex
-        const taskIndex = Number.parseInt(taskResult.taskId.split("-")[1]);
+        const { taskIndex } = taskResult;
         const result = taskResult.result as T;
         this.results[taskIndex] = result;
         successfulInBatch++;
@@ -441,13 +409,14 @@ export class ClusterPool<T> extends EventEmitter {
     }
 
     // 更新 worker 状态
-    const newTaskCount = Math.max(0, currentTaskCount - completedInBatch);
-    this.workerTaskCounts.set(workerId, newTaskCount);
-    stats.processedTasks += successfulInBatch;
-    stats.isIdle = newTaskCount === 0;
+    handle.activeTaskCount = Math.max(
+      0,
+      handle.activeTaskCount - completedInBatch,
+    );
+    handle.processedTasks += successfulInBatch;
 
     workerLogger.info(
-      `完成批量任务：${successfulInBatch}/${completedInBatch} 成功 (总完成：${this.completedTasks}/${this.totalTasks}，当前处理中：${newTaskCount})`,
+      `完成批量任务：${successfulInBatch}/${completedInBatch} 成功 (总完成：${this.completedTasks}/${this.totalTasks}，当前处理中：${handle.activeTaskCount})`,
     );
 
     // 检查是否所有任务都已完成
@@ -461,33 +430,26 @@ export class ClusterPool<T> extends EventEmitter {
   }
 
   private handleWorkerMessage(workerId: number, message: TaskResult): void {
-    const stats = this.workerStats.get(workerId);
+    const handle = this.workerHandles.get(workerId);
+    if (!handle) return;
+
     const workerLogger = this.logger.worker(workerId);
-    const currentTaskCount = this.workerTaskCounts.get(workerId) || 0;
 
-    if (!stats) return;
-
-    const pendingTask = this.pendingTasks.get(message.taskId);
-    if (!pendingTask) {
+    if (!this.pendingTaskIds.has(message.taskId)) {
       workerLogger.warn(`收到未知任务结果：${message.taskId}`);
       return;
     }
 
-    this.pendingTasks.delete(message.taskId);
-    const workerPending = this.workerPendingTasks.get(workerId);
-    if (workerPending) workerPending.delete(message.taskId);
+    this.pendingTaskIds.delete(message.taskId);
 
     // 更新任务计数
-    const newTaskCount = Math.max(0, currentTaskCount - 1);
-    this.workerTaskCounts.set(workerId, newTaskCount);
-    stats.isIdle = newTaskCount === 0;
+    handle.activeTaskCount = Math.max(0, handle.activeTaskCount - 1);
 
     if (message.type === "result" && message.result !== undefined) {
-      // 从 taskId 中提取 taskIndex
-      const taskIndex = Number.parseInt(message.taskId.split("-")[1]);
+      const { taskIndex } = message;
       const result = message.result as T;
       this.results[taskIndex] = result;
-      stats.processedTasks++;
+      handle.processedTasks++;
 
       this.completedTasks++;
       this.onTaskCompleted?.({
@@ -497,7 +459,7 @@ export class ClusterPool<T> extends EventEmitter {
         result,
       });
       workerLogger.info(
-        `完成任务 ${taskIndex + 1}/${this.totalTasks} (已完成：${this.completedTasks}，当前处理中：${newTaskCount})`,
+        `完成任务 ${taskIndex + 1}/${this.totalTasks} (已完成：${this.completedTasks}，当前处理中：${handle.activeTaskCount})`,
       );
 
       // 检查是否所有任务都已完成
@@ -516,15 +478,6 @@ export class ClusterPool<T> extends EventEmitter {
     this.assignBatchTasksToWorker(workerId);
   }
 
-  private handleWorkerError(workerId: number, error: Error): void {
-    const stats = this.workerStats.get(workerId);
-    if (stats) {
-      stats.isIdle = true;
-    }
-
-    this.fail(error);
-  }
-
   private normalizeTaskError(taskId: string, error: unknown): Error {
     if (error instanceof Error) return error;
     const message =
@@ -534,25 +487,12 @@ export class ClusterPool<T> extends EventEmitter {
     return new Error(`Worker task ${taskId} failed: ${message}`);
   }
 
-  private clearWorkerState(workerId: number): void {
-    this.workers.delete(workerId);
-    this.workerStats.delete(workerId);
-    this.readyWorkers.delete(workerId);
-    this.initializedWorkers.delete(workerId);
-    this.workerPendingTasks.delete(workerId);
-    this.workerTaskCounts.delete(workerId);
-  }
-
   private fail(error: Error): void {
     if (this.hasFailed || this.isShuttingDown) return;
 
     this.hasFailed = true;
     this.taskQueue = [];
-    this.pendingTasks.clear();
-    this.workerPendingTasks.clear();
-    this.workerTaskCounts.clear();
-    this.readyWorkers.clear();
-    this.initializedWorkers.clear();
+    this.pendingTaskIds.clear();
 
     if (this.listenerCount("error") > 0) {
       this.emit("error", error);
@@ -566,7 +506,7 @@ export class ClusterPool<T> extends EventEmitter {
     this.isShuttingDown = true;
     const shutdownPromises: Promise<void>[] = [];
 
-    for (const [, worker] of this.workers) {
+    for (const { worker } of this.workerHandles.values()) {
       shutdownPromises.push(
         new Promise((resolve) => {
           const timeout = setTimeout(() => {
@@ -590,17 +530,20 @@ export class ClusterPool<T> extends EventEmitter {
     }
 
     await Promise.all(shutdownPromises);
-    this.workers.clear();
-    this.workerStats.clear();
-    this.pendingTasks.clear();
-    this.workerPendingTasks.clear();
-    this.workerTaskCounts.clear();
-    this.readyWorkers.clear();
-    this.initializedWorkers.clear();
+    this.workerHandles.clear();
+    this.pendingTaskIds.clear();
   }
 
-  // 获取 worker 统计信息
+  // 获取 worker 统计信息（从 WorkerHandle 派生）
   getWorkerStats(): WorkerStats[] {
-    return Array.from(this.workerStats.values());
+    return Array.from(
+      this.workerHandles.entries(),
+      ([workerId, handle]): WorkerStats => ({
+        workerId,
+        processedTasks: handle.processedTasks,
+        isIdle: handle.activeTaskCount === 0,
+        isReady: handle.state === "ready",
+      }),
+    );
   }
 }

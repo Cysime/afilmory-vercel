@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { normalizeLocationInfoAdminAliases } from "@afilmory/schema";
+import { normalizeLocationInfoAdminAliases } from "@afilmory/schema/geo";
 
 import type { LocationAdminInfo, LocationInfo } from "../types/photo.js";
 import { writeFileAtomic } from "../utils/atomic-write.js";

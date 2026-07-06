@@ -19,10 +19,11 @@ import { useContextPhotos, useOpenPhotoViewer } from "~/hooks/usePhotoViewer";
 import {
   CarbonIsoOutline,
   MaterialSymbolsShutterSpeed,
-  StreamlineImageAccessoriesLensesPhotosCameraShutterPicturePhotographyPicturesPhotoLens,
+  StreamlineImageAccessoriesLensesPhotosCameraShutterPicturePhotographyPicturesPhotoLens as LensIcon,
   TablerAperture,
 } from "~/icons";
 import { isMobileDevice } from "~/lib/device-viewport";
+import { getEssentialExif } from "~/lib/essential-exif";
 import { buildGalleryFilterSearch } from "~/lib/gallery-filter-url";
 import { getImageFormat } from "~/lib/image-utils";
 import { buildPhotoDetailPathname } from "~/lib/photo-detail-route";
@@ -34,6 +35,30 @@ import {
 import type { PhotoManifest } from "~/types/photo";
 
 import { computeMasonryItemHeight } from "./gallery-layout";
+
+// 未命名照片兜底 aria-label 用的日期格式化：Intl.DateTimeFormat 构造不便宜
+// （做法同 useVisiblePhotosDateRange），瀑布流单元是热路径，按 locale 缓存。
+const untitledDateFormatters = new Map<string, Intl.DateTimeFormat>();
+
+const formatUntitledPhotoDate = (
+  locale: string,
+  dateTaken: string,
+): string | null => {
+  const date = new Date(dateTaken);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  let formatter = untitledDateFormatters.get(locale);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+    untitledDateFormatters.set(locale, formatter);
+  }
+  return formatter.format(date);
+};
 
 export const MasonryPhotoItem = memo(
   ({
@@ -47,7 +72,7 @@ export const MasonryPhotoItem = memo(
   }) => {
     const photos = useContextPhotos();
     const openViewer = useOpenPhotoViewer();
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
     // 通过 jotai store 在点击时按需读取路由 / 导航 / 画廊设置，避免订阅
     // useLocation()/useNavigate()/gallerySettingAtom —— 否则打开查看器(URL 变化)
     // 或调整任一筛选都会让全部可见的虚拟单元重渲染。沿用 StableRouterProvider 的
@@ -142,46 +167,14 @@ export const MasonryPhotoItem = memo(
     // 保证格子壳与照片内容逐像素一致、无小数 y 坐标（iOS 分块光栅化 hairline 的根源）。
     const calculatedHeight = computeMasonryItemHeight(width, data);
 
-    // 格式化 EXIF 数据
-    const formatExifData = () => {
-      const { exif } = data;
-
-      // 安全处理：如果 exif 不存在或为空，则返回空对象
-      if (!exif) {
-        return {
-          focalLength35mm: null,
-          iso: null,
-          shutterSpeed: null,
-          aperture: null,
-        };
-      }
-
-      // 等效焦距 (35mm)
-      const focalLength35mm = exif.FocalLengthIn35mmFormat
-        ? Number.parseInt(exif.FocalLengthIn35mmFormat)
-        : exif.FocalLength
-          ? Number.parseInt(exif.FocalLength)
-          : null;
-
-      // ISO
-      const iso = exif.ISO;
-
-      // 快门速度
-      const exposureTime = exif.ExposureTime;
-      const shutterSpeed = exposureTime ? `${exposureTime}s` : null;
-
-      // 光圈
-      const aperture = exif.FNumber ? `f/${exif.FNumber}` : null;
-
-      return {
-        focalLength35mm,
-        iso,
-        shutterSpeed,
-        aperture,
-      };
+    // 核心 EXIF 拍摄参数：与查看器面板共用同一份格式化逻辑（essential-exif.ts）。
+    // 覆盖层只有一格焦距，无 35mm 等效值时回退实际焦距。
+    const essentialExif = getEssentialExif(data.exif);
+    const exifData = {
+      ...essentialExif,
+      focalLength35mm:
+        essentialExif.focalLength35mm ?? essentialExif.focalLength,
     };
-
-    const exifData = formatExifData();
     const shouldShowImageDetails = imageLoaded || hasLoadedThumbnailBefore;
 
     // 使用通用的图片格式提取函数
@@ -194,11 +187,21 @@ export const MasonryPhotoItem = memo(
     // lazy-load 观察/延迟决策，让缓存图尽快上屏，缩短重挂载的空窗。
     const shouldLoadEagerly = isPriorityThumbnail || hasLoadedThumbnailBefore;
 
+    // 标题和描述都缺失时，aria-label 不能是 undefined —— 那会让整格照片对
+    // 读屏器变成一个无名按钮；回退到"摄于某日的照片"，日期无效再退到通用文案。
+    let ariaLabel = data.title || data.description;
+    if (!ariaLabel) {
+      const takenDate = formatUntitledPhotoDate(i18n.language, data.dateTaken);
+      ariaLabel = takenDate
+        ? t("photo.untitled.taken-on", { date: takenDate })
+        : t("photo.untitled.fallback");
+    }
+
     return (
       <m.div
         role="button"
         tabIndex={0}
-        aria-label={data.title || data.description || undefined}
+        aria-label={ariaLabel}
         className="bg-fill-quaternary group relative w-full cursor-pointer overflow-hidden"
         style={{
           width,
@@ -210,7 +213,7 @@ export const MasonryPhotoItem = memo(
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
-        {/* Blurhash 占位符 */}
+        {/* Thumbhash 占位符 */}
         {!imageError && (
           <ThumbnailImage
             ref={imageRef}
@@ -346,7 +349,7 @@ export const MasonryPhotoItem = memo(
                 <div className="grid grid-cols-2 gap-2 pb-4 text-xs">
                   {exifData.focalLength35mm && (
                     <div className="flex items-center gap-1.5 rounded-md bg-white/10 px-2 py-1 opacity-0 backdrop-blur-md transition-opacity duration-300 group-hover:opacity-100">
-                      <StreamlineImageAccessoriesLensesPhotosCameraShutterPicturePhotographyPicturesPhotoLens className="text-white/70" />
+                      <LensIcon className="text-white/70" />
                       <span className="text-white/90">
                         {exifData.focalLength35mm}mm
                       </span>

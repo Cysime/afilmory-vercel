@@ -3,7 +3,7 @@ import {
   normalizeCountryCode,
   normalizeGeoValue,
   normalizeLocalizedAdminValue,
-} from "@afilmory/schema";
+} from "@afilmory/schema/geo";
 
 import type { LocationAdminInfo, LocationInfo } from "../types/photo.js";
 import { sleep } from "../utils/backoff.js";

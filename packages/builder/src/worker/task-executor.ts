@@ -1,12 +1,5 @@
-import type { EmitPluginEventFn } from "../core/contracts/execution-context.js";
-import type { PhotoProcessorOptions } from "../core/contracts/photo-processing.js";
-import type { BuilderServices } from "../core/contracts/services.js";
-import { runWithBuilderOutputSettings } from "../output-paths.js";
-import type { PluginRunState } from "../plugins/manager.js";
+import type { PhotoTaskRuntime } from "../photo/processor.js";
 import type { StorageObject } from "../storage/interfaces.js";
-import type { BuilderConfig } from "../types/config.js";
-import type { BuilderOptions } from "../types/options.js";
-import type { PhotoManifestItem } from "../types/photo.js";
 import type {
   BatchTaskMessage,
   BatchTaskResult,
@@ -17,26 +10,13 @@ import type {
 export type WorkerProcessPhoto =
   typeof import("../photo/processor.js").processPhoto;
 
-export interface WorkerTaskRuntime {
+/**
+ * cluster worker 的运行期依赖 = 共用的 PhotoTaskRuntime + worker 进程自身的
+ * 身份与任务表。init 消息处理完毕后组装一次，之后所有任务复用。
+ */
+export interface WorkerTaskRuntime extends PhotoTaskRuntime {
   workerId: number;
   imageObjects: StorageObject[];
-  existingManifestMap: Map<string, PhotoManifestItem>;
-  livePhotoMap: Map<string, StorageObject>;
-  builderOptions: BuilderOptions;
-  outputSettings: BuilderConfig["output"];
-  services: BuilderServices;
-  pluginRunState: PluginRunState;
-  emitPluginEvent: EmitPluginEventFn;
-}
-
-export function createWorkerProcessorOptions(
-  builderOptions: BuilderOptions,
-): PhotoProcessorOptions {
-  return {
-    isForceMode: builderOptions.isForceMode,
-    isForceManifest: builderOptions.isForceManifest,
-    isForceThumbnails: builderOptions.isForceThumbnails,
-  };
 }
 
 async function executePhotoTask(
@@ -49,24 +29,14 @@ async function executePhotoTask(
     throw new Error(`Invalid taskIndex: ${taskIndex}`);
   }
 
-  return await runWithBuilderOutputSettings(
-    runtime.outputSettings,
-    async () =>
-      await processPhoto(
-        obj,
-        taskIndex,
-        runtime.workerId,
-        runtime.imageObjects.length,
-        runtime.existingManifestMap,
-        runtime.livePhotoMap,
-        createWorkerProcessorOptions(runtime.builderOptions),
-        runtime.services,
-        runtime.emitPluginEvent,
-        {
-          runState: runtime.pluginRunState,
-          builderOptions: runtime.builderOptions,
-        },
-      ),
+  return await processPhoto(
+    {
+      obj,
+      index: taskIndex,
+      workerId: runtime.workerId,
+      totalImages: runtime.imageObjects.length,
+    },
+    runtime,
   );
 }
 
@@ -83,12 +53,14 @@ export async function executeWorkerTask(
     return {
       type: "result",
       taskId: message.taskId,
+      taskIndex: message.taskIndex,
       result: await executePhotoTask(message.taskIndex, runtime, processPhoto),
     };
   } catch (error) {
     return {
       type: "error",
       taskId: message.taskId,
+      taskIndex: message.taskIndex,
       error: normalizeWorkerError(error),
     };
   }

@@ -1,7 +1,7 @@
 import { set } from "es-toolkit/compat";
 import type { Plugin } from "vite";
 
-import { MONOREPO_ROOT_PATH } from "./__internal__/constants";
+import { LOCALES_PATH } from "./__internal__/constants";
 
 export function localesJsonPlugin(): Plugin {
   return {
@@ -9,7 +9,9 @@ export function localesJsonPlugin(): Plugin {
     enforce: "pre",
 
     async transform(code, id) {
-      if (!id.includes(MONOREPO_ROOT_PATH) || !id.endsWith(".json")) {
+      // 点号展开只对 locales/ 生效；其他 JSON 模块（如 @pkg 的 package.json）
+      // 顶层键含 "." 时不应被重构。
+      if (!id.startsWith(LOCALES_PATH) || !id.endsWith(".json")) {
         return null;
       }
 

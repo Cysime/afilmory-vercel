@@ -1,5 +1,8 @@
-import type { PhotoProcessorOptions } from "../../photo/processor.js";
-import { processPhoto } from "../../photo/processor.js";
+import type {
+  PhotoProcessorOptions,
+  PhotoTaskRuntime,
+} from "../../photo/processor.js";
+import { processPhoto, toProcessorOptions } from "../../photo/processor.js";
 import { createSerializableBuilderConfigForWorker } from "../../plugins/serializable.js";
 import type { StorageObject } from "../../storage/interfaces.js";
 import type {
@@ -34,11 +37,7 @@ export class PhotoTaskProcessor {
     livePhotoMap: Map<string, StorageObject>,
   ): Promise<PhotoTaskProcessingResult> {
     const { options } = session;
-    const processorOptions: PhotoProcessorOptions = {
-      isForceMode: options.isForceMode,
-      isForceManifest: options.isForceManifest,
-      isForceThumbnails: options.isForceThumbnails,
-    };
+    const processorOptions: PhotoProcessorOptions = toProcessorOptions(options);
 
     const concurrency =
       options.concurrencyLimit ??
@@ -112,7 +111,6 @@ export class PhotoTaskProcessor {
           tasksToProcess,
           existingManifestMap,
           livePhotoMap,
-          processorOptions,
           handleTaskCompleted,
           concurrency,
         );
@@ -180,7 +178,6 @@ export class PhotoTaskProcessor {
     tasksToProcess: StorageObject[],
     existingManifestMap: Map<string, PhotoManifestItem>,
     livePhotoMap: Map<string, StorageObject>,
-    processorOptions: PhotoProcessorOptions,
     onTaskCompleted: (
       payload: TaskCompletedPayload<ProcessPhotoResult>,
     ) => void,
@@ -193,24 +190,26 @@ export class PhotoTaskProcessor {
       onTaskCompleted,
     });
 
-    return await workerPool.execute(async (taskIndex, workerId) => {
-      const obj = tasksToProcess[taskIndex];
+    // 构建期恒定的依赖只组装一次；每个任务只带自己的可变部分。
+    const runtime: PhotoTaskRuntime = {
+      existingManifestMap,
+      livePhotoMap,
+      services: session.services,
+      emitPluginEvent: (runState, event, payload) =>
+        session.emitPluginEvent(runState, event, payload),
+      runState: session.runState,
+      builderOptions: session.options,
+    };
 
+    return await workerPool.execute(async (taskIndex, workerId) => {
       return await processPhoto(
-        obj,
-        taskIndex,
-        workerId,
-        tasksToProcess.length,
-        existingManifestMap,
-        livePhotoMap,
-        processorOptions,
-        session.services,
-        (runState, event, payload) =>
-          session.emitPluginEvent(runState, event, payload),
         {
-          runState: session.runState,
-          builderOptions: session.options,
+          obj: tasksToProcess[taskIndex],
+          index: taskIndex,
+          workerId,
+          totalImages: tasksToProcess.length,
         },
+        runtime,
       );
     });
   }

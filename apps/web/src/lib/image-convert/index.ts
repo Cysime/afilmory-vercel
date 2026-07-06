@@ -200,6 +200,3 @@ export class ImageConverterManager {
     return `${strategy.getName()}::${originalUrl}`;
   }
 }
-
-// 导出单例实例
-export const imageConverterManager = new ImageConverterManager();

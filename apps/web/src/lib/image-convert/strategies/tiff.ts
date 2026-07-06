@@ -1,3 +1,4 @@
+import { getI18n } from "~/i18n";
 import { isSafari } from "~/lib/device-viewport";
 import type { LoadingCallbacks } from "~/lib/image-loading-types";
 
@@ -25,18 +26,20 @@ export class TiffConverterStrategy implements ImageConverterStrategy {
     const { onLoadingStateUpdate } = callbacks || {};
 
     try {
+      // 获取国际化文案
+      const i18n = getI18n();
+
       // 更新转换状态
       onLoadingStateUpdate?.({
         isConverting: true,
         isQueueWaiting: false,
-        conversionMessage: "Converting TIFF image...",
+        conversionMessage: i18n.t("loading.tiff.converting"),
       });
 
       // 执行转换逻辑
       const result = await this.convertTiffToJpeg(blob);
 
       return {
-        url: result.url,
         blob: result.blob,
         convertedSize: result.size,
         format: "image/jpeg",
@@ -60,7 +63,7 @@ export class TiffConverterStrategy implements ImageConverterStrategy {
   // 转换实现
   private async convertTiffToJpeg(
     blob: Blob,
-  ): Promise<{ url: string; blob: Blob; size: number }> {
+  ): Promise<{ blob: Blob; size: number }> {
     try {
       // 动态导入 tiff 库
       const tiff = await import("tiff");
@@ -105,14 +108,15 @@ export class TiffConverterStrategy implements ImageConverterStrategy {
         canvas.toBlob(
           (convertedBlob) => {
             if (convertedBlob) {
-              const url = URL.createObjectURL(convertedBlob);
-              resolve({ url, blob: convertedBlob, size: convertedBlob.size });
+              resolve({ blob: convertedBlob, size: convertedBlob.size });
             } else {
               reject(new Error("Failed to convert TIFF to JPEG"));
             }
           },
           "image/jpeg",
-          1,
+          // 0.9 与 1 在屏幕上肉眼不可分，但体积通常小 3-5 倍；
+          // 转换结果会进入有内存上限的 blob 缓存，质量 1 会白白挤占缓存额度。
+          0.9,
         );
       });
     } catch (error) {

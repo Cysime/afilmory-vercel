@@ -234,6 +234,9 @@ export const LivePhotoVideo = ({
         void video.play().catch((error: unknown) => {
           console.error("Failed to play live photo video:", error);
           setIsPlayingLivePhoto(false);
+          // 透明度由 animate 控制器单独持有：play() 被拒时控制器仍停在 1，
+          // 不归零会留下一帧冻结的视频盖住底图。
+          videoAnimateController.set({ opacity: 0 });
         });
       }
     }, 0);
@@ -300,10 +303,6 @@ export const LivePhotoVideo = ({
         "pointer-events-none absolute inset-0 z-10 h-full w-full object-contain",
         className,
       )}
-      style={{
-        opacity: isPlayingLivePhoto ? 1 : 0,
-        transition: "opacity 0.2s ease-in-out",
-      }}
       muted
       playsInline
       onEnded={handleVideoEnded}

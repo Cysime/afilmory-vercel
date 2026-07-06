@@ -12,7 +12,6 @@ import {
 } from "../manifest/manager.js";
 import { CURRENT_MANIFEST_VERSION } from "../manifest/version.js";
 import type { BuilderOutputSettings } from "../output-paths.js";
-import { runWithBuilderOutputSettings } from "../output-paths.js";
 import type { PhotoManifestItem } from "../types/photo.js";
 
 function createPhotoManifestItem(id: string): PhotoManifestItem {
@@ -59,9 +58,7 @@ describe("handleDeletedPhotos", () => {
 
   it("returns zero when the thumbnails directory does not exist", async () => {
     await expect(
-      runWithBuilderOutputSettings(outputSettings, () =>
-        handleDeletedPhotos([createPhotoManifestItem("keep")]),
-      ),
+      handleDeletedPhotos(outputSettings, [createPhotoManifestItem("keep")]),
     ).resolves.toBe(0);
   });
 
@@ -70,10 +67,9 @@ describe("handleDeletedPhotos", () => {
     await fs.writeFile(path.join(thumbnailsDir, "keep.jpg"), "");
     await fs.writeFile(path.join(thumbnailsDir, "remove.jpg"), "");
 
-    const deletedCount = await runWithBuilderOutputSettings(
-      outputSettings,
-      () => handleDeletedPhotos([createPhotoManifestItem("keep")]),
-    );
+    const deletedCount = await handleDeletedPhotos(outputSettings, [
+      createPhotoManifestItem("keep"),
+    ]);
 
     expect(deletedCount).toBe(1);
     await expect(
@@ -82,6 +78,44 @@ describe("handleDeletedPhotos", () => {
     await expect(
       fs.access(path.join(thumbnailsDir, "remove.jpg")),
     ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps thumbnails of photos still present in storage (failed this run)", async () => {
+    await fs.mkdir(thumbnailsDir, { recursive: true });
+    await fs.writeFile(path.join(thumbnailsDir, "keep.jpg"), "");
+    await fs.writeFile(path.join(thumbnailsDir, "failed.jpg"), "");
+    await fs.writeFile(path.join(thumbnailsDir, "gone.jpg"), "");
+
+    // failed 不在 manifest（本次处理失败）但仍在存储中 → 缩略图必须保留；
+    // gone 既不在 manifest 也不在存储 → 才是真正的孤儿。
+    const deletedCount = await handleDeletedPhotos(
+      outputSettings,
+      [createPhotoManifestItem("keep")],
+      new Set(["keep", "failed"]),
+    );
+
+    expect(deletedCount).toBe(1);
+    await expect(
+      fs.access(path.join(thumbnailsDir, "failed.jpg")),
+    ).resolves.toBeUndefined();
+    await expect(
+      fs.access(path.join(thumbnailsDir, "gone.jpg")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("leaves non-jpg files like the .encoding marker untouched", async () => {
+    await fs.mkdir(thumbnailsDir, { recursive: true });
+    await fs.writeFile(path.join(thumbnailsDir, "keep.jpg"), "");
+    await fs.writeFile(path.join(thumbnailsDir, ".encoding"), "jpeg-w600-q80");
+
+    const deletedCount = await handleDeletedPhotos(outputSettings, [
+      createPhotoManifestItem("keep"),
+    ]);
+
+    expect(deletedCount).toBe(0);
+    await expect(
+      fs.readFile(path.join(thumbnailsDir, ".encoding"), "utf-8"),
+    ).resolves.toBe("jpeg-w600-q80");
   });
 });
 
@@ -108,9 +142,7 @@ describe("loadExistingManifest", () => {
   });
 
   it("creates a new manifest only when the file does not exist", async () => {
-    const manifest = await runWithBuilderOutputSettings(outputSettings, () =>
-      loadExistingManifest(),
-    );
+    const manifest = await loadExistingManifest(outputSettings);
 
     expect(manifest.schema).toBe(AFILMORY_MANIFEST_SCHEMA);
     expect(manifest.version).toBe(CURRENT_MANIFEST_VERSION);
@@ -125,9 +157,7 @@ describe("loadExistingManifest", () => {
       JSON.stringify({ version: "v10", data: [{ id: "legacy" }] }),
     );
 
-    const manifest = await runWithBuilderOutputSettings(outputSettings, () =>
-      loadExistingManifest(),
-    );
+    const manifest = await loadExistingManifest(outputSettings);
 
     expect(manifest.photos).toEqual([]);
     expect(manifest.version).toBe(CURRENT_MANIFEST_VERSION);
@@ -141,9 +171,7 @@ describe("loadExistingManifest", () => {
   it("discards an unreadable manifest and rebuilds from scratch instead of throwing", async () => {
     await fs.writeFile(manifestPath, "{ invalid json");
 
-    const manifest = await runWithBuilderOutputSettings(outputSettings, () =>
-      loadExistingManifest(),
-    );
+    const manifest = await loadExistingManifest(outputSettings);
 
     expect(manifest.photos).toEqual([]);
     const rewritten = JSON.parse(await fs.readFile(manifestPath, "utf-8"));
@@ -191,9 +219,7 @@ describe("loadExistingManifest", () => {
       }),
     );
 
-    const manifest = await runWithBuilderOutputSettings(outputSettings, () =>
-      loadExistingManifest(),
-    );
+    const manifest = await loadExistingManifest(outputSettings);
 
     expect(manifest.photos.map((photo) => photo.id)).toEqual(["good", "soft"]);
   });

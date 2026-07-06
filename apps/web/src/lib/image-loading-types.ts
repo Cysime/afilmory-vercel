@@ -7,7 +7,6 @@ export interface LoadingState {
   isConverting?: boolean;
   isQueueWaiting?: boolean;
   conversionMessage?: string;
-  codecInfo?: string;
 }
 
 export interface LoadingCallbacks {
@@ -20,7 +19,6 @@ export interface LoadingCallbacks {
 export interface ImageLoadResult {
   blobSrc: string;
   blob: Blob;
-  convertedUrl?: string;
 }
 
 export interface VideoProcessResult {

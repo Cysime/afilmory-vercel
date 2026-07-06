@@ -1,4 +1,4 @@
-import { buildGeoRegionId } from "@afilmory/schema";
+import { buildGeoRegionId } from "@afilmory/schema/geo";
 import {
   GlassButton,
   HoverCard,

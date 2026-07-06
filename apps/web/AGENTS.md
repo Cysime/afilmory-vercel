@@ -87,7 +87,7 @@ Production builds exclude `(debug)` and `(data)` route groups. Development keeps
 
 ### 照片网格
 
-- `MasonryRoot` 和 `modules/gallery/Masonic.tsx` 基于 Masonic 实现虚拟瀑布流。
+- `MasonryRoot` 和 `modules/gallery/VirtualMasonry.tsx` 实现自研纯计算虚拟瀑布流（已替代 masonic 库）。
 - 缩略图使用 `photo.thumbnailUrl`。
 - 占位和取色使用 `photo.thumbHash`。
 - 筛选状态通过 URL search params 与 Jotai 状态同步。
@@ -164,8 +164,9 @@ pnpm build
 根脚本实际步骤：
 
 1. `pnpm exec tsx apps/web/scripts/precheck.ts`
-2. `pnpm build:packages`
-3. `pnpm build:web`
+2. `pnpm build:web`
+
+workspace 包直接从 TS 源码消费，部署构建不运行 `pnpm build:packages`（它仅供 npm 发布）。
 
 `pnpm build:web` 只运行 Vite build，要求 manifest 已存在。`buildAssetsPlugin` 会读取 manifest 并生成 `feed.xml`、`sitemap.xml` 和 OG 图片。
 
@@ -205,7 +206,7 @@ apps/web/dist/
 - 构建期生成 Open Graph PNG。
 - 读取 manifest 生成 RSS feed 和 sitemap。
 - 将 meta tags 插入 `index.html`。
-- OG 图片由 `scripts/generate-og-image.ts` 使用 Sharp 和 SVG/text helpers 生成。
+- OG 图片由 `@afilmory/build-assets`（`packages/build-assets/src/generate-og-image.ts`）使用 Sharp 和 SVG/text helpers 生成。
 
 ### `createDependencyChunksPlugin`
 

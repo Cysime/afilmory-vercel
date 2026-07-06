@@ -1,148 +1,31 @@
 import { loadConfig } from "c12";
 import consola from "consola";
 
-import type { StorageConfig } from "../storage/interfaces.js";
-import type {
-  BuilderConfig,
-  BuilderConfigInput,
-  UserBuilderSettings,
-} from "../types/config.js";
+import { normalizeBuilderOutputSettings } from "../output-paths.js";
+import type { BuilderConfig, BuilderConfigInput } from "../types/config.js";
 import { clone } from "../utils/clone.js";
 import { createDefaultBuilderConfig } from "./defaults.js";
+import { applyBuilderConfigInput, redactConfigSecrets } from "./schema.js";
 
 export interface LoadBuilderConfigOptions {
   cwd?: string;
   configFile?: string;
 }
 
-function applySystemOverrides(
-  target: BuilderConfig["system"],
-  overrides?: BuilderConfigInput["system"],
-): void {
-  if (!overrides) return;
-
-  if (overrides.processing) {
-    const { processing } = overrides;
-    if (typeof processing.defaultConcurrency === "number") {
-      target.processing.defaultConcurrency = processing.defaultConcurrency;
-    }
-    if (typeof processing.enableLivePhotoDetection === "boolean") {
-      target.processing.enableLivePhotoDetection =
-        processing.enableLivePhotoDetection;
-    }
-    if (processing.digestSuffixLength !== undefined) {
-      target.processing.digestSuffixLength = processing.digestSuffixLength;
-    }
-    if (processing.supportedFormats) {
-      target.processing.supportedFormats = new Set(
-        processing.supportedFormats as Set<string>,
-      );
-    }
-  }
-
-  if (overrides.observability) {
-    const { observability } = overrides;
-    if (typeof observability.showProgress === "boolean") {
-      target.observability.showProgress = observability.showProgress;
-    }
-    if (typeof observability.showDetailedStats === "boolean") {
-      target.observability.showDetailedStats = observability.showDetailedStats;
-    }
-    if (observability.logging) {
-      target.observability.logging = {
-        ...target.observability.logging,
-        ...observability.logging,
-      };
-    }
-    if (observability.performance?.worker) {
-      target.observability.performance.worker = {
-        ...target.observability.performance.worker,
-        ...observability.performance.worker,
-      };
-    }
-  }
-}
-
-function ensureUserSettings(target: BuilderConfig): UserBuilderSettings {
-  if (!target.user) {
-    target.user = {
-      storage: null,
-    };
-  }
-  return target.user;
-}
-
-function applyUserOverrides(
-  target: BuilderConfig,
-  overrides?: BuilderConfigInput["user"],
-): void {
-  if (!overrides) return;
-  const user = ensureUserSettings(target);
-
-  if (overrides.storage !== undefined) {
-    user.storage = overrides.storage as StorageConfig | null;
-  }
-}
-
-function applyOutputOverrides(
-  target: BuilderConfig["output"],
-  overrides?: BuilderConfigInput["output"],
-): void {
-  if (!overrides) return;
-
-  if (
-    typeof overrides.manifestPath === "string" &&
-    overrides.manifestPath.length > 0
-  ) {
-    target.manifestPath = overrides.manifestPath;
-  }
-  if (
-    typeof overrides.thumbnailsDir === "string" &&
-    overrides.thumbnailsDir.length > 0
-  ) {
-    target.thumbnailsDir = overrides.thumbnailsDir;
-  }
-  if (
-    typeof overrides.originalsDir === "string" &&
-    overrides.originalsDir.length > 0
-  ) {
-    target.originalsDir = overrides.originalsDir;
-  }
-  if (
-    typeof overrides.geocodingCachePath === "string" &&
-    overrides.geocodingCachePath.length > 0
-  ) {
-    target.geocodingCachePath = overrides.geocodingCachePath;
-  }
-}
-
-function normalizeBuilderConfig(
-  defaults: BuilderConfig,
-  input: BuilderConfigInput,
-): BuilderConfig {
-  const next = clone(defaults);
-
-  applySystemOverrides(next.system, input.system);
-  applyUserOverrides(next, input.user);
-  applyOutputOverrides(next.output, input.output);
-
-  if (input.storage !== undefined) {
-    ensureUserSettings(next).storage = input.storage ?? null;
-  }
-
-  if (Array.isArray(input.plugins)) {
-    next.plugins = [...input.plugins];
-  }
-
-  return next;
-}
-
 export function resolveBuilderConfig(
   input: BuilderConfigInput,
   base?: BuilderConfig,
 ): BuilderConfig {
-  const defaults = base ? clone(base) : createDefaultBuilderConfig();
-  return normalizeBuilderConfig(defaults, input);
+  const config = base ? clone(base) : createDefaultBuilderConfig();
+  const warnings = applyBuilderConfigInput(config, input);
+  for (const warning of warnings) {
+    // builder.config.ts 是每个 self-hoster 都要编辑的文件，拼写错误必须大声可见
+    consola.warn(warning);
+  }
+  // 输出路径在这里就归一成绝对路径：全链路（主进程、cluster worker、CLI 的
+  // .encoding 检查）从此只见同一份归一化值，不存在"入 scope 前后两种状态"。
+  config.output = normalizeBuilderOutputSettings(config.output);
+  return config;
 }
 
 export async function loadBuilderConfig(
@@ -167,24 +50,7 @@ export async function loadBuilderConfig(
   if (process.env.DEBUG === "1") {
     const logger = consola.withTag("CONFIG");
     logger.info("Using builder config from", result.configFile ?? "defaults");
-    const sanitized = {
-      ...config,
-      user: config.user ? { ...config.user } : config.user,
-    };
-    if (sanitized.user?.storage) {
-      const storage = { ...sanitized.user.storage };
-      if ("accessKeyId" in storage)
-        (storage as Record<string, unknown>).accessKeyId = "***";
-      if ("secretAccessKey" in storage)
-        (storage as Record<string, unknown>).secretAccessKey = "***";
-      if ("token" in storage)
-        (storage as Record<string, unknown>).token = "***";
-      sanitized.user = {
-        ...sanitized.user,
-        storage: storage as typeof sanitized.user.storage,
-      };
-    }
-    logger.info(sanitized);
+    logger.info(redactConfigSecrets(config));
   }
 
   return config;

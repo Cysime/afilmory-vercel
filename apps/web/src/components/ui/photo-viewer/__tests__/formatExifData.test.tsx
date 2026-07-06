@@ -76,6 +76,41 @@ describe("formatExifData", () => {
     expect(result?.gps?.altitude).toBe("0");
   });
 
+  it("pins the essential capture parameters (focal length / iso / shutter / aperture)", async () => {
+    const { formatExifData } = await import("../formatExifData");
+    const exif: PickedExif = {
+      FocalLengthIn35mmFormat: "35 mm",
+      FocalLength: "23.0 mm",
+      ISO: 200,
+      ExposureTime: "1/250",
+      FNumber: 1.8,
+    };
+
+    const result = formatExifData(exif, testTranslator);
+
+    expect(result?.focalLength35mm).toBe(35);
+    expect(result?.focalLength).toBe(23);
+    expect(result?.iso).toBe(200);
+    expect(result?.shutterSpeed).toBe("1/250s");
+    expect(result?.aperture).toBe("f/1.8");
+  });
+
+  it("keeps the 35mm-equivalent focal length null instead of falling back to the actual one", async () => {
+    const { formatExifData } = await import("../formatExifData");
+    const exif: PickedExif = {
+      FocalLength: "56 mm",
+      ShutterSpeedValue: "1/97",
+    };
+
+    const result = formatExifData(exif, testTranslator);
+
+    // 面板分「实际焦距 / 等效焦距」两行展示，等效焦距缺失时保持隐藏
+    expect(result?.focalLength35mm).toBeNull();
+    expect(result?.focalLength).toBe(56);
+    // 无 ExposureTime 时快门速度回退 ShutterSpeedValue
+    expect(result?.shutterSpeed).toBe("1/97s");
+  });
+
   it("keeps the actual Fuji white balance value for non-Kelvin recipes", async () => {
     const { formatExifData } = await import("../formatExifData");
     const exif: PickedExif = {

@@ -58,7 +58,9 @@ describe("gallery-layout helpers", () => {
     expect(getMasonryItemKey(photos[0])).toBe("a");
   });
 
-  it("calculates responsive column width", () => {
+  it("calculates responsive column width from the measured container width", () => {
+    // containerWidth 是 Masonry 实测的容器 clientWidth（已扣除页面 padding/滚动条），
+    // 不再是 window.innerWidth——函数内部也不再做 -8/-32 的 padding 猜测。
     expect(
       calculateGalleryColumnWidth({
         columns: "auto",
@@ -72,14 +74,14 @@ describe("gallery-layout helpers", () => {
         containerWidth: 2500,
         isMobile: false,
       }),
-    ).toBe(305);
+    ).toBe(309);
     expect(
       calculateGalleryColumnWidth({
         columns: 3,
         containerWidth: 900,
         isMobile: false,
       }),
-    ).toBeCloseTo(286.67, 2);
+    ).toBeCloseTo(297.33, 2);
   });
 
   it("estimates virtual photo rect with a desktop header occupying the first column", () => {
@@ -109,6 +111,35 @@ describe("gallery-layout helpers", () => {
       top: 20,
       width: 100,
     });
+  });
+
+  it("returns null for an out-of-range photo index", () => {
+    const metrics = {
+      columnCount: 2,
+      columnGutter: 4,
+      columnWidth: 100,
+      containerRect: DOMRect.fromRect({ x: 0, y: 0, width: 204, height: 400 }),
+      rowGutter: 4,
+    };
+    const photos = [createPhoto("a")];
+    expect(
+      estimatePhotoVirtualRect({
+        headerHeight: 0,
+        isMobile: true,
+        metrics,
+        photoIndex: 1,
+        photos,
+      }),
+    ).toBeNull();
+    expect(
+      estimatePhotoVirtualRect({
+        headerHeight: 0,
+        isMobile: true,
+        metrics,
+        photoIndex: -1,
+        photos,
+      }),
+    ).toBeNull();
   });
 
   it("keeps first-screen animation decisions pure", () => {
@@ -333,6 +364,143 @@ describe("resolveEffectiveColumnWidth", () => {
         fallbackColumnWidth: 100,
       }),
     ).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("estimatePhotoVirtualRect ≡ computeMasonryLayout (property)", () => {
+  // 关键不变量：估算矩形必须与真实布局（VirtualMasonry 里 computeMasonryLayout
+  // 的输出）对每张照片逐像素一致——现在由「组合调用同一函数」构造性保证，
+  // 这里跨列宽/列数/宽高比全量断言，防止未来又手抄出第二份放置逻辑。
+  const aspectRatios = [0.5, 0.75, 1, 1.337, 1.5, 1.777, 2.35, 3];
+  const makePhotos = (count: number) =>
+    Array.from({ length: count }, (_, i) =>
+      createPhoto(`p${i}`, aspectRatios[i % aspectRatios.length]!),
+    );
+
+  const cases: {
+    columnCount: number;
+    columnWidth: number;
+    headerHeight: number;
+    isMobile: boolean;
+  }[] = [
+    { columnCount: 1, columnWidth: 320, headerHeight: 0, isMobile: true },
+    { columnCount: 2, columnWidth: 190, headerHeight: 0, isMobile: true },
+    { columnCount: 3, columnWidth: 150, headerHeight: 0, isMobile: true },
+    { columnCount: 2, columnWidth: 300, headerHeight: 240, isMobile: false },
+    { columnCount: 4, columnWidth: 251, headerHeight: 173, isMobile: false },
+    { columnCount: 5, columnWidth: 205, headerHeight: 320, isMobile: false },
+    { columnCount: 8, columnWidth: 233, headerHeight: 96, isMobile: false },
+  ];
+
+  it.each(cases)(
+    "matches the real layout cell for every photo (%o)",
+    ({ columnCount, columnWidth, headerHeight, isMobile }) => {
+      const photos = makePhotos(25);
+      const columnGutter = 4;
+      const rowGutter = 4;
+      const containerRect = DOMRect.fromRect({
+        x: 16,
+        y: 64,
+        width: columnCount * columnWidth + (columnCount - 1) * columnGutter,
+        height: 800,
+      });
+      const metrics = {
+        columnCount,
+        columnGutter,
+        columnWidth,
+        containerRect,
+        rowGutter,
+      };
+
+      // 与 MasonryRoot/VirtualMasonry 完全同构的真实布局：
+      // 桌面端 header 哨兵在 index 0（其高度来自 measure），照片高度纯计算。
+      const items = createMasonryItems(photos, isMobile);
+      const layout = computeMasonryLayout({
+        items,
+        columnCount,
+        columnWidth,
+        columnGutter,
+        rowGutter,
+        getItemHeight: (item) =>
+          item instanceof MasonryHeaderItem
+            ? headerHeight
+            : computeMasonryItemHeight(columnWidth, item),
+      });
+
+      for (const [photoIndex] of photos.entries()) {
+        const cellIndex = isMobile ? photoIndex : photoIndex + 1;
+        const cell = layout.cells[cellIndex]!;
+        const rect = estimatePhotoVirtualRect({
+          headerHeight,
+          isMobile,
+          metrics,
+          photoIndex,
+          photos,
+        });
+
+        expect(rect).toEqual({
+          borderRadius: 0,
+          height: cell.height,
+          left: containerRect.left + cell.left,
+          top: containerRect.top + cell.top,
+          width: cell.width,
+        });
+        // 整数像素几何必须保持（iOS WebKit hairline 缝的根源，见 gallery-layout.ts）。
+        expect(Number.isInteger(cell.left)).toBe(true);
+        expect(Number.isInteger(cell.top)).toBe(true);
+        expect(Number.isInteger(cell.width)).toBe(true);
+        expect(Number.isInteger(cell.height)).toBe(true);
+      }
+    },
+  );
+
+  it("holds for fractional column widths too (all-integer outputs)", () => {
+    const photos = makePhotos(12);
+    const columnWidth = 190.5;
+    const columnCount = 2;
+    const containerRect = DOMRect.fromRect({
+      x: 0,
+      y: 0,
+      width: 385,
+      height: 800,
+    });
+    const metrics = {
+      columnCount,
+      columnGutter: 4,
+      columnWidth,
+      containerRect,
+      rowGutter: 4,
+    };
+    const layout = computeMasonryLayout({
+      items: photos,
+      columnCount,
+      columnWidth,
+      columnGutter: 4,
+      rowGutter: 4,
+      getItemHeight: (item) => computeMasonryItemHeight(columnWidth, item),
+    });
+
+    for (const [photoIndex] of photos.entries()) {
+      const cell = layout.cells[photoIndex]!;
+      const rect = estimatePhotoVirtualRect({
+        headerHeight: 0,
+        isMobile: true,
+        metrics,
+        photoIndex,
+        photos,
+      });
+      expect(rect).toEqual({
+        borderRadius: 0,
+        height: cell.height,
+        left: cell.left,
+        top: cell.top,
+        width: cell.width,
+      });
+      expect(Number.isInteger(rect!.left)).toBe(true);
+      expect(Number.isInteger(rect!.top)).toBe(true);
+      expect(Number.isInteger(rect!.width)).toBe(true);
+      expect(Number.isInteger(rect!.height)).toBe(true);
+    }
   });
 });
 

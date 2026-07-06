@@ -44,7 +44,6 @@ export interface BuilderOutputSettings {
   manifestPath: string;
   thumbnailsDir: string;
   originalsDir: string;
-  geocodingCachePath?: string;
 }
 
 export interface BuilderConfig {

@@ -34,10 +34,10 @@ if (missingS3Vars.length > 0) {
 }
 
 /**
- * 静态部署配置 - 仅支持 S3 存储
+ * 静态部署配置 - 默认使用 S3 存储
  *
  * 这个配置用于静态站点部署（如 Vercel、Netlify、GitHub Pages 等）
- * 照片必须存储在 S3 兼容的对象存储中
+ * 照片存储在 S3 兼容的对象存储中
  *
  * 使用方式：
  * 1. 配置 .env 文件中的 S3 相关环境变量（必填）
@@ -45,13 +45,29 @@ if (missingS3Vars.length > 0) {
  * 3. 运行 pnpm build:manifest 生成 manifest 和缩略图
  * 4. 再运行 pnpm build:web 或 pnpm build 打包静态站点
  * 5. 部署 apps/web/dist 目录到托管平台
+ *
+ * 零凭据本地运行（provider: "local"）：
+ * 不想配置 S3 时，可以把 storage 换成本地文件系统 provider——
+ *
+ *   storage: {
+ *     provider: "local",
+ *     // 照片源目录；仓库根的 photos/ 目录正是 dev 下
+ *     // apps/web/plugins/vite/photos-static.ts 服务 /photos/* 的目录
+ *     basePath: path.resolve(__dirname, "photos"),
+ *     // originalUrl 前缀，默认 "/photos"，与上述 Vite 插件的路径约定一致
+ *     // baseUrl: "/photos",
+ *     // excludeRegex: "^drafts/",
+ *   },
+ *
+ * 这样 pnpm build:manifest 不需要任何对象存储凭据，manifest 里的 originalUrl
+ * 形如 /photos/...，pnpm dev 时由 Vite 插件直接服务本地原图。
+ * 详见 packages/builder/README.md 的 "Local filesystem provider" 一节。
  */
 export default defineBuilderConfig(() => ({
   output: {
     manifestPath: path.resolve(__dirname, "generated/photos-manifest.json"),
     thumbnailsDir: path.resolve(__dirname, "apps/web/public/thumbnails"),
     originalsDir: path.resolve(__dirname, "apps/web/public/originals"),
-    geocodingCachePath,
   },
 
   // 使用 S3 存储
@@ -65,6 +81,12 @@ export default defineBuilderConfig(() => ({
     prefix: env.S3_PREFIX,
     customDomain: env.S3_CUSTOM_DOMAIN,
     excludeRegex: env.S3_EXCLUDE_REGEX,
+    // S3 客户端寻址风格（path-style vs virtual-hosted-style）。
+    // 默认按 endpoint 自动推导，与公开 URL 生成规则保持一致：
+    // AWS / 阿里云 OSS → virtual-hosted-style；其余自定义 endpoint
+    // （MinIO 等自建服务）→ path-style。仅当推导不符合实际服务时才需要
+    // 显式设置，详见 packages/builder/src/storage/providers/README.md。
+    // forcePathStyle: true,
     keepAlive: true,
     maxSockets: 64,
     connectionTimeoutMs: 5_000,

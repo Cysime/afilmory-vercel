@@ -1,4 +1,4 @@
-import { normalizeLocationInfoAdminAliases } from "@afilmory/schema";
+import { normalizeLocationInfoAdminAliases } from "@afilmory/schema/geo";
 
 import type { GeocodingProvider } from "../photo/geocoding.js";
 import {

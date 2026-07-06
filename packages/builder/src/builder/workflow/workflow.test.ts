@@ -104,9 +104,6 @@ function createBuilderServicesFixture(config: BuilderConfig): BuilderServices {
       read: vi.fn(async () => emptyTags),
     },
     logger,
-    output: {
-      getSettings: () => config.output,
-    },
     photoId: {
       getIdForKey: (key) => key.replace(/\.[^.]+$/, ""),
       hasCollision: () => false,
@@ -172,10 +169,12 @@ describe("builder workflow modules", () => {
       object.key.endsWith(".jpg"),
     );
     const livePhotoMap = new Map([[allObjects[0].key, allObjects[1]]]);
+    const listAllFiles = vi.fn(async () => allObjects);
+    const listImages = vi.fn(async () => imageObjects);
     const session = createSession({
       storageManager: createStorageManagerFixture({
-        listAllFiles: vi.fn(async () => allObjects),
-        listImages: vi.fn(async () => imageObjects),
+        listAllFiles,
+        listImages,
         detectLivePhotos: vi.fn(async () => livePhotoMap),
       }),
     });
@@ -187,6 +186,10 @@ describe("builder workflow modules", () => {
       imageObjects,
       livePhotoMap,
     });
+    // imageObjects 由 allObjects 本地派生：整次扫描只做一次存储列举，
+    // 不再触发 listImages 的第二次 ListObjectsV2 分页。
+    expect(listAllFiles).toHaveBeenCalledTimes(1);
+    expect(listImages).not.toHaveBeenCalled();
     expect(session.emitPluginEvent).toHaveBeenCalledWith(
       session.runState,
       "afterAllFilesListed",
@@ -203,6 +206,33 @@ describe("builder workflow modules", () => {
         livePhotoMap,
       },
     );
+  });
+
+  it("derives image objects locally via the shared supported-image predicate", async () => {
+    const allObjects: StorageObject[] = [
+      { key: "photos/a.JPG" }, // 大小写不敏感
+      { key: "photos/b.heic" },
+      { key: "photos/clip.mov" },
+      { key: "photos/notes.txt" },
+      { key: "photos/no-extension" },
+    ];
+    const listAllFiles = vi.fn(async () => allObjects);
+    const listImages = vi.fn(async () => []);
+    const session = createSession({
+      storageManager: createStorageManagerFixture({
+        listAllFiles,
+        listImages,
+      }),
+    });
+
+    const result = await new SourceScanner().scan(session);
+
+    expect(result.imageObjects.map((object) => object.key)).toEqual([
+      "photos/a.JPG",
+      "photos/b.heic",
+    ]);
+    expect(listAllFiles).toHaveBeenCalledTimes(1);
+    expect(listImages).not.toHaveBeenCalled();
   });
 
   it("plans force-mode tasks without consulting thumbnail state", async () => {
@@ -284,6 +314,7 @@ describe("builder workflow modules", () => {
 
     expect(result.deletedCount).toBe(1);
     expect(manifestManagerMocks.saveManifest).toHaveBeenCalledWith(
+      session.config.output,
       manifest,
       [{ make: "Sony", model: "A7C", displayName: "Sony A7C" }],
       [{ make: "Sony", model: "FE 35mm", displayName: "Sony FE 35mm" }],

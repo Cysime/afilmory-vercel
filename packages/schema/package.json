@@ -2,8 +2,10 @@
   "name": "@afilmory/schema",
   "type": "module",
   "private": true,
+  "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./geo": "./src/geo.ts",
     "./types": "./src/types.ts"
   },
   "scripts": {

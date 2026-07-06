@@ -93,14 +93,37 @@ jobs:
         run: |
           mkdir -p generated
           cp apps/web/e2e/fixtures/photos-manifest.json generated/photos-manifest.json
+      # Standard actions/cache + Playwright recipe: cache the browser binaries
+      # keyed on the @playwright/test version; on a cache hit only the OS deps
+      # still need installing (they live outside ~/.cache/ms-playwright).
+      - name: Get Playwright version
+        id: playwright-version
+        run: echo "version=$(node -p "require('./package.json').devDependencies['@playwright/test']")" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
       - name: Install Playwright browser
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chromium
-      - name: Run e2e tests
+      - name: Install Playwright OS dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+      - name: Run e2e tests (dev server)
         run: pnpm test:e2e
+      # Separate invocation on purpose: the prod-smoke project swaps the
+      # webServer for a full vite build + preview (see playwright.config.ts),
+      # and the dev-server projects must not pay that build cost.
+      - name: Run e2e tests (prod smoke)
+        run: pnpm test:e2e:prod
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: playwright-report/
+          path: |
+            playwright-report/
+            playwright-report-prod/
           retention-days: 7

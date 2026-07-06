@@ -59,13 +59,17 @@ describe("precheck", () => {
   });
 
   it("fails when S3 credentials and manifest are both missing", async () => {
+    // 错误信息需列出可选的 S3 变量，作为部署平台上的配置指引
+    // （原先由 build-static.sh 输出，收敛进 precheck 后由这里负责）。
     await expect(
       precheck({
         workdir: tmpDir,
         env: {},
         runBuilder,
       }),
-    ).rejects.toThrow("Missing required S3 environment variables");
+    ).rejects.toThrow(
+      /Missing required S3 environment variables[\s\S]*Optional: S3_REGION/,
+    );
   });
 
   it("fails when S3 credentials are missing and the manifest is legacy", async () => {
@@ -125,6 +129,20 @@ describe("precheck", () => {
       precheck({
         workdir: tmpDir,
         env: { VERCEL_ENV: "production" },
+        runBuilder,
+      }),
+    ).rejects.toThrow("fresh build is required");
+
+    expect(runBuilder).not.toHaveBeenCalled();
+  });
+
+  it("refuses to reuse a stale manifest when REQUIRE_FRESH_BUILD=true and S3 credentials are missing", async () => {
+    await writeManifest();
+
+    await expect(
+      precheck({
+        workdir: tmpDir,
+        env: { REQUIRE_FRESH_BUILD: "true" },
         runBuilder,
       }),
     ).rejects.toThrow("fresh build is required");

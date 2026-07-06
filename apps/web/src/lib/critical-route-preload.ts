@@ -10,20 +10,9 @@ type CriticalRoutePreloadModules = Record<
   (() => Promise<unknown>) | undefined
 >;
 
-export type CriticalRoutePreload = {
-  cleanup: () => void;
-  ready: Promise<void>;
-};
-
-async function waitForCriticalRouteModules(
-  preloadPromises: Promise<unknown>[],
-): Promise<void> {
-  await Promise.all(preloadPromises);
-}
-
 export function installCriticalRoutePreloads(
   preloadModules: CriticalRoutePreloadModules,
-): CriticalRoutePreload {
+): Promise<void> {
   const preloadPromises = CRITICAL_GALLERY_ROUTE_MODULE_KEYS.map(
     (moduleKey) => {
       const preloadModule = preloadModules[moduleKey];
@@ -35,8 +24,5 @@ export function installCriticalRoutePreloads(
     },
   );
 
-  return {
-    cleanup() {},
-    ready: waitForCriticalRouteModules(preloadPromises),
-  };
+  return Promise.all(preloadPromises).then(() => {});
 }

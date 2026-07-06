@@ -50,7 +50,7 @@ Huge thanks to [Innei](https://innei.in) and the Afilmory team for creating this
 ### Core
 
 - 🖼️ **High-performance WebGL renderer** - custom React 19 WebGL viewer with smooth zooming, panning, tiled loading, and fallback error callbacks.
-- 📱 **Responsive masonry layout** - built on Masonic with virtualization for large galleries.
+- 📱 **Responsive masonry layout** - custom pure-computed virtual masonry with integer-pixel geometry and no scroll-time DOM measurement.
 - 🎨 **Modern UI design** - glassmorphic interface built with Tailwind CSS 4, Radix UI primitives, and Motion.
 - ⚡ **Incremental builds** - existing manifest data, thumbnails, EXIF, and tone analysis are reused when source photos have not changed.
 - 🌐 **Internationalization** - bundled language resources from `locales/app/*.json`.
@@ -111,7 +111,7 @@ Click the button below and follow the prompts to configure S3-related environmen
 2. Sign in to Vercel and fork/import the repository.
 3. Configure the required S3 variables.
 4. Click **Deploy**.
-5. The Vercel build runs `scripts/build-static.sh`, which runs the full build when S3 credentials are available.
+5. The Vercel build runs `scripts/build-static.sh`, which runs `pnpm build`; precheck refreshes the manifest from S3 when credentials are available.
 
 ---
 
@@ -192,6 +192,18 @@ This cache is not a photo storage backend. Source photos still come from S3.
 | `MAP_STYLE`      | Map style      | `builtin`  | `builtin` or custom URL |
 | `MAP_PROJECTION` | Map projection | `mercator` | `globe` or `mercator`   |
 
+### Optional build-time geocoding
+
+Reverse geocoding is **enabled by default**: any build that processes
+GPS-tagged photos calls the public Nominatim API to resolve place names into
+the manifest. Set `GEOCODING_ENABLED=false` to opt out of build-time external
+network calls. If you keep it on, set `GEOCODING_USER_AGENT` to a real
+identifier per the
+[Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/)
+(max 1 request/second). `GEOCODING_PROVIDER=mapbox` plus `MAPBOX_TOKEN` is the
+alternative to Nominatim. See `.env.template` for the full `GEOCODING_*` knob
+list.
+
 ### Local `.env`
 
 ```bash
@@ -249,8 +261,13 @@ Original photos are not bundled into `apps/web/dist`; the manifest points to S3/
 # Development server. Runs precheck first.
 pnpm dev
 
-# Full static build: precheck, package builds, then Vite web build.
+# Full static build: precheck, then Vite web build. Workspace packages are
+# consumed from TypeScript source, so deployments never build package dist/.
 pnpm build
+
+# Publish-only: builds dist/ for @afilmory/builder and @afilmory/webgl-viewer
+# before `npm publish`. Not part of the deploy or CI build chain.
+pnpm build:packages
 
 # Refresh manifest and thumbnails only.
 pnpm build:manifest
@@ -260,6 +277,9 @@ pnpm build:web
 
 # Preview apps/web/dist locally.
 pnpm preview
+
+# Regenerate favicon assets into apps/web/public.
+pnpm generate:favicon
 ```
 
 Open http://localhost:4173 after `pnpm preview`.
@@ -292,9 +312,9 @@ Vercel uses:
 - **Build command:** `sh scripts/build-static.sh`
 - **Output directory:** `apps/web/dist`
 
-When `REPO_URL` and `REPO_TOKEN` are configured, `scripts/build-static.sh` restores cached manifest, geocoding cache, and thumbnails before deciding whether it needs S3. After a successful build it pushes the refreshed artifacts back to the cache repository.
+When `REPO_URL` and `REPO_TOKEN` are configured, `scripts/build-static.sh` restores cached manifest, geocoding cache, and thumbnails before running the build. After a successful build it pushes the refreshed artifacts back to the cache repository.
 
-`scripts/build-static.sh` runs `pnpm build` when required S3 credentials are present. If S3 credentials are missing but a reusable `generated/photos-manifest.json` exists, it runs `pnpm build:web` so preview deployments can still succeed.
+`scripts/build-static.sh` always runs `pnpm build`; all freshness and fallback decisions live in `apps/web/scripts/precheck.ts`. When S3 credentials are missing but a reusable `generated/photos-manifest.json` exists, precheck reuses it so preview deployments still succeed. Production deploys (`VERCEL_ENV=production`, or `REQUIRE_FRESH_BUILD=true` on other platforms) fail instead of publishing a stale manifest.
 
 ### Other static hosts
 
@@ -340,7 +360,7 @@ Use `pnpm build` as the build command.
 - Sharp for image processing and generated OG images
 - exiftool-vendored for EXIF extraction
 - AWS SDK v3 for S3 access
-- Worker threads or cluster workers for concurrent processing
+- node:cluster worker processes or an in-process concurrency pool
 - thumbhash for compact image placeholders
 
 ---
@@ -352,13 +372,18 @@ afilmory/
 ├── apps/
 │   └── web/                   # Frontend SPA
 ├── packages/
+│   ├── build-assets/          # Build-time OG image, feed.xml, and sitemap.xml generation
 │   ├── builder/               # Photo processing and manifest builder
-│   ├── data/                  # Shared manifest types and parsers
+│   ├── media/                 # Zero-dependency thumbhash byte/hex codec leaf
+│   ├── schema/                # Manifest contract: types + strict/lenient parsers
 │   ├── ui/                    # Shared UI primitives and hooks
 │   └── webgl-viewer/          # WebGL image viewer package
 ├── docs/
 │   ├── assets/                # README images
-│   └── rss-exif-extension.md  # RSS EXIF extension notes
+│   ├── CONTRIBUTING.md        # Contributor setup and workflow
+│   ├── rss-exif-extension.md  # RSS EXIF extension notes
+│   ├── security-notes.md      # Security-relevant configuration notes
+│   └── testing.md             # Vitest and Playwright test/CI guide
 ├── generated/                 # Generated photos-manifest.json
 ├── locales/app/               # i18n JSON resources
 ├── scripts/                   # Build-time helper scripts

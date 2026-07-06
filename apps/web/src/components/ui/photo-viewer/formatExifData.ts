@@ -1,5 +1,7 @@
 import type { FujiRecipe, PickedExif } from "@afilmory/schema";
 
+import { getEssentialExif } from "~/lib/essential-exif";
+
 export type ExifTranslationAdapter = {
   language: string;
   exists: (key: string) => boolean;
@@ -299,29 +301,9 @@ export const formatExifData = (
 
   const tzSource = exif.tzSource || null;
 
-  // 等效焦距 (35mm)
-  const focalLength35mm = exif.FocalLengthIn35mmFormat
-    ? Number.parseInt(exif.FocalLengthIn35mmFormat)
-    : null;
-
-  // 实际焦距
-  const focalLength = exif.FocalLength
-    ? Number.parseInt(exif.FocalLength)
-    : null;
-
-  // ISO
-  const iso = exif.ISO;
-
-  // 快门速度
-  const exposureTime = exif.ExposureTime;
-  const shutterSpeed = exposureTime
-    ? `${exposureTime}s`
-    : exif.ShutterSpeedValue
-      ? `${exif.ShutterSpeedValue}s`
-      : null;
-
-  // 光圈
-  const aperture = exif.FNumber ? `f/${exif.FNumber}` : null;
+  // 核心拍摄参数（焦距 / ISO / 快门 / 光圈）与画廊 hover 覆盖层共用同一份逻辑
+  const { focalLength35mm, focalLength, iso, shutterSpeed, aperture } =
+    getEssentialExif(exif);
 
   // 最大光圈
   const maxAperture = exif.MaxApertureValue;

@@ -1,7 +1,15 @@
 import type sharp from "sharp";
 
 import { getPhotoProcessingLoggers } from "../photo/logger-adapter.js";
-import type { HistogramData, ToneAnalysis, ToneType } from "../types/photo.js";
+import type { ToneAnalysis, ToneType } from "../types/photo.js";
+
+// 直方图只是影调分析的中间产物，从不写入 manifest，因此类型归属构建器内部而非 schema
+export interface HistogramData {
+  red: number[];
+  green: number[];
+  blue: number[];
+  luminance: number[];
+}
 
 /**
  * 计算图片的直方图

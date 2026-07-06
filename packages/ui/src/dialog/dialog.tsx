@@ -2,6 +2,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { AnimatePresence, m } from "motion/react";
 import * as React from "react";
 
+import { useControlledState } from "../hooks/useControlledState";
 import { useRootPortal } from "../portal/provider";
 import { clsxm } from "../utils/cn";
 import { Spring } from "../utils/spring";
@@ -12,24 +13,15 @@ const Dialog = ({
   children,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) => {
-  const [open, setOpen] = React.useState(props.open || false);
-
-  React.useEffect(() => {
-    if (props.open !== undefined) {
-      setOpen(props.open);
-    }
-  }, [props.open]);
+  const [open, setOpen] = useControlledState({
+    value: props.open,
+    defaultValue: props.defaultOpen ?? false,
+    onChange: props.onOpenChange,
+  });
 
   return (
     <DialogContext value={React.useMemo(() => ({ open }), [open])}>
-      <DialogPrimitive.Root
-        {...props}
-        open={open}
-        onOpenChange={(openState) => {
-          setOpen(openState);
-          props.onOpenChange?.(openState);
-        }}
-      >
+      <DialogPrimitive.Root {...props} open={open} onOpenChange={setOpen}>
         {children}
       </DialogPrimitive.Root>
     </DialogContext>

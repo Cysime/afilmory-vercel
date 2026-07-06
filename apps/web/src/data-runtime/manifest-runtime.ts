@@ -6,7 +6,10 @@ import {
   setRuntimeManifest,
 } from "~/runtime/browser-runtime";
 
-const MANIFEST_REQUEST_TIMEOUT_MS = 15_000;
+import {
+  buildManifestRequestInit,
+  MANIFEST_REQUEST_TIMEOUT_MS,
+} from "./manifest-fetch-options";
 
 async function fetchManifest(url: string): Promise<unknown> {
   const controller =
@@ -17,14 +20,10 @@ async function fetchManifest(url: string): Promise<unknown> {
   );
 
   try {
-    const response = await fetch(url, {
-      credentials: "same-origin",
-      cache: "force-cache",
-      signal: controller?.signal,
-      headers: {
-        accept: "application/json",
-      },
-    });
+    const response = await fetch(
+      url,
+      buildManifestRequestInit(controller?.signal),
+    );
 
     if (!response.ok) {
       throw new Error(

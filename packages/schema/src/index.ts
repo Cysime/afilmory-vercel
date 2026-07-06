@@ -1,26 +1,3 @@
-export type { GeoAdminPath, GeoFilterState, GeoRegionLevel } from "./geo.ts";
-export {
-  buildGeoRegionId,
-  createLocationInfo,
-  GEOGRAPHIC_REGION_LEVELS,
-  getCityLevelAdmin,
-  getGeoLevelValue,
-  getLanguageCandidates,
-  getPhotoAdmin,
-  getPhotoAdminForLevel,
-  getPhotoAdminKey,
-  getPhotoRegionIds,
-  getRegionAdminPath,
-  normalizeAdminInfo,
-  normalizeCountryCode,
-  normalizeDisplayValue,
-  normalizeGeoKey,
-  normalizeGeoValue,
-  normalizeLocalizedAdminValue,
-  normalizeLocationInfoAdminAliases,
-  photoMatchesGeoFilters,
-  selectLocalizedAlias,
-} from "./geo.ts";
 export type {
   LenientManifestParseResult,
   ManifestValidationResult,

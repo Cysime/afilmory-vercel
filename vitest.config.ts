@@ -55,6 +55,14 @@ export default defineConfig({
         },
       },
       {
+        test: {
+          name: "build-assets",
+          root: "./packages/build-assets",
+          include: ["src/**/*.test.ts"],
+          environment: "node",
+        },
+      },
+      {
         esbuild: {
           jsx: "automatic",
         },

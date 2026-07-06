@@ -4,14 +4,23 @@ import type {
   StorageProvider,
   StorageUploadOptions,
 } from "./interfaces.js";
+import { normalizeStorageConfig } from "./interfaces.js";
+import { LocalFileSystemProvider } from "./providers/local-provider.js";
 import { S3StorageProvider } from "./providers/s3-provider.js";
 
 export class StorageManager {
   private provider: StorageProvider;
+
+  /**
+   * 排除逻辑分两层，各司其职：
+   * - provider 层只应用自身配置里的静态 excludeRegex（S3 / local 对等），在列举时生效；
+   * - manager 层的 excludeFilters 是跨 provider 的动态过滤（如 thumbnail-storage
+   *   插件排除远端缩略图前缀），provider 不得重复实现这类过滤。
+   */
   private readonly excludeFilters: Array<(key: string) => boolean> = [];
 
   constructor(config: StorageConfig) {
-    this.provider = this.createProvider(config);
+    this.provider = this.createProvider(normalizeStorageConfig(config));
   }
 
   private applyExcludes<T extends StorageObject>(objects: T[]): T[] {
@@ -116,15 +125,23 @@ export class StorageManager {
     return this.provider;
   }
 
-  /**
-   * 切换存储提供商
-   * @param config 新的存储配置
-   */
-  switchProvider(config: StorageConfig): void {
-    this.provider = this.createProvider(config);
-  }
-
   private createProvider(config: StorageConfig): StorageProvider {
-    return new S3StorageProvider(config);
+    switch (config.provider) {
+      case "s3": {
+        return new S3StorageProvider(config);
+      }
+      case "local": {
+        return new LocalFileSystemProvider(config);
+      }
+      default: {
+        // 缺失的判别字段已由 normalizeStorageConfig 兜底成 "s3"，能走到这里说明
+        // 传入了未知 provider——明确报错，而不是静默退回 S3。
+        throw new Error(
+          `Unknown storage provider: ${String(
+            (config as { provider?: string }).provider,
+          )}`,
+        );
+      }
+    }
   }
 }

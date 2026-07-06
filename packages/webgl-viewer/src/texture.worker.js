@@ -1,17 +1,12 @@
 /// <reference lib="webworker" />
 
+// TILE_SIZE, SIMPLE_LOD_LEVELS and clampDimensionsToFit are injected by
+// worker-bridge.ts as a generated prelude (single source of truth:
+// tile-cache.ts / worker-bridge.ts). Do not declare them here.
+/* global TILE_SIZE, SIMPLE_LOD_LEVELS, clampDimensionsToFit */
+
 let originalImage = null;
 
-const TILE_SIZE = 512; // Must be same as in WebGLImageViewerEngine.ts
-
-// 简化的 LOD 级别
-const WORKER_SIMPLE_LOD_LEVELS = [
-  { scale: 0.25 }, // 极低质量
-  { scale: 0.5 }, // 低质量
-  { scale: 1 }, // 正常质量
-  { scale: 2 }, // 高质量
-  { scale: 4 }, // 超高质量
-];
 /**
  *
  * @param {MessageEvent} e
@@ -22,7 +17,14 @@ self.onmessage = async (e) => {
 
   switch (type) {
     case "load-image": {
-      const { url, blob: sourceBlob } = payload;
+      // 上下文恢复会通过同一个存活 worker 重新 loadImage：旧的全尺寸 bitmap
+      // （48MP 约 190MB）若等 GC 释放，恰好撞上引发上下文丢失的内存压力窗口。
+      // 先置 null 再解码，解码期间到达的 create-tile 会走 !originalImage 守卫安全失败。
+      if (originalImage) {
+        originalImage.close();
+        originalImage = null;
+      }
+      const { url, blob: sourceBlob, maxTextureSize } = payload;
       try {
         const blob =
           sourceBlob ??
@@ -36,14 +38,14 @@ self.onmessage = async (e) => {
 
         // Create initial LOD texture
         const lodLevel = 1; // Initial LOD level
-        const lodConfig = WORKER_SIMPLE_LOD_LEVELS[lodLevel];
-        const finalWidth = Math.max(
-          1,
-          Math.round(originalImage.width * lodConfig.scale),
-        );
-        const finalHeight = Math.max(
-          1,
-          Math.round(originalImage.height * lodConfig.scale),
+        const lodConfig = SIMPLE_LOD_LEVELS[lodLevel];
+        // 底图按 0.5x 生成：超大原图（如 10000px 宽 → 5000px 底图）会超过老
+        // iOS/Android GPU 的 MAX_TEXTURE_SIZE（常见 4096），texImage2D 静默失败、
+        // 回退四边形渲染成黑块。按当前上下文的能力等比钳制到能容纳的最大尺寸。
+        const { width: finalWidth, height: finalHeight } = clampDimensionsToFit(
+          Math.max(1, Math.round(originalImage.width * lodConfig.scale)),
+          Math.max(1, Math.round(originalImage.height * lodConfig.scale)),
+          maxTextureSize,
         );
 
         const initialLODBitmap = await createImageBitmap(originalImage, {
@@ -68,11 +70,6 @@ self.onmessage = async (e) => {
         console.error("[Worker] Error loading image:", error);
         self.postMessage({ type: "load-error", payload: { error } });
       }
-      break;
-    }
-    case "init": {
-      originalImage = payload.imageBitmap;
-      self.postMessage({ type: "init-done" });
       break;
     }
     case "create-tile": {

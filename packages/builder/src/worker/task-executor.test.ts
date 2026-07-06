@@ -3,17 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import { createDefaultBuilderConfig } from "../config/defaults.js";
 import type { BuilderServices } from "../core/contracts/services.js";
 import { logger } from "../logger/index.js";
+import { toProcessorOptions } from "../photo/processor.js";
 import type { PluginRunState } from "../plugins/manager.js";
 import { StorageManager } from "../storage/index.js";
 import type { StorageObject } from "../storage/interfaces.js";
 import type { BuilderOptions } from "../types/options.js";
 import type { PhotoManifestItem, ProcessPhotoResult } from "../types/photo.js";
 import type { WorkerProcessPhoto, WorkerTaskRuntime } from "./task-executor.js";
-import {
-  createWorkerProcessorOptions,
-  executeWorkerBatchTask,
-  executeWorkerTask,
-} from "./task-executor.js";
+import { executeWorkerBatchTask, executeWorkerTask } from "./task-executor.js";
 
 function createPhoto(id: string): PhotoManifestItem {
   return {
@@ -63,9 +60,6 @@ function createBuilderServicesFixture(): BuilderServices {
       read: vi.fn(async () => ({ SourceFile: "fixture.jpg" })),
     },
     logger,
-    output: {
-      getSettings: () => config.output,
-    },
     photoId: {
       getIdForKey: (key) => key.replace(/\.[^.]+$/, ""),
       hasCollision: () => false,
@@ -86,12 +80,11 @@ function createRuntime(
     isForceManifest: true,
     isForceThumbnails: true,
   });
-  const config = createDefaultBuilderConfig();
   const imageObjects: StorageObject[] = [
     { key: "a.jpg", size: 1 },
     { key: "b.jpg", size: 2 },
   ];
-  const pluginRunState: PluginRunState = new Map();
+  const runState: PluginRunState = new Map();
 
   return {
     workerId: 7,
@@ -99,9 +92,8 @@ function createRuntime(
     existingManifestMap: new Map([["b.jpg", createPhoto("b")]]),
     livePhotoMap: new Map([["a.jpg", { key: "a.mov" }]]),
     builderOptions,
-    outputSettings: config.output,
     services: createBuilderServicesFixture(),
-    pluginRunState,
+    runState,
     emitPluginEvent: vi.fn(async () => {}),
     ...overrides,
   };
@@ -111,7 +103,7 @@ describe("worker task executor", () => {
   it("narrows builder options to processor force flags", () => {
     const progressListener = { onComplete: vi.fn() };
     expect(
-      createWorkerProcessorOptions(
+      toProcessorOptions(
         createBuilderOptions({
           concurrencyLimit: 4,
           isForceMode: true,
@@ -142,26 +134,18 @@ describe("worker task executor", () => {
     expect(response).toEqual({
       type: "result",
       taskId: "task-1",
+      taskIndex: 1,
       result,
     });
+    // 任务可变部分与运行期依赖分成两个参数；runtime 原样透传（同一引用）。
     expect(processPhoto).toHaveBeenCalledWith(
-      runtime.imageObjects[1],
-      1,
-      runtime.workerId,
-      runtime.imageObjects.length,
-      runtime.existingManifestMap,
-      runtime.livePhotoMap,
       {
-        isForceMode: false,
-        isForceManifest: true,
-        isForceThumbnails: true,
+        obj: runtime.imageObjects[1],
+        index: 1,
+        workerId: runtime.workerId,
+        totalImages: runtime.imageObjects.length,
       },
-      runtime.services,
-      runtime.emitPluginEvent,
-      {
-        runState: runtime.pluginRunState,
-        builderOptions: runtime.builderOptions,
-      },
+      runtime,
     );
   });
 
@@ -181,6 +165,7 @@ describe("worker task executor", () => {
     ).resolves.toEqual({
       type: "error",
       taskId: "missing",
+      taskIndex: 42,
       error: "Invalid taskIndex: 42",
     });
     expect(processPhoto).not.toHaveBeenCalled();
@@ -188,8 +173,8 @@ describe("worker task executor", () => {
 
   it("executes batch tasks through the same single-task executor path", async () => {
     const runtime = createRuntime();
-    const processPhoto = vi.fn<WorkerProcessPhoto>(async (_object, index) => ({
-      item: createPhoto(`photo-${index}`),
+    const processPhoto = vi.fn<WorkerProcessPhoto>(async (task) => ({
+      item: createPhoto(`photo-${task.index}`),
       type: "processed",
     }));
 
@@ -216,6 +201,7 @@ describe("worker task executor", () => {
     expect(response.results[1]).toEqual({
       type: "error",
       taskId: "missing",
+      taskIndex: 99,
       error: "Invalid taskIndex: 99",
     });
     expect(processPhoto).toHaveBeenCalledTimes(2);

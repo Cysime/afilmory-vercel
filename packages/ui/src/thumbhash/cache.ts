@@ -1,4 +1,4 @@
-import { decompressUint8Array } from "@afilmory/media";
+import { hexToUint8Array } from "@afilmory/media";
 import { thumbHashToDataURL } from "thumbhash";
 
 const MAX_STRING_CACHE_ENTRIES = 512;
@@ -40,7 +40,7 @@ export const getThumbhashDataUrl = (thumbHash: ArrayLike<number> | string) => {
 
     let dataUrl: string;
     try {
-      dataUrl = thumbHashToDataURL(decompressUint8Array(thumbHash));
+      dataUrl = thumbHashToDataURL(hexToUint8Array(thumbHash));
     } catch {
       dataUrl = FALLBACK_DATA_URL;
     }

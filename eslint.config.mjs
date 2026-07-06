@@ -35,10 +35,6 @@ const restrictedImports = {
       message: "Use a local equality helper with Jotai selectors.",
     },
     {
-      name: "@afilmory/data",
-      message: "Use @afilmory/schema or @afilmory/media.",
-    },
-    {
       name: "~/data-runtime/photo-loader",
       message:
         "Use AppRuntime PhotoRepository instead of a module singleton.",
@@ -48,16 +44,10 @@ const restrictedImports = {
       importNames: ["jotaiStore", "createAtomAccessor"],
       message: "Use the Provider-scoped Jotai store from AppRuntime.",
     },
-    {
-      name: "../output-paths.js",
-      importNames: ["setBuilderOutputSettings", "getBuilderOutputSettings"],
-      message:
-        "Use runWithBuilderOutputSettings/getScopedBuilderOutputSettings.",
-    },
   ],
   patterns: [
     {
-      group: ["zustand/*", "@afilmory/data/*"],
+      group: ["zustand/*"],
       message: "UI state uses Jotai in this app.",
     },
   ],

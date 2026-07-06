@@ -154,12 +154,9 @@ const DebugInfoComponent = ({
     }
   };
 
-  // 获取内存压力颜色
-  const getMemoryPressureColor = (pressure: number) => {
-    if (pressure < 50) return "#4ade80";
-    if (pressure < 80) return "#fbbf24";
-    return "#f87171";
-  };
+  // 字节数 → 便于阅读的 MB 文本
+  const formatBytesAsMB = (bytes: number) =>
+    `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 
   // 新增：瓦片系统调试信息类型辅助
   function renderTileSystem(tileSystem?: any) {
@@ -372,33 +369,27 @@ const DebugInfoComponent = ({
             </div>
           </CollapsibleSection>
 
-          {/* 内存信息 */}
+          {/* 内存信息（按真实纹理尺寸统计） */}
           <CollapsibleSection title="Memory">
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span>Textures:</span>
-              <span>{debugInfo.memory.textures.toFixed(1)} MB</span>
+              <span>Tile Textures:</span>
+              <span>{formatBytesAsMB(debugInfo.memory.tileTextureBytes)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span>Estimated:</span>
-              <span>{debugInfo.memory.estimated.toFixed(1)} MB</span>
+              <span>Base Texture:</span>
+              <span>{formatBytesAsMB(debugInfo.memory.baseTextureBytes)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span>Budget:</span>
-              <span>{debugInfo.memory.budget.toFixed(1)} MB</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span>Pressure:</span>
-              <StatusIndicator
-                color={getMemoryPressureColor(debugInfo.memory.pressure)}
-                label={`${debugInfo.memory.pressure.toFixed(1)}%`}
-              />
+              <span>Total:</span>
+              <span>{formatBytesAsMB(debugInfo.memory.totalBytes)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <span>Active LODs:</span>
-              <span>
-                {debugInfo.memory.activeLODs} /{" "}
-                {debugInfo.memory.maxConcurrentLODs}
-              </span>
+              <span>{debugInfo.memory.activeLODs}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>Frames:</span>
+              <span>{debugInfo.renderCount}</span>
             </div>
           </CollapsibleSection>
           {/* 新增：瓦片系统调试信息展示 */}

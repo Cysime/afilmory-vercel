@@ -3,11 +3,12 @@ import path from "node:path";
 
 import sharp from "sharp";
 
-import { getScopedBuilderOutputSettings } from "../output-paths.js";
+import { getPhotoExecutionContext } from "../photo/execution-context.js";
 import { getPhotoProcessingLoggers } from "../photo/logger-adapter.js";
 import type { ThumbnailResult } from "../types/photo.js";
-import { generateBlurhash } from "./blurhash.js";
+import { writeFileAtomic } from "../utils/atomic-write.js";
 import { SOURCE_SHARP_OPTIONS } from "./sharp-options.js";
+import { generateThumbHash } from "./thumbhash.js";
 
 // 常量定义
 // q80 + mozjpeg：600px 网格缩略图 q90 时普遍 200-450KB，移动端解码慢、浏览器内存
@@ -54,9 +55,9 @@ export async function writeThumbnailEncodingMarker(
   );
 }
 
-// 获取缩略图路径信息
+// 获取缩略图路径信息（照片作用域内调用；构建作用域的读者走显式参数，见 thumbnailExists）
 function getThumbnailPaths(photoId: string) {
-  const { thumbnailsDir } = getScopedBuilderOutputSettings();
+  const { thumbnailsDir } = getPhotoExecutionContext().output;
   const filename = `${photoId}.jpg`;
   const thumbnailPath = path.join(thumbnailsDir, filename);
   const thumbnailUrl = getThumbnailPublicUrl(photoId);
@@ -92,22 +93,27 @@ function createSuccessResult(
 
 // 确保缩略图目录存在
 async function ensureThumbnailDir(): Promise<void> {
-  const { thumbnailsDir } = getScopedBuilderOutputSettings();
+  const { thumbnailsDir } = getPhotoExecutionContext().output;
   await fs.mkdir(thumbnailsDir, { recursive: true });
 }
 
-// 检查缩略图是否存在
-export async function thumbnailExists(photoId: string): Promise<boolean> {
+// 检查缩略图是否存在。
+// 目录显式传参：这是唯一同时被两种作用域调用的函数——DiffPlanner 在主进程
+// 规划阶段（无照片上下文，取 session.config.output）与照片管道内（取
+// 上下文 output）都要用它。
+export async function thumbnailExists(
+  photoId: string,
+  thumbnailsDir: string,
+): Promise<boolean> {
   try {
-    const { thumbnailPath } = getThumbnailPaths(photoId);
-    await fs.access(thumbnailPath);
+    await fs.access(path.join(thumbnailsDir, `${photoId}.jpg`));
     return true;
   } catch {
     return false;
   }
 }
 
-// 读取现有缩略图并生成 blurhash
+// 读取现有缩略图并生成 thumbhash
 async function processExistingThumbnail(
   photoId: string,
 ): Promise<ThumbnailResult | null> {
@@ -118,7 +124,7 @@ async function processExistingThumbnail(
 
   try {
     const existingBuffer = await fs.readFile(thumbnailPath);
-    const thumbHash = await generateBlurhash(existingBuffer);
+    const thumbHash = await generateThumbHash(existingBuffer);
 
     return createSuccessResult(thumbnailUrl, existingBuffer, thumbHash);
   } catch (error) {
@@ -139,7 +145,7 @@ async function generateNewThumbnail(
   const startTime = Date.now();
 
   try {
-    // 创建 Sharp 实例，复用于缩略图和 blurhash 生成
+    // 创建 Sharp 实例，复用于缩略图和 thumbhash 生成
     const sharpInstance = sharp(imageBuffer, SOURCE_SHARP_OPTIONS).rotate(); // 自动根据 EXIF 旋转
 
     // 生成缩略图
@@ -151,16 +157,17 @@ async function generateNewThumbnail(
       .jpeg({ quality: THUMBNAIL_QUALITY, mozjpeg: true })
       .toBuffer();
 
-    // 保存到文件
-    await fs.writeFile(thumbnailPath, thumbnailBuffer);
+    // 原子落盘：普通 writeFile 中途被杀会留下截断的 .jpg，增量路径此后会
+    // 永远复用这张坏图（thumbnailExists 只看存在性，不看完整性）。
+    await writeFileAtomic(thumbnailPath, thumbnailBuffer);
 
     // 记录生成信息
     const duration = Date.now() - startTime;
     const sizeKB = Math.round(thumbnailBuffer.length / 1024);
     log.success(`生成完成：${photoId} (${sizeKB}KB, ${duration}ms)`);
 
-    // 基于生成的缩略图生成 blurhash
-    const thumbHash = await generateBlurhash(thumbnailBuffer);
+    // 基于生成的缩略图生成 thumbhash
+    const thumbHash = await generateThumbHash(thumbnailBuffer);
 
     return createSuccessResult(thumbnailUrl, thumbnailBuffer, thumbHash);
   } catch (error) {
@@ -169,8 +176,8 @@ async function generateNewThumbnail(
   }
 }
 
-// 生成缩略图和 blurhash（复用 Sharp 实例）
-export async function generateThumbnailAndBlurhash(
+// 生成缩略图和 thumbhash（复用 Sharp 实例）
+export async function generateThumbnailAndThumbHash(
   imageBuffer: Buffer,
   photoId: string,
   forceRegenerate = false,
@@ -181,7 +188,13 @@ export async function generateThumbnailAndBlurhash(
     await ensureThumbnailDir();
 
     // 如果不是强制模式且缩略图已存在，尝试复用现有文件
-    if (!forceRegenerate && (await thumbnailExists(photoId))) {
+    if (
+      !forceRegenerate &&
+      (await thumbnailExists(
+        photoId,
+        getPhotoExecutionContext().output.thumbnailsDir,
+      ))
+    ) {
       const existingResult = await processExistingThumbnail(photoId);
 
       if (existingResult) {

@@ -10,9 +10,13 @@ export function getLodQuality(lodLevel: number): TextureQuality {
   return "low";
 }
 
+/**
+ * Holds the single base (fallback) texture and the LOD level it was produced
+ * at. There is intentionally only ever one: setting a new base texture
+ * disposes the previous one first.
+ */
 export class TextureLodManager {
   private baseTexture: WebGLTexture | null = null;
-  private readonly lodTextures = new Map<number, WebGLTexture>();
   private activeLOD = 1;
 
   constructor(private readonly gl: WebGLRenderingContext) {}
@@ -25,22 +29,20 @@ export class TextureLodManager {
     return this.activeLOD;
   }
 
-  get textureCount(): number {
-    return this.lodTextures.size;
+  get hasTexture(): boolean {
+    return this.baseTexture !== null;
   }
 
   setBaseTexture(texture: WebGLTexture, lodLevel: number): void {
     this.dispose();
     this.baseTexture = texture;
     this.activeLOD = lodLevel;
-    this.lodTextures.set(lodLevel, texture);
   }
 
   dispose(): void {
-    for (const texture of this.lodTextures.values()) {
-      this.gl.deleteTexture(texture);
+    if (this.baseTexture) {
+      this.gl.deleteTexture(this.baseTexture);
     }
-    this.lodTextures.clear();
     this.baseTexture = null;
     this.activeLOD = 1;
   }

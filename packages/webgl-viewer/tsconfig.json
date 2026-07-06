@@ -1,13 +1,12 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "target": "ESNext",
     "lib": ["ESNext", "DOM"],
-    "types": ["vite/client"],
+    // react-jsx 对 vite lib build 是 load-bearing 的：esbuild 会读 tsconfig 的
+    // jsx 字段，若为 preserve 会让 JSX 原样进入产物导致构建损坏。
     "jsx": "react-jsx",
-    "strict": true,
-    "noImplicitAny": true,
-    "skipLibCheck": true
+    // ?raw 等 vite 查询导入（texture.worker）的模块声明来自 vite/client，
+    // 见 global.d.ts；同时收窄自动引入的 @types。
+    "types": ["vite/client"]
   }
 }

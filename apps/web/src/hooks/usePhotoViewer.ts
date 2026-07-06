@@ -1,5 +1,5 @@
 import type { PhotoManifestItem } from "@afilmory/schema";
-import { photoMatchesGeoFilters } from "@afilmory/schema";
+import { photoMatchesGeoFilters } from "@afilmory/schema/geo";
 import { atom, useAtom, useAtomValue, useSetAtom } from "jotai";
 import { use, useCallback, useEffect, useMemo } from "react";
 
@@ -29,19 +29,21 @@ const sortPhotos = (photos: PhotoManifestItem[], sortOrder: "asc" | "desc") => {
   });
 };
 
-export const filterAndSortPhotos = (
+type PhotoFilterSetting = Pick<
+  GallerySetting,
+  | "selectedTags"
+  | "selectedCameras"
+  | "selectedLenses"
+  | "selectedGeoCountries"
+  | "selectedGeoRegions"
+  | "selectedGeoCities"
+  | "selectedGeoDistricts"
+  | "sortOrder"
+>;
+
+const filterAndSortPhotosImpl = (
   photos: PhotoManifestItem[],
-  gallerySetting: Pick<
-    GallerySetting,
-    | "selectedTags"
-    | "selectedCameras"
-    | "selectedLenses"
-    | "selectedGeoCountries"
-    | "selectedGeoRegions"
-    | "selectedGeoCities"
-    | "selectedGeoDistricts"
-    | "sortOrder"
-  >,
+  gallerySetting: PhotoFilterSetting,
 ) => {
   let filteredPhotos = photos;
   const {
@@ -100,6 +102,36 @@ export const filterAndSortPhotos = (
   const sortedPhotos = sortPhotos(filteredPhotos, sortOrder);
 
   return sortedPhotos;
+};
+
+// 全量过滤 + 排序对大照片库并不便宜，而调用方（layout.tsx 的 effect 里
+// getViewerPhotos / getViewerSourceMode 连续调用、usePhotos 等）会用同一对
+// 稳定引用（photos 来自 PhotoRepository，gallerySetting 来自 atom）反复调用。
+// 用 WeakMap 按两个入参的对象标识做备忘：同引用重复调用直接复用结果（且返回
+// 引用相等，利于下游 memo），任一引用变化即重算；WeakMap 不阻止旧对象被 GC。
+const filterResultCache = new WeakMap<
+  PhotoManifestItem[],
+  WeakMap<PhotoFilterSetting, PhotoManifestItem[]>
+>();
+
+export const filterAndSortPhotos = (
+  photos: PhotoManifestItem[],
+  gallerySetting: PhotoFilterSetting,
+) => {
+  let settingCache = filterResultCache.get(photos);
+  if (!settingCache) {
+    settingCache = new WeakMap();
+    filterResultCache.set(photos, settingCache);
+  }
+
+  const cached = settingCache.get(gallerySetting);
+  if (cached) {
+    return cached;
+  }
+
+  const result = filterAndSortPhotosImpl(photos, gallerySetting);
+  settingCache.set(gallerySetting, result);
+  return result;
 };
 
 const getAllPhotosForViewer = (

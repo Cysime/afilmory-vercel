@@ -1,4 +1,5 @@
-import type { CameraInfo, GeoFilterState, LensInfo } from "@afilmory/schema";
+import type { CameraInfo, LensInfo } from "@afilmory/schema";
+import type { GeoFilterState } from "@afilmory/schema/geo";
 
 import type { GallerySetting } from "~/atoms/app";
 import { getRegionDisplayName } from "~/lib/geo-regions";

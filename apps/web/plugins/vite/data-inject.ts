@@ -7,6 +7,7 @@ import type { Plugin } from "vite";
 
 import { siteConfig } from "../../../../site.config.build";
 import { MANIFEST_PATH } from "./__internal__/constants";
+import { buildExternalManifestScriptContent } from "./__internal__/manifest-inline-snippet";
 
 // ── manifest helpers ──────────────────────────────────────────────────────────
 
@@ -71,32 +72,8 @@ function buildInlineManifestScriptContent(manifestJson: string): string {
   ].join("");
 }
 
-function buildExternalManifestScriptContent(manifestUrl: string): string {
-  const safeUrl = JSON.stringify(manifestUrl);
-
-  return [
-    ensureRuntimeScript(),
-    `window.__AFILMORY__.manifest = window.__AFILMORY__.manifest?.mode === 'external' ? window.__AFILMORY__.manifest : { mode: 'external', url: ${safeUrl} };`,
-    `window.__AFILMORY__.manifest.url = ${safeUrl};`,
-    `window.__AFILMORY__.manifest.promise ??= (() => {`,
-    `  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;`,
-    `  const timeoutId = window.setTimeout(() => controller?.abort(), 15000);`,
-    `  return fetch(window.__AFILMORY__.manifest.url, {`,
-    `    credentials: 'same-origin',`,
-    `    cache: 'force-cache',`,
-    `    signal: controller ? controller.signal : undefined,`,
-    `    headers: { accept: 'application/json' },`,
-    `  })`,
-    `    .then((response) => {`,
-    `      if (!response.ok) {`,
-    `        throw new Error(\`[data-inject] Failed to fetch manifest: \${response.status} \${response.statusText}\`.trim());`,
-    `      }`,
-    `      return response.json();`,
-    `    })`,
-    `    .finally(() => window.clearTimeout(timeoutId));`,
-    `})();`,
-  ].join("");
-}
+// 外部模式的内联脚本见 __internal__/manifest-inline-snippet.ts：
+// 由 src/data-runtime/manifest-inline-fetch.ts 打包而来，不再手写字符串。
 
 // ── combined plugin ───────────────────────────────────────────────────────────
 
@@ -107,7 +84,6 @@ export function dataInjectPlugin(): Plugin {
   const siteConfigScriptContent = buildRuntimeAssignment(
     "config",
     JSON.stringify({
-      features: {},
       site: siteConfig,
     }),
   );

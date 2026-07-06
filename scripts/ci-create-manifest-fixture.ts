@@ -3,8 +3,9 @@
  * so that lint / type-check / build can run in CI without S3 credentials or a
  * real builder pass. Replaces the previous inline heredoc in the workflow.
  *
- * For the e2e job a richer, real-data fixture is used instead — see
- * `apps/web/e2e/fixtures/photos-manifest.json`.
+ * For the e2e job a richer, fully synthetic fixture is used instead — see
+ * `apps/web/e2e/fixtures/photos-manifest.json` and its generator
+ * `scripts/create-synthetic-e2e-fixture.ts`.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";

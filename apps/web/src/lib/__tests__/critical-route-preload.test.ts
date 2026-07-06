@@ -6,11 +6,9 @@ describe("critical-route-preload", () => {
   it("preloads the gallery layout route module", async () => {
     const loadGallery = vi.fn().mockResolvedValue({ Component: "gallery" });
 
-    const preload = installCriticalRoutePreloads({
+    await installCriticalRoutePreloads({
       "./pages/(main)/layout.tsx": loadGallery,
     });
-
-    await preload.ready;
 
     expect(loadGallery).toHaveBeenCalledTimes(1);
   });
@@ -21,12 +19,10 @@ describe("critical-route-preload", () => {
       .fn()
       .mockResolvedValue({ Component: "photo-detail" });
 
-    const preload = installCriticalRoutePreloads({
+    await installCriticalRoutePreloads({
       "./pages/(main)/layout.tsx": loadGallery,
       "./pages/(main)/photos/[photoId]/index.tsx": loadPhotoDetail,
     });
-
-    await preload.ready;
 
     expect(loadGallery).toHaveBeenCalledTimes(1);
     // viewer 路由不再属于关键预热，首屏渲染不应等待（或触发）它。

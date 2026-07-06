@@ -6,7 +6,13 @@ import sharp from "sharp";
 
 import { HEIC_FORMATS } from "../constants/index.js";
 import { getPhotoProcessingLoggers } from "../photo/logger-adapter.js";
-import type { ImageMetadata } from "../types/photo.js";
+
+// 仅供构建管线在内存中传递尺寸/格式，manifest 里对应信息由 PhotoManifestItem 自带
+export interface ImageMetadata {
+  width: number;
+  height: number;
+  format: string;
+}
 
 // 获取图片元数据（复用 Sharp 实例）
 export async function getImageMetadataWithSharp(

@@ -51,6 +51,10 @@ vi.mock("~/runtime/app-runtime", () => ({
 }));
 
 vi.mock("react-i18next", () => ({
+  // ~/i18n 在模块加载时会 i18n.use(initReactI18next).init(...)：
+  // 下面的 runtime 隔离测试通过 importActual 拉起真实 app-runtime -> image-convert -> ~/i18n
+  // 依赖链，所以 mock 必须提供一个合法的 3rdParty 插件桩，否则模块加载即抛错。
+  initReactI18next: { type: "3rdParty", init: () => {} },
   useTranslation: () => ({
     t: (key: string) => key,
   }),
@@ -355,6 +359,47 @@ describe("photo viewer runtime lifecycle", () => {
 
     expect(animationStartMock).not.toHaveBeenCalled();
     expect(playSpy).not.toHaveBeenCalled();
+  });
+
+  it("gives each app runtime an independent image converter manager", async () => {
+    // 本文件顶部 mock 了 ~/runtime/app-runtime，这里用 importActual 拿真实实现，
+    // 验证转换管理器已经从模块级单例改为 runtime 级作用域：
+    // 两个 runtime 的并发管道 / pending 去重状态必须相互独立。
+    const [
+      { createAppRuntime },
+      { ImageConverterManager },
+      { createManifest },
+    ] = await Promise.all([
+      vi.importActual<typeof import("~/runtime/app-runtime")>(
+        "~/runtime/app-runtime",
+      ),
+      vi.importActual<typeof import("~/lib/image-convert")>(
+        "~/lib/image-convert",
+      ),
+      vi.importActual<typeof import("@afilmory/schema")>("@afilmory/schema"),
+    ]);
+
+    const manifest = createManifest({ photos: [] });
+    const runtimeA = createAppRuntime({ manifest });
+    const runtimeB = createAppRuntime({ manifest });
+
+    try {
+      expect(runtimeA.imageConverter).toBeInstanceOf(ImageConverterManager);
+      expect(runtimeB.imageConverter).toBeInstanceOf(ImageConverterManager);
+      expect(runtimeA.imageConverter).not.toBe(runtimeB.imageConverter);
+
+      // 修改一个 runtime 的策略表不影响另一个，证明内部状态没有跨 runtime 共享。
+      runtimeA.imageConverter.removeStrategy("HEIC");
+      expect(runtimeA.imageConverter.getSupportedFormats()).not.toContain(
+        "image/heic",
+      );
+      expect(runtimeB.imageConverter.getSupportedFormats()).toContain(
+        "image/heic",
+      );
+    } finally {
+      runtimeA.dispose();
+      runtimeB.dispose();
+    }
   });
 
   it("keeps the image loader manager ref available after the high-res image loads", async () => {

@@ -2,13 +2,12 @@ import type { EmitPluginEventFn } from "../core/contracts/execution-context.js";
 import type { BuilderServices } from "../core/contracts/services.js";
 import type { Logger } from "../logger/index.js";
 import {
-  createStorageKeyNormalizer,
+  createPhotoExecutionContext,
   getPhotoExecutionContext,
   runWithPhotoExecutionContext,
 } from "../photo/execution-context.js";
 import type { GeocodingProvider } from "../photo/geocoding.js";
 import { createGeocodingProvider } from "../photo/geocoding.js";
-import { createPhotoProcessingLoggers } from "../photo/logger-adapter.js";
 import type { GeocodingCacheState } from "./geocoding-cache.js";
 import {
   createGeocodingCacheState,
@@ -90,27 +89,14 @@ function ensureProvider(
 async function ensurePhotoContext<T>(
   services: BuilderServices,
   emitPluginEvent: EmitPluginEventFn,
-  logger: Logger,
   fn: () => Promise<T>,
 ): Promise<T> {
   try {
     getPhotoExecutionContext();
     return await fn();
   } catch {
-    const storageConfig = services.storage.getConfig();
-    const storageManager = services.storage.getManager();
-    const normalizeStorageKey = createStorageKeyNormalizer(storageConfig);
-    const loggers = createPhotoProcessingLoggers(0, logger);
-
     return await runWithPhotoExecutionContext(
-      {
-        services,
-        emitPluginEvent,
-        storageManager,
-        storageConfig,
-        normalizeStorageKey,
-        loggers,
-      },
+      createPhotoExecutionContext(services, emitPluginEvent, 0),
       fn,
     );
   }
@@ -148,27 +134,21 @@ export default function geocodingPlugin(
           payload.options.isForceMode || payload.options.isForceManifest;
         const currentSettings = settings;
 
-        await ensurePhotoContext(
-          services,
-          emitPluginEvent,
-          logger,
-          async () => {
-            const state = getOrCreateState(runShared);
-            const locationLogger = logger.main.withTag("LOCATION");
-            const exif =
-              item.exif ?? payload.context.existingItem?.exif ?? null;
-            await resolveLocationForItem({
-              item,
-              exif,
-              state: state.cache,
-              settings: currentSettings,
-              shouldOverwriteExisting,
-              logger: locationLogger,
-              getProvider: (locale) =>
-                ensureProvider(state, currentSettings, locale, locationLogger),
-            });
-          },
-        );
+        await ensurePhotoContext(services, emitPluginEvent, async () => {
+          const state = getOrCreateState(runShared);
+          const locationLogger = logger.main.withTag("LOCATION");
+          const exif = item.exif ?? payload.context.existingItem?.exif ?? null;
+          await resolveLocationForItem({
+            item,
+            exif,
+            state: state.cache,
+            settings: currentSettings,
+            shouldOverwriteExisting,
+            logger: locationLogger,
+            getProvider: (locale) =>
+              ensureProvider(state, currentSettings, locale, locationLogger),
+          });
+        });
       },
       afterProcessTasks: async ({
         services,
@@ -185,20 +165,8 @@ export default function geocodingPlugin(
         const state = getOrCreateState(runShared);
         const locationLogger = logger.main.withTag("LOCATION");
 
-        const storageConfig = services.storage.getConfig();
-        const storageManager = services.storage.getManager();
-        const normalizeStorageKey = createStorageKeyNormalizer(storageConfig);
-        const loggers = createPhotoProcessingLoggers(0, logger);
-
         await runWithPhotoExecutionContext(
-          {
-            services,
-            emitPluginEvent,
-            storageManager,
-            storageConfig,
-            normalizeStorageKey,
-            loggers,
-          },
+          createPhotoExecutionContext(services, emitPluginEvent, 0),
           async () => {
             let attempted = 0;
             let updated = 0;

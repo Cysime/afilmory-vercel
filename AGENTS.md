@@ -85,9 +85,9 @@ Builder 主流程使用 `packages/builder/src/builder/workflow` 分层：`BuildS
 根脚本以 `package.json` 为准：
 
 - `pnpm dev`: 运行 `apps/web/scripts/precheck.ts`，再启动 Vite dev server。
-- `pnpm build`: 运行 `precheck`，再运行 `pnpm build:packages` 和 `pnpm build:web`。
-- `pnpm build:manifest`: 设置 `BUILDER_CONFIG_PATH=builder.config.ts` 并运行 builder CLI。
-- `pnpm build:packages`: 构建 `@afilmory/builder` 和 `@afilmory/webgl-viewer`。
+- `pnpm build`: 运行 `precheck`，再运行 `pnpm build:web`。workspace 包直接从 TS 源码消费（exports 指向 `./src/index.ts`），部署构建不需要包的 dist/。
+- `pnpm build:manifest`: 运行 builder CLI（配置固定读取仓库根目录 `builder.config.ts`，由 c12 按 `builder` 名称约定解析）。
+- `pnpm build:packages`: 仅供 npm 发布使用，构建 `@afilmory/builder` 和 `@afilmory/webgl-viewer` 的 dist/；不在部署/CI 构建链上。
 - `pnpm build:web`: 只构建前端，要求 manifest 已存在。
 - `pnpm preview`: 预览 `apps/web/dist`。
 
@@ -117,7 +117,7 @@ Manifest shape 来自 `@afilmory/schema`：
 - 单张照片包含 `id`、`originalUrl`、`thumbnailUrl`、`thumbHash`、`s3Key`、`exif`、`toneAnalysis`、`location`、可选 `video` 和 `isHDR`。
 - `parseManifest` 只接受 manifest v2；旧 schema 不做迁移，无法解析时返回空 manifest fallback。
 
-前端运行时不要直接读取构建脚本目录。使用 `apps/web/src/data-runtime/manifest-runtime.ts` 和 `photo-loader.ts`。
+前端运行时不要直接读取构建脚本目录。使用 `apps/web/src/data-runtime/manifest-runtime.ts`；构建期读 manifest 用 `@afilmory/build-assets` 的 `buildTimePhotoLoader`。
 
 ## 国际化
 
