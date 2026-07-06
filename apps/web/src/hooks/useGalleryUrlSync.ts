@@ -9,15 +9,16 @@ import {
   useSearchParams,
 } from "react-router";
 
-import type { GallerySetting } from "~/atoms/app";
 import { gallerySettingAtom } from "~/atoms/app";
 import {
   getViewerPhotos,
   getViewerSourceMode,
   usePhotoViewer,
 } from "~/hooks/usePhotoViewer";
+import type { GalleryFilterState } from "~/lib/gallery-filter-url";
 import {
   applyGalleryFiltersToSearch,
+  filtersEqual,
   getGalleryFiltersFromSearch,
 } from "~/lib/gallery-filter-url";
 import {
@@ -54,22 +55,13 @@ const useBrowserLayoutEffect =
 const useRestoreGalleryFilters = () => {
   const setGallerySetting = useSetAtom(gallerySettingAtom);
   return useCallback(
-    (
-      filters: Pick<
-        GallerySetting,
-        | "selectedTags"
-        | "selectedCameras"
-        | "selectedLenses"
-        | "selectedGeoCountries"
-        | "selectedGeoRegions"
-        | "selectedGeoCities"
-        | "selectedGeoDistricts"
-      >,
-    ) => {
-      setGallerySetting((prev) => ({
-        ...prev,
-        ...filters,
-      }));
+    (filters: GalleryFilterState) => {
+      // usePhotoViewer 的 filterAndSortPhotos 按 gallerySettingAtom 的对象标识做
+      // WeakMap 备忘：值未变时必须返回同一引用（jotai 按 Object.is 跳过通知），
+      // 否则查看器每次滑动触发的 URL 恢复都会击穿缓存并全量重渲染图库。
+      setGallerySetting((prev) =>
+        filtersEqual(prev, filters) ? prev : { ...prev, ...filters },
+      );
     },
     [setGallerySetting],
   );

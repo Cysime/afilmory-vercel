@@ -41,7 +41,7 @@ export const MasonryRoot = () => {
     [photos],
   );
 
-  const { dateRange, handleRender } = useVisiblePhotosDateRange(photos);
+  const { dateRange, handleRender } = useVisiblePhotosDateRange();
   const scrollElement = useScrollViewElement();
 
   const handleAnimationComplete = useCallback(() => {

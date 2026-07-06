@@ -84,7 +84,6 @@ export function dataInjectPlugin(): Plugin {
   const siteConfigScriptContent = buildRuntimeAssignment(
     "config",
     JSON.stringify({
-      features: {},
       site: siteConfig,
     }),
   );

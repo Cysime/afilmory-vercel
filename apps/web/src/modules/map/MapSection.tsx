@@ -1,10 +1,10 @@
 import { m } from "motion/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router";
 
 import {
   MapBackButton,
+  MapErrorState,
   MapInfoPanel,
   MapLoadingState,
 } from "~/components/ui/map";
@@ -41,7 +41,6 @@ export const MapSection = () => {
 };
 
 const MapSectionContent = () => {
-  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const photoRepository = usePhotoRepository();
   const displayMode: MapDisplayMode =
@@ -308,19 +307,7 @@ const MapSectionContent = () => {
 
   // Show error state
   if (error) {
-    return (
-      <div className="flex h-full w-full items-center justify-center">
-        <div className="text-center">
-          <div className="mb-4 text-4xl">❌</div>
-          <div className="text-lg font-medium text-red-900 dark:text-red-100">
-            {t("explore.map.error.title")}
-          </div>
-          <p className="text-sm text-red-600 dark:text-red-400">
-            {t("explore.map.error.description")}
-          </p>
-        </div>
-      </div>
-    );
+    return <MapErrorState />;
   }
 
   return (

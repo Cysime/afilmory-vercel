@@ -16,7 +16,6 @@ describe("bootstrap splash", () => {
     vi.stubGlobal("__AFILMORY__", {
       version: 1,
       config: {
-        features: {},
         site: {
           title: "Test Lens",
           description: "Loading test photos",

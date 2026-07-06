@@ -1,8 +1,6 @@
 import type { AfilmoryManifest } from "@afilmory/schema";
 import type { SiteConfig } from "@config";
 
-import type { InjectConfig } from "~/config/types";
-
 export type StartupMetricDetail = Record<string, unknown>;
 
 export type StartupReporter = {
@@ -41,7 +39,6 @@ export type AfilmoryBrowserRuntime = {
   version: 1;
   build?: AfilmoryBuildInfo;
   config?: {
-    features?: Partial<InjectConfig>;
     site?: Partial<SiteConfig>;
   };
   manifest?: AfilmoryManifestRuntime;

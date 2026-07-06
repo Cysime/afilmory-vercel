@@ -1,11 +1,10 @@
 import { clsxm, RootPortal, Spring } from "@afilmory/ui";
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { AnimatePresence, m } from "motion/react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
-import { injectConfig, siteConfig } from "~/config";
 import type { PhotoManifest } from "~/types/photo";
 
 import { copyTextToClipboard } from "./clipboard-text";
@@ -54,11 +53,6 @@ function canShareImageFiles(): boolean {
 export const SharePanel = ({ photo, trigger, blobSrc }: SharePanelProps) => {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
-  const embedPhotoId = encodeURIComponent(photo.id);
-  const embedWidth =
-    Number.isFinite(photo.width) && photo.width > 0 ? photo.width : 1;
-  const embedHeight =
-    Number.isFinite(photo.height) && photo.height > 0 ? photo.height : 1;
 
   // 社交媒体分享选项
   const socialOptions: SocialShareOption[] = [
@@ -155,18 +149,6 @@ export const SharePanel = ({ photo, trigger, blobSrc }: SharePanelProps) => {
 
     toast.error(t("photo.share.copy.failed"));
   }, [t]);
-  const shareCodeRef = useRef<HTMLElement>(null);
-
-  const handleCopyEmbedCode = useCallback(async () => {
-    const embedCode = shareCodeRef.current?.textContent;
-    if (embedCode && (await copyTextToClipboard(embedCode))) {
-      toast.success(t("photo.share.embed.copied"));
-      setIsOpen(false);
-      return;
-    }
-
-    toast.error(t("photo.share.copy.failed"));
-  }, [t]);
 
   const handleSocialShare = useCallback(
     (url: string) => {
@@ -213,13 +195,6 @@ export const SharePanel = ({ photo, trigger, blobSrc }: SharePanelProps) => {
       label: t("photo.share.copy.link"),
       icon: "i-mingcute-link-line",
       action: handleCopyLink,
-    },
-    {
-      id: "copy-embed",
-      label: t("photo.share.embed.code"),
-      icon: "i-mingcute-code-line",
-      action: handleCopyEmbedCode,
-      color: "text-purple-500",
     },
   ];
 
@@ -312,52 +287,7 @@ export const SharePanel = ({ photo, trigger, blobSrc }: SharePanelProps) => {
                   </div>
                 </div>
 
-                {/* 嵌入代码 - 第二排 */}
-                {injectConfig.useNext && (
-                  <div className="relative mb-6">
-                    <div className="mb-3">
-                      <h4 className="text-text-secondary text-xs font-medium tracking-wide uppercase">
-                        {t("photo.share.embed.code")}
-                      </h4>
-                      <p className="text-text-tertiary mt-1 text-xs">
-                        {t("photo.share.embed.description")}
-                      </p>
-                    </div>
-                    <div className="relative">
-                      <div className="border-accent/20 bg-accent/5 rounded-lg border p-3 pr-14">
-                        <code
-                          ref={(ref) => {
-                            if (ref) {
-                              shareCodeRef.current = ref;
-                            }
-                            return () => {
-                              shareCodeRef.current = null;
-                            };
-                          }}
-                          className="text-text-secondary font-mono text-xs break-all whitespace-pre select-all"
-                        >
-                          {`<iframe
-  src="${siteConfig.url.replace(/\/$/, "")}/share/iframe?id=${embedPhotoId}"
-  style="width: 100%; aspect-ratio: ${embedWidth} / ${embedHeight}"
-  allowTransparency
-  sandbox="allow-scripts allow-same-origin allow-popups"
-/>`}
-                        </code>
-                      </div>
-                      <button
-                        type="button"
-                        className="glassmorphic-btn border-accent/20 bg-accent/5 focus-visible:ring-accent/45 absolute top-2 right-2 flex size-11 items-center justify-center rounded-lg border backdrop-blur-2xl transition-[background-color,border-color,box-shadow,color,transform] duration-200 focus-visible:ring-2 focus-visible:ring-inset"
-                        aria-label={t("photo.share.copy.embed")}
-                        title={t("photo.share.copy.embed")}
-                        onClick={handleCopyEmbedCode}
-                      >
-                        <i className="i-mingcute-copy-line size-4" />
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* 功能选项 - 第三排 */}
+                {/* 功能选项 - 第二排 */}
                 <div className="relative">
                   <div className="mb-3">
                     <h4 className="text-text-secondary text-xs font-medium tracking-wide uppercase">
@@ -365,31 +295,29 @@ export const SharePanel = ({ photo, trigger, blobSrc }: SharePanelProps) => {
                     </h4>
                   </div>
                   <div className="grid grid-cols-2 gap-1">
-                    {actionOptions
-                      .filter((option) => option.id !== "copy-embed")
-                      .map((option) => (
-                        <button
-                          key={option.id}
-                          type="button"
-                          className="glassmorphic-btn focus-visible:ring-accent/45 group relative flex cursor-pointer items-center rounded-lg px-2 py-2 text-sm transition-[background-color,box-shadow,color,transform] duration-200 outline-none select-none focus-visible:ring-2"
-                          onClick={() => option.action()}
-                        >
-                          <div className="flex items-center gap-2">
-                            <div className="bg-accent/10 flex size-7 items-center justify-center rounded-full transition-colors duration-200">
-                              <i
-                                className={clsxm(
-                                  option.icon,
-                                  "size-3.5",
-                                  option.color || "text-text-secondary",
-                                )}
-                              />
-                            </div>
-                            <span className="text-text text-xs font-medium">
-                              {option.label}
-                            </span>
+                    {actionOptions.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className="glassmorphic-btn focus-visible:ring-accent/45 group relative flex cursor-pointer items-center rounded-lg px-2 py-2 text-sm transition-[background-color,box-shadow,color,transform] duration-200 outline-none select-none focus-visible:ring-2"
+                        onClick={() => option.action()}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="bg-accent/10 flex size-7 items-center justify-center rounded-full transition-colors duration-200">
+                            <i
+                              className={clsxm(
+                                option.icon,
+                                "size-3.5",
+                                option.color || "text-text-secondary",
+                              )}
+                            />
                           </div>
-                        </button>
-                      ))}
+                          <span className="text-text text-xs font-medium">
+                            {option.label}
+                          </span>
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 </div>
               </m.div>
