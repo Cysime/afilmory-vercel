@@ -175,7 +175,7 @@ export class BuilderTUI {
     const parts = [
       color("📸 Afilmory Builder", "cyan"),
       `模式: ${color(meta.runMode, "green")}`,
-      `处理: ${color(meta.processingMode === "cluster" ? "多进程集群" : "并发线程池", "green")}`,
+      `处理: ${color(meta.processingMode === "cluster" ? "多进程集群" : "单进程并发池", "green")}`,
       `并发: ${color(String(meta.concurrency), "green")}`,
     ];
     const header = parts.join(" · ");

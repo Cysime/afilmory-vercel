@@ -31,17 +31,6 @@ async function main() {
     return;
   }
 
-  const builderConfig = await loadBuilderConfig({
-    cwd: join(fileURLToPath(import.meta.url), "../../../.."),
-  });
-  const cliBuilder = new AfilmoryBuilder(builderConfig, {
-    exifService: new ExifService({
-      exiftoolPath: process.env.EXIFTOOL_PATH,
-    }),
-    ownsExifService: true,
-  });
-  process.title = "photo-gallery-builder-main";
-
   // 解析命令行参数
   const args = new Set(process.argv.slice(2));
   const isForceMode = args.has("--force");
@@ -49,7 +38,8 @@ async function main() {
   let isForceThumbnails = args.has("--force-thumbnails");
   const disableUi = args.has("--no-ui");
 
-  // 显示帮助信息
+  // 帮助信息必须在加载配置之前处理：新手在没有任何凭据/配置的机器上运行的
+  // 第一条命令往往就是 --help，不能让它因缺失 storage 配置而崩栈。
   if (args.has("--help") || args.has("-h")) {
     logger.main.info(`
 照片库构建工具 (S3 静态站点构建)
@@ -71,22 +61,30 @@ async function main() {
   tsx packages/builder/src/cli.ts --config                  # 显示配置信息
 
 配置：
-  在 builder.config.ts 中设置 performance.worker.useClusterMode = true 
+  在 builder.config.ts 中设置 performance.worker.useClusterMode = true
   可启用多进程集群模式，发挥多核心优势。
 `);
-    cliBuilder.dispose();
     return;
   }
+
+  const builderConfig = await loadBuilderConfig({
+    cwd: join(fileURLToPath(import.meta.url), "../../../.."),
+  });
+  const cliBuilder = new AfilmoryBuilder(builderConfig, {
+    exifService: new ExifService({
+      exiftoolPath: process.env.EXIFTOOL_PATH,
+    }),
+    ownsExifService: true,
+  });
+  process.title = "photo-gallery-builder-main";
 
   // 显示配置信息
   if (args.has("--config")) {
     const config = cliBuilder.getConfig();
-    const userConfig = config.user;
-    const storage = userConfig?.storage;
+    const storage = config.user?.storage;
     if (!storage) {
-      logger.main.error("未配置存储提供商，请先在配置文件中设置 storage 字段");
-      cliBuilder.dispose();
-      return;
+      // loadBuilderConfig 在缺失 storage 时已抛错，此分支仅为类型收窄。
+      throw new Error("unreachable: storage missing after loadBuilderConfig");
     }
     logger.main.info("🔧 当前配置：");
     logger.main.info(`   存储提供商：${storage.provider}`);
@@ -120,11 +118,6 @@ async function main() {
       `   集群模式：${config.system.observability.performance.worker.useClusterMode ? "启用" : "禁用"}`,
     );
     logger.main.info("");
-    if (!userConfig) {
-      logger.main.warn("未配置用户级设置（storage）");
-      cliBuilder.dispose();
-      return;
-    }
     cliBuilder.dispose();
     return;
   }
@@ -164,7 +157,7 @@ async function main() {
   const processingMode = config.system.observability.performance.worker
     .useClusterMode
     ? "多进程集群"
-    : "并发线程池";
+    : "单进程并发池";
   const processingModeKey = config.system.observability.performance.worker
     .useClusterMode
     ? "cluster"
@@ -208,9 +201,17 @@ async function main() {
     });
 
     buildResult = result;
-    // 构建成功即落盘签名标记（会随 artifact-cache 同步）；中途异常不写，
-    // 下次构建仍会强制重生成，保证磁盘上不会残留旧参数的缩略图却带新标记。
-    await writeThumbnailEncodingMarker(thumbnailsDir);
+    // 构建成功即落盘签名标记（会随 artifact-cache 同步）；中途异常不写。
+    // 强制重生成的运行中若有照片失败也不写：磁盘上还残留旧参数的缩略图，
+    // 带上新标记会让下次增量构建把它们当作已达标，旧参数产物永远无法收敛。
+    const wasThumbnailForce = isForceMode || isForceThumbnails;
+    if (!wasThumbnailForce || result.failedCount === 0) {
+      await writeThumbnailEncodingMarker(thumbnailsDir);
+    } else {
+      logger.main.warn(
+        "⚠️ 本次强制重生成存在失败照片，保留旧编码标记；下次构建将继续强制重生成，直到全部成功。",
+      );
+    }
     tui?.markSuccess(result);
   } catch (error) {
     tui?.markError(error);

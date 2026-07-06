@@ -11,9 +11,10 @@ import process from "node:process";
  * never leave a partially-written / truncated destination file — readers see
  * either the old contents or the complete new contents, never a torn file.
  *
- * This matters for artifacts like `photos-manifest.json`: a truncated manifest
- * makes every subsequent build throw at `assertManifest`, permanently breaking
- * the pipeline until the file is manually removed.
+ * This matters for artifacts like `photos-manifest.json`: a torn manifest is
+ * unparseable JSON, so the lenient loader discards the cache and the next
+ * build pays a full rebuild; worse, a deploy that reads the torn file fails
+ * the web build's `assertManifest` gate outright.
  */
 export async function writeFileAtomic(
   filePath: string,

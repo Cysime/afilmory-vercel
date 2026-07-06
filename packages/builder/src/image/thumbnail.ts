@@ -6,6 +6,7 @@ import sharp from "sharp";
 import { getPhotoExecutionContext } from "../photo/execution-context.js";
 import { getPhotoProcessingLoggers } from "../photo/logger-adapter.js";
 import type { ThumbnailResult } from "../types/photo.js";
+import { writeFileAtomic } from "../utils/atomic-write.js";
 import { SOURCE_SHARP_OPTIONS } from "./sharp-options.js";
 import { generateThumbHash } from "./thumbhash.js";
 
@@ -156,8 +157,9 @@ async function generateNewThumbnail(
       .jpeg({ quality: THUMBNAIL_QUALITY, mozjpeg: true })
       .toBuffer();
 
-    // 保存到文件
-    await fs.writeFile(thumbnailPath, thumbnailBuffer);
+    // 原子落盘：普通 writeFile 中途被杀会留下截断的 .jpg，增量路径此后会
+    // 永远复用这张坏图（thumbnailExists 只看存在性，不看完整性）。
+    await writeFileAtomic(thumbnailPath, thumbnailBuffer);
 
     // 记录生成信息
     const duration = Date.now() - startTime;

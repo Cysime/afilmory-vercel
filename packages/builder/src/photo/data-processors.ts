@@ -30,19 +30,23 @@ export interface ThumbnailResult {
 
 /**
  * 处理缩略图和 thumbhash
- * 优先复用现有数据，如果不存在或需要强制更新则重新生成
+ * 优先复用现有数据，如果不存在或需要强制更新则重新生成。
+ * contentChanged：原图内容已变（needsUpdate 判定，见 image-pipeline.ts）——
+ * 磁盘上的旧缩略图对应旧内容，复用即错误，必须重生成。
  */
 export async function processThumbnailAndThumbHash(
   imageBuffer: Buffer,
   photoId: string,
   existingItem: PhotoManifestItem | undefined,
   options: PhotoProcessorOptions,
+  contentChanged: boolean,
 ): Promise<ThumbnailResult | null> {
   const loggers = getPhotoProcessingLoggers();
   const { thumbnailsDir } = getPhotoExecutionContext().output;
 
   // 检查是否可以复用现有数据
   if (
+    !contentChanged &&
     !options.isForceMode &&
     !options.isForceThumbnails &&
     existingItem?.thumbHash &&
@@ -67,16 +71,18 @@ export async function processThumbnailAndThumbHash(
     }
   }
 
-  // 生成新的缩略图和 thumbhash
+  // 生成新的缩略图和 thumbhash。contentChanged 必须传导到 forceRegenerate：
+  // generateThumbnailAndThumbHash 内部还有一层"磁盘已有就复用"的检查，
+  // 不强制的话旧内容的缩略图会在那里再次逃过重生成。
   const result = await generateThumbnailAndThumbHash(
     imageBuffer,
     photoId,
-    options.isForceMode || options.isForceThumbnails,
+    contentChanged || options.isForceMode || options.isForceThumbnails,
   );
 
   // 生成失败时不要伪造非空断言：返回 null，让上层把该照片标记为失败并跳过，
-  // 绝不向 manifest 写入 thumbnailUrl: null（否则会污染 manifest 并导致后续构建在
-  // assertManifest 阶段直接抛错、永久失败）。
+  // 绝不向 manifest 写入 thumbnailUrl: null——lenient 解析会把它抢救成空串
+  // 并长期保留一张永久破图，严格校验（web 构建的 assertManifest 门）则直接失败。
   if (!result.thumbnailUrl || !result.thumbnailBuffer) {
     loggers.thumbnail.error(
       `缩略图生成失败，跳过该照片（不写入 manifest）：${photoId}`,
@@ -102,11 +108,17 @@ export async function processExifData(
   existingItem: PhotoManifestItem | undefined,
   options: PhotoProcessorOptions,
   exifService: ExifReaderService,
+  contentChanged: boolean,
 ): Promise<PickedExif | null> {
   const loggers = getPhotoProcessingLoggers();
 
-  // 检查是否可以复用现有数据
-  if (!options.isForceMode && !options.isForceManifest && existingItem?.exif) {
+  // 检查是否可以复用现有数据（内容已变时旧 EXIF 属于旧图，不可复用）
+  if (
+    !contentChanged &&
+    !options.isForceMode &&
+    !options.isForceManifest &&
+    existingItem?.exif
+  ) {
     const photoId = path.basename(photoKey, path.extname(photoKey));
     loggers.exif.info(`复用现有 EXIF 数据：${photoId}`);
     return existingItem.exif;
@@ -128,11 +140,13 @@ export async function processToneAnalysis(
   photoKey: string,
   existingItem: PhotoManifestItem | undefined,
   options: PhotoProcessorOptions,
+  contentChanged: boolean,
 ): Promise<ToneAnalysis | null> {
   const loggers = getPhotoProcessingLoggers();
 
-  // 检查是否可以复用现有数据
+  // 检查是否可以复用现有数据（内容已变时旧影调分析属于旧图，不可复用）
   if (
+    !contentChanged &&
     !options.isForceMode &&
     !options.isForceManifest &&
     existingItem?.toneAnalysis

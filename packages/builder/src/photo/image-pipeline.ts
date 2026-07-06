@@ -10,6 +10,7 @@ import {
   preprocessImageBuffer,
 } from "../image/processor.js";
 import { SOURCE_SHARP_OPTIONS } from "../image/sharp-options.js";
+import { needsUpdate } from "../manifest/manager.js";
 import { THUMBNAIL_PLUGIN_DATA_KEY } from "../plugins/thumbnail-storage/shared.js";
 import type { BuilderOptions } from "../types/options.js";
 import type { PhotoManifestItem, ProcessPhotoResult } from "../types/photo.js";
@@ -125,6 +126,11 @@ async function executePhotoProcessingPipeline(
   const { photoKey, obj, existingItem, livePhotoMap, options } = context;
   const { loggers, storageManager, services } = getPhotoExecutionContext();
 
+  // 内容变更判定与 DiffPlanner 的入队谓词同源（needsUpdate）：这张照片若因
+  // mtime/size/etag 变化被选中重处理，下游的"复用现有数据"检查必须让位——
+  // 否则原图白白下载一遍，缩略图/EXIF/影调仍沿用旧内容，永远不会更新。
+  const contentChanged = existingItem ? needsUpdate(existingItem, obj) : false;
+
   try {
     // 1. 预处理图片
     const imageData = await preprocessImage(photoKey);
@@ -145,6 +151,7 @@ async function executePhotoProcessingPipeline(
       photoId,
       existingItem,
       options,
+      contentChanged,
     );
 
     // 缩略图生成失败：将该照片视为处理失败并跳过（会计入 failedCount），
@@ -169,6 +176,7 @@ async function executePhotoProcessingPipeline(
       existingItem,
       options,
       services.exif,
+      contentChanged,
     );
 
     // 5. 检测 HDR GainMap（Ultra HDR 图片）
@@ -202,6 +210,7 @@ async function executePhotoProcessingPipeline(
       photoKey,
       existingItem,
       options,
+      contentChanged,
     );
 
     // 9. 提取照片信息
