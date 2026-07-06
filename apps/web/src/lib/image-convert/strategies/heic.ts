@@ -62,7 +62,6 @@ export class HeicConverterStrategy implements ImageConverterStrategy {
       const result = await convertHeicImage(blob, originalUrl);
 
       return {
-        url: result.url,
         blob: result.blob,
         convertedSize: result.convertedSize,
         format: result.format,
@@ -80,20 +79,12 @@ export interface HeicConversionOptions {
   format?: "image/jpeg" | "image/png";
 }
 
-// HEIC conversion cache using generic LRU cache
+// HEIC 转换结果缓存：只存 blob（object URL 归 regularImageCache 所有），
+// 逐出即交给 GC，无需清理回调。条目数偏小，因为解码产物可能很大。
 const heicCache: LRUCache<string, ConversionResult> = new LRUCache<
   string,
   ConversionResult
->(
-  10, // Smaller cache size for images as they might be larger
-  (value, key, reason) => {
-    try {
-      URL.revokeObjectURL(value.url);
-    } catch (error) {
-      console.warn(`Failed to revoke HEIC blob URL (${reason}):`, error);
-    }
-  },
-);
+>(10);
 
 /**
  * 生成文件的缓存键（基于 src）
@@ -165,11 +156,7 @@ export async function convertHeicImage(
       quality,
     });
 
-    // 创建 URL
-    const url = URL.createObjectURL(convertedBlob);
-
     const result: ConversionResult = {
-      url,
       blob: convertedBlob,
       originalSize: file.size,
       convertedSize: convertedBlob.size,
@@ -186,47 +173,4 @@ export async function convertHeicImage(
       `Failed to convert HEIC image: ${error instanceof Error ? error.message : "Unknown error"}`,
     );
   }
-}
-
-/**
- * 清理转换后的 URL
- */
-export function revokeConvertedUrl(url: string): void {
-  try {
-    URL.revokeObjectURL(url);
-  } catch (error) {
-    console.warn("Failed to revoke URL:", error);
-  }
-}
-
-// HEIC 缓存管理函数
-export function getHeicCacheSize(): number {
-  return heicCache.size();
-}
-
-export function clearHeicCache(): void {
-  heicCache.clear();
-}
-
-export function removeHeicCache(cacheKey: string): boolean {
-  return heicCache.delete(cacheKey);
-}
-
-export function getHeicCacheStats(): {
-  size: number;
-  maxSize: number;
-  keys: string[];
-} {
-  return heicCache.getStats();
-}
-
-/**
- * 根据 src 和选项移除特定的 HEIC 缓存项
- */
-export function removeHeicCacheBySrc(
-  src: string,
-  options: HeicConversionOptions = {},
-): boolean {
-  const cacheKey = generateCacheKey(src, options);
-  return heicCache.delete(cacheKey);
 }

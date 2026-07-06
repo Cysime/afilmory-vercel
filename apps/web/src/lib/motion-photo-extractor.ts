@@ -155,12 +155,3 @@ async function isValidMp4(blob: Blob): Promise<boolean> {
 
   return false;
 }
-
-/**
- * 清理由 extractMotionPhotoVideo 创建的 Blob URL
- */
-export function revokeMotionPhotoVideoUrl(blobUrl: string): void {
-  if (blobUrl.startsWith("blob:")) {
-    URL.revokeObjectURL(blobUrl);
-  }
-}

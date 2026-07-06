@@ -32,7 +32,7 @@ vi.mock("~/lib/motion-photo-extractor", () => ({
 }));
 
 vi.mock("~/lib/video-converter", () => ({
-  convertMovToMp4: vi.fn(),
+  relabelMovAsMp4: vi.fn(),
   needsVideoConversion: vi.fn(() => false),
 }));
 

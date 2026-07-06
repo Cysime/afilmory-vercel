@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { createBlobUrlCache, LRUCache } from "../lru-cache";
+import { LRUCache } from "../lru-cache";
 
 describe("LRUCache", () => {
   it("stores and retrieves values", () => {
@@ -241,69 +241,5 @@ describe("LRUCache byte budget", () => {
     cache.set("a", { name: "a", bytes: 1e9 });
     cache.set("b", { name: "b", bytes: 1e9 });
     expect(cache.size()).toBe(2);
-  });
-});
-
-describe("createBlobUrlCache", () => {
-  let counter = 0;
-
-  beforeEach(() => {
-    counter = 0;
-    // jsdom's object-URL support is inconsistent across versions; install
-    // spy-able stubs so vi.spyOn always has something to wrap regardless.
-    Object.assign(URL, {
-      createObjectURL: () => "",
-      revokeObjectURL: () => {},
-    });
-    vi.spyOn(URL, "createObjectURL").mockImplementation(
-      () => `blob:mock/${++counter}`,
-    );
-    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("revokes the blob URL of an evicted entry", () => {
-    const cache = createBlobUrlCache<{ url?: string }>(1);
-    cache.set("a", { url: "blob:one" });
-    cache.set("b", { url: "blob:two" });
-
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:one");
-    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1);
-  });
-
-  it("revokes blob URLs on manual delete and on clear", () => {
-    const cache = createBlobUrlCache<{ url?: string }>(5);
-    cache.set("a", { url: "blob:a" });
-    cache.set("b", { url: "blob:b" });
-
-    cache.delete("a");
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:a");
-
-    cache.clear();
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:b");
-  });
-
-  it("does not revoke when the evicted value has no url", () => {
-    const cache = createBlobUrlCache<{ url?: string }>(1);
-    cache.set("a", {});
-    cache.set("b", { url: "blob:b" });
-
-    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
-  });
-
-  it("swallows revoke errors during cleanup", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.mocked(URL.revokeObjectURL).mockImplementation(() => {
-      throw new Error("revoke failed");
-    });
-
-    const cache = createBlobUrlCache<{ url?: string }>(1);
-    cache.set("a", { url: "blob:a" });
-
-    expect(() => cache.set("b", { url: "blob:b" })).not.toThrow();
-    expect(warn).toHaveBeenCalled();
   });
 });

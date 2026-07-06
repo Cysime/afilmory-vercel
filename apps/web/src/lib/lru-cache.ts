@@ -2,11 +2,6 @@
  * 通用 LRU 缓存类
  * 支持自定义清理函数，用于在缓存项被移除时执行清理操作（如释放 blob URL）
  */
-/**
- * React Hook 用于管理 LRU 缓存的生命周期
- */
-import { useEffect, useRef } from "react";
-
 import { debugLog } from "./debug-log";
 
 export interface LRUCacheByteBudget<V> {
@@ -175,43 +170,4 @@ export class LRUCache<K, V> {
       }
     }
   }
-}
-
-/**
- * 创建一个专门用于 blob URL 的 LRU 缓存
- * 自动在项目被移除时调用 URL.revokeObjectURL
- */
-export function createBlobUrlCache<T extends { url?: string }>(
-  maxSize = 10,
-): LRUCache<string, T> {
-  return new LRUCache<string, T>(maxSize, (value, key, reason) => {
-    if (value.url) {
-      try {
-        URL.revokeObjectURL(value.url);
-        debugLog(`Blob URL revoked - ${reason}`);
-      } catch (error) {
-        console.warn(`Failed to revoke blob URL (${reason}):`, error);
-      }
-    }
-  });
-}
-
-export function useLRUCache<K, V>(
-  maxSize = 10,
-  cleanupFn?: (value: V, key: K, reason: string) => void,
-): LRUCache<K, V> {
-  const cacheRef = useRef<LRUCache<K, V> | null>(null);
-
-  if (!cacheRef.current) {
-    cacheRef.current = new LRUCache(maxSize, cleanupFn);
-  }
-
-  // 组件卸载时自动清理所有缓存
-  useEffect(() => {
-    return () => {
-      cacheRef.current?.clear();
-    };
-  }, []);
-
-  return cacheRef.current;
 }

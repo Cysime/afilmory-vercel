@@ -18,7 +18,6 @@ interface LoadingState {
   loadedBytes: number;
   totalBytes: number;
   conversionMessage?: string; // 视频转换消息
-  codecInfo?: string; // 编码器信息
 
   // WebGL 相关状态
   isWebGLLoading?: boolean; // WebGL 纹理是否正在加载

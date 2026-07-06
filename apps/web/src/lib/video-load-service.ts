@@ -7,7 +7,7 @@ import type {
 } from "~/lib/image-loading-types";
 import { createAbortError } from "~/lib/image-loading-types";
 import { extractMotionPhotoVideo } from "~/lib/motion-photo-extractor";
-import { convertMovToMp4, needsVideoConversion } from "~/lib/video-converter";
+import { needsVideoConversion, relabelMovAsMp4 } from "~/lib/video-converter";
 
 export class VideoLoadService {
   private pendingReject: ((reason?: unknown) => void) | null = null;
@@ -194,7 +194,6 @@ export class VideoLoadService {
     callbacks: LoadingCallbacks,
   ): Promise<VideoProcessResult> {
     const { onLoadingStateUpdate } = callbacks;
-    const i18n = getI18n();
 
     onLoadingStateUpdate?.({
       isVisible: true,
@@ -202,46 +201,14 @@ export class VideoLoadService {
       loadingProgress: 0,
     });
 
-    debugLog("Converting MOV video to MP4...");
+    debugLog("Relabeling MOV video as MP4...");
 
-    const result = await convertMovToMp4(
-      livePhotoVideoUrl,
-      (progress) => {
-        const codecKeywords: string[] = [
-          i18n.t("video.codec.keyword"),
-          "encoder",
-          "codec",
-          "编码器",
-        ];
-        const isCodecInfo = codecKeywords.some((keyword: string) =>
-          progress.message.toLowerCase().includes(keyword.toLowerCase()),
-        );
+    // 失败时直接向上抛：processVideo 的 catch 统一负责隐藏加载指示器
+    const convertedVideoUrl = await relabelMovAsMp4(livePhotoVideoUrl, {
+      signal: this.currentAbortController?.signal,
+    });
 
-        onLoadingStateUpdate?.({
-          isVisible: true,
-          isConverting: progress.isConverting,
-          loadingProgress: progress.progress,
-          conversionMessage: progress.message,
-          codecInfo: isCodecInfo ? progress.message : undefined,
-        });
-      },
-      false,
-      { signal: this.currentAbortController?.signal },
-    );
-
-    if (!result.success || !result.videoUrl) {
-      console.error("Video conversion failed:", result.error);
-      onLoadingStateUpdate?.({
-        isVisible: false,
-      });
-      throw new Error(result.error || "Video conversion failed");
-    }
-
-    const convertedVideoUrl = result.videoUrl;
-    this.setVideoSource(videoElement, result.videoUrl);
-    debugLog(
-      `Video conversion completed. Size: ${result.convertedSize ? Math.round(result.convertedSize / 1024) : "unknown"}KB`,
-    );
+    this.setVideoSource(videoElement, convertedVideoUrl);
 
     onLoadingStateUpdate?.({
       isVisible: false,

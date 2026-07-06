@@ -1,69 +1,20 @@
-import { getI18n } from "~/i18n";
-
 import { debugLog } from "./debug-log";
 import { isSafari } from "./device-viewport";
 import { LRUCache } from "./lru-cache";
-import { transmuxMovToMp4 } from "./mp4-utils";
 
-interface ConversionProgress {
-  isConverting: boolean;
-  progress: number;
-  message: string;
-}
-
-interface ConversionResult {
-  success: boolean;
-  videoUrl?: string;
-  error?: string;
-  convertedSize?: number;
-}
-
-interface ConversionOptions {
-  signal?: AbortSignal;
-}
-
-// Global video cache instance using the generic LRU cache with custom cleanup
-const videoCache: LRUCache<string, ConversionResult> = new LRUCache<
+// 以原始 URL 为键缓存重贴标签后的 blob URL：逐出时 revoke，
+// 避免同一段 Live Photo 视频被反复下载、多个 blob URL 长期钉住内存。
+const relabeledUrlCache: LRUCache<string, string> = new LRUCache<
   string,
-  ConversionResult
->(10, (value, key, reason) => {
-  if (value.videoUrl) {
-    try {
-      URL.revokeObjectURL(value.videoUrl);
-      debugLog(`Video cache: Revoked blob URL - ${reason}`);
-    } catch (error) {
-      console.warn(`Failed to revoke video blob URL (${reason}):`, error);
-    }
+  string
+>(10, (blobUrl, _key, reason) => {
+  try {
+    URL.revokeObjectURL(blobUrl);
+    debugLog(`Video cache: Revoked blob URL - ${reason}`);
+  } catch (error) {
+    console.warn(`Failed to revoke video blob URL (${reason}):`, error);
   }
 });
-
-function convertMOVtoMP4(
-  videoUrl: string,
-  onProgress?: (progress: ConversionProgress) => void,
-  options: ConversionOptions = {},
-): Promise<ConversionResult> {
-  return new Promise((resolve, reject) => {
-    // Start transmux conversion
-    transmuxMovToMp4(videoUrl, {
-      onProgress,
-      signal: options.signal,
-    })
-      .then((result) => {
-        resolve(result);
-      })
-      .catch((error) => {
-        if (error instanceof Error && error.name === "AbortError") {
-          reject(error);
-          return;
-        }
-        console.error("Transmux conversion failed:", error);
-        resolve({
-          success: false,
-          error: error instanceof Error ? error.message : "Transmux failed",
-        });
-      });
-  });
-}
 
 // 检测浏览器是否原生支持 MOV 格式
 function isBrowserSupportMov(): boolean {
@@ -112,70 +63,31 @@ export function needsVideoConversion(url: string): boolean {
   return true;
 }
 
-export async function convertMovToMp4(
+/**
+ * 把 MOV 原始字节重贴为 video/mp4 的 blob URL——不转封装。
+ * MOV 与 MP4 同属 ISO-BMFF 容器家族，Chromium 的解复用器本就认得
+ * QuickTime 结构，拦住播放的只是 MIME 嗅探，换标签即可。
+ */
+export async function relabelMovAsMp4(
   videoUrl: string,
-
-  onProgress?: (progress: ConversionProgress) => void,
-  forceReconvert = false, // 添加强制重新转换参数
-  options: ConversionOptions = {},
-): Promise<ConversionResult> {
-  const { t } = getI18n();
-  // Check cache first, unless forced to reconvert
-  if (!forceReconvert) {
-    const cachedResult = videoCache.get(videoUrl);
-    if (cachedResult) {
-      debugLog("Using cached video conversion result");
-      onProgress?.({
-        isConverting: false,
-        progress: 100,
-        message: t("video.conversion.cached.result"),
-      });
-      debugLog("Cached video conversion result:", cachedResult);
-      return cachedResult;
-    }
-  } else {
-    debugLog("Force reconversion: clearing cached result for", videoUrl);
-    videoCache.delete(videoUrl);
+  options: { signal?: AbortSignal } = {},
+): Promise<string> {
+  const cached = relabeledUrlCache.get(videoUrl);
+  if (cached) {
+    debugLog("Using cached MOV relabel result");
+    return cached;
   }
 
-  try {
-    debugLog("Target format: MP4 (H.264)");
-    onProgress?.({
-      isConverting: true,
-      progress: 0,
-      message: t("video.conversion.transmux.high.quality"),
-    });
-
-    const result = await convertMOVtoMP4(videoUrl, onProgress, options);
-
-    // Cache the result
-    videoCache.set(videoUrl, result);
-
-    if (result.success) {
-      debugLog("conversion completed successfully and cached");
-    } else {
-      console.error("conversion failed:", result.error);
-    }
-
-    return result;
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw error;
-    }
-    console.error("conversion failed:", error);
-    const fallbackResult = {
-      success: false,
-      error: `Conversion Failed: ${error instanceof Error ? error.message : error}`,
-    };
-
-    return fallbackResult;
+  const response = await fetch(videoUrl, { signal: options.signal });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch video: ${response.statusText}`);
   }
-}
 
-export function clearVideoConversionCache(): void {
-  videoCache.clear();
-}
+  const buffer = await response.arrayBuffer();
+  const blob = new Blob([buffer], { type: "video/mp4" });
+  const blobUrl = URL.createObjectURL(blob);
+  relabeledUrlCache.set(videoUrl, blobUrl);
+  debugLog(`MOV relabeled as MP4: ${Math.round(blob.size / 1024)}KB`);
 
-export function getVideoConversionCacheSize(): number {
-  return videoCache.size();
+  return blobUrl;
 }

@@ -65,17 +65,19 @@ export class ImageConversionService {
           `Image converted: ${(blob.size / 1024).toFixed(1)}KB -> ${(conversionResult.convertedSize / 1024).toFixed(1)}KB`,
         );
 
-        // 把转换结果缓存进 regularImageCache，用它"自有"的 object URL（与 heicCache 拥有的
-        // conversionResult.url 相互独立，各自 revoke 互不影响）。这样重开同一张 HEIC/TIFF 时
-        // loadImage 的 getCachedRegularImage 会命中，直接跳过原图的重新下载与重新转换。
+        // 转换产物的 object URL 只有一个所有者：regularImageCache（逐出时 revoke）。
+        // get-or-set 后返回同一条缓存条目，重开同一张 HEIC/TIFF 时
+        // loadImage 的 getCachedRegularImage 会命中，跳过原图的重新下载与重新转换。
         const cacheKey = createRegularImageCacheKey(originalUrl);
-        if (!this.regularImageCache.get(cacheKey)) {
-          this.regularImageCache.set(cacheKey, {
+        let cachedEntry = this.regularImageCache.get(cacheKey);
+        if (!cachedEntry) {
+          cachedEntry = {
             blobSrc: URL.createObjectURL(conversionResult.blob),
             blob: conversionResult.blob,
             originalSize: conversionResult.blob.size,
             format: conversionResult.blob.type,
-          });
+          };
+          this.regularImageCache.set(cacheKey, cachedEntry);
         }
 
         callbacks.onLoadingStateUpdate?.({
@@ -83,9 +85,8 @@ export class ImageConversionService {
         });
 
         return {
-          blobSrc: conversionResult.url,
-          blob: conversionResult.blob,
-          convertedUrl: conversionResult.url,
+          blobSrc: cachedEntry.blobSrc,
+          blob: cachedEntry.blob,
         };
       }
 
