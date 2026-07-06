@@ -113,10 +113,7 @@ export const precheck = async (options: PrecheckOptions = {}) => {
       })`pnpm --filter @afilmory/builder cli`);
 
   try {
-    await runBuilder({
-      ...env,
-      BUILDER_CONFIG_PATH: env.BUILDER_CONFIG_PATH || "builder.config.ts",
-    });
+    await runBuilder({ ...env });
   } catch (error) {
     if (!fallbackManifest || requireFreshBuild) {
       if (requireFreshBuild && fallbackManifest) {

@@ -6,4 +6,6 @@ export const MANIFEST_PATH = path.resolve(
   "../../../../../generated/photos-manifest.json",
 );
 
-export const MONOREPO_ROOT_PATH = path.resolve(dirname, "../../../../..");
+const MONOREPO_ROOT_PATH = path.resolve(dirname, "../../../../..");
+
+export const LOCALES_PATH = path.join(MONOREPO_ROOT_PATH, "locales") + path.sep;

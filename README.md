@@ -50,7 +50,7 @@ Huge thanks to [Innei](https://innei.in) and the Afilmory team for creating this
 ### Core
 
 - 🖼️ **High-performance WebGL renderer** - custom React 19 WebGL viewer with smooth zooming, panning, tiled loading, and fallback error callbacks.
-- 📱 **Responsive masonry layout** - built on Masonic with virtualization for large galleries.
+- 📱 **Responsive masonry layout** - custom pure-computed virtual masonry with integer-pixel geometry and no scroll-time DOM measurement.
 - 🎨 **Modern UI design** - glassmorphic interface built with Tailwind CSS 4, Radix UI primitives, and Motion.
 - ⚡ **Incremental builds** - existing manifest data, thumbnails, EXIF, and tone analysis are reused when source photos have not changed.
 - 🌐 **Internationalization** - bundled language resources from `locales/app/*.json`.
@@ -191,6 +191,18 @@ This cache is not a photo storage backend. Source photos still come from S3.
 | ---------------- | -------------- | ---------- | ----------------------- |
 | `MAP_STYLE`      | Map style      | `builtin`  | `builtin` or custom URL |
 | `MAP_PROJECTION` | Map projection | `mercator` | `globe` or `mercator`   |
+
+### Optional build-time geocoding
+
+Reverse geocoding is **enabled by default**: any build that processes
+GPS-tagged photos calls the public Nominatim API to resolve place names into
+the manifest. Set `GEOCODING_ENABLED=false` to opt out of build-time external
+network calls. If you keep it on, set `GEOCODING_USER_AGENT` to a real
+identifier per the
+[Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/)
+(max 1 request/second). `GEOCODING_PROVIDER=mapbox` plus `MAPBOX_TOKEN` is the
+alternative to Nominatim. See `.env.template` for the full `GEOCODING_*` knob
+list.
 
 ### Local `.env`
 
@@ -348,7 +360,7 @@ Use `pnpm build` as the build command.
 - Sharp for image processing and generated OG images
 - exiftool-vendored for EXIF extraction
 - AWS SDK v3 for S3 access
-- Worker threads or cluster workers for concurrent processing
+- node:cluster worker processes or an in-process concurrency pool
 - thumbhash for compact image placeholders
 
 ---
@@ -360,13 +372,18 @@ afilmory/
 ├── apps/
 │   └── web/                   # Frontend SPA
 ├── packages/
+│   ├── build-assets/          # Build-time OG image, feed.xml, and sitemap.xml generation
 │   ├── builder/               # Photo processing and manifest builder
-│   ├── data/                  # Shared manifest types and parsers
+│   ├── media/                 # Zero-dependency thumbhash byte/hex codec leaf
+│   ├── schema/                # Manifest contract: types + strict/lenient parsers
 │   ├── ui/                    # Shared UI primitives and hooks
 │   └── webgl-viewer/          # WebGL image viewer package
 ├── docs/
 │   ├── assets/                # README images
-│   └── rss-exif-extension.md  # RSS EXIF extension notes
+│   ├── CONTRIBUTING.md        # Contributor setup and workflow
+│   ├── rss-exif-extension.md  # RSS EXIF extension notes
+│   ├── security-notes.md      # Security-relevant configuration notes
+│   └── testing.md             # Vitest and Playwright test/CI guide
 ├── generated/                 # Generated photos-manifest.json
 ├── locales/app/               # i18n JSON resources
 ├── scripts/                   # Build-time helper scripts

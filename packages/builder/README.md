@@ -80,7 +80,7 @@ pnpm build:manifest -- --force-manifest
 pnpm build:manifest -- --config
 ```
 
-The root script sets `BUILDER_CONFIG_PATH=builder.config.ts` and runs the builder CLI through `tsx`.
+The root script runs the builder CLI through `tsx`. The config file is `builder.config.ts` at the repo root, found by c12's `builder` name convention.
 
 Build modes:
 

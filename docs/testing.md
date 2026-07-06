@@ -6,8 +6,8 @@ as Vitest *projects* from the root `vitest.config.ts`.
 ## Running tests
 
 ```bash
-pnpm test            # all projects, per-package (CI-equivalent strict run)
-pnpm test:coverage   # all projects in one pass, with v8 coverage -> ./coverage
+pnpm test            # all projects in one vitest run
+pnpm test:coverage   # same, with v8 coverage -> ./coverage
 pnpm test:e2e        # Playwright e2e (spawns a Vite dev server)
 ```
 

@@ -50,7 +50,7 @@
 ### 核心功能
 
 - 🖼️ **高性能 WebGL 渲染器** - React 19 WebGL 查看器，支持流畅缩放、平移、分块加载和错误回调。
-- 📱 **响应式瀑布流布局** - 基于 Masonic，适合大量照片虚拟滚动。
+- 📱 **响应式瀑布流布局** - 自研纯计算虚拟瀑布流，整数像素几何，滚动时不做 DOM 测量。
 - 🎨 **现代 UI 设计** - 使用 Tailwind CSS 4、Radix UI 和 Motion 构建毛玻璃风格界面。
 - ⚡ **增量构建** - 未变化照片会复用已有 manifest 数据、缩略图、EXIF 和影调分析。
 - 🌐 **国际化** - 语言资源来自 `locales/app/*.json`。
@@ -181,6 +181,10 @@
 | ---------------- | -------- | ---------- | ---------------------- |
 | `MAP_STYLE`      | 地图样式 | `builtin`  | `builtin` 或自定义 URL |
 | `MAP_PROJECTION` | 地图投影 | `mercator` | `globe` 或 `mercator`  |
+
+### 可选：构建期反向地理编码
+
+反向地理编码**默认开启**：只要构建处理了带 GPS 的照片，就会调用公共 Nominatim API 把坐标解析为地名写入 manifest。不希望构建期访问外部服务时，设置 `GEOCODING_ENABLED=false`。若保持开启，请按 [Nominatim 使用政策](https://operations.osmfoundation.org/policies/nominatim/) 提供真实的 `GEOCODING_USER_AGENT`（不超过 1 request/second）。也可以用 `GEOCODING_PROVIDER=mapbox` 搭配 `MAPBOX_TOKEN` 替代 Nominatim。完整 `GEOCODING_*` 配置项见 `.env.template`。
 
 ### 本地 `.env`
 
@@ -338,7 +342,7 @@ Vercel 使用：
 - Sharp：图片处理和 Open Graph 图片生成
 - exiftool-vendored：EXIF 提取
 - AWS SDK v3：S3 访问
-- Worker threads 或 cluster workers：并发处理
+- node:cluster 多进程或单进程并发池：并发处理
 - thumbhash：紧凑图片占位符
 
 ---
@@ -350,13 +354,18 @@ afilmory/
 ├── apps/
 │   └── web/                   # 前端 SPA 应用
 ├── packages/
+│   ├── build-assets/          # 构建期 OG 图片、feed.xml 和 sitemap.xml 生成
 │   ├── builder/               # 照片处理与 manifest builder
-│   ├── data/                  # 共享 manifest 类型和解析工具
+│   ├── media/                 # 零依赖 thumbhash 字节/hex 编解码叶子包
+│   ├── schema/                # manifest 契约：类型与 strict/lenient 解析器
 │   ├── ui/                    # 共享 UI 基元与 hooks
 │   └── webgl-viewer/          # WebGL 图片查看器包
 ├── docs/
 │   ├── assets/                # README 图片
-│   └── rss-exif-extension.md  # RSS EXIF 扩展说明
+│   ├── CONTRIBUTING.md        # 贡献者环境与流程
+│   ├── rss-exif-extension.md  # RSS EXIF 扩展说明
+│   ├── security-notes.md      # 安全相关配置说明
+│   └── testing.md             # Vitest 与 Playwright 测试/CI 指南
 ├── generated/                 # 生成的 photos-manifest.json
 ├── locales/app/               # i18n JSON 资源
 ├── scripts/                   # 构建期辅助脚本

@@ -12,7 +12,7 @@
   "scripts": {
     "audit:prod": "pnpm audit --registry=https://registry.npmjs.org --prod --audit-level=high",
     "build": "pnpm exec tsx apps/web/scripts/precheck.ts && pnpm build:web",
-    "build:manifest": "BUILDER_CONFIG_PATH=builder.config.ts pnpm --filter @afilmory/builder cli",
+    "build:manifest": "pnpm --filter @afilmory/builder cli",
     "build:packages": "pnpm --filter @afilmory/builder build && pnpm --filter @afilmory/webgl-viewer build",
     "build:web": "pnpm --filter @afilmory/web build",
     "dev": "pnpm --filter @afilmory/web dev",
@@ -23,7 +23,7 @@
     "lint:fix": "eslint . --fix",
     "prepare": "simple-git-hooks",
     "preview": "pnpm --filter @afilmory/web serve",
-    "test": "pnpm --filter @afilmory/schema test && pnpm --filter @afilmory/media test && pnpm --filter @afilmory/ui test && pnpm --filter @afilmory/builder test && pnpm --filter @afilmory/build-assets test && pnpm --filter @afilmory/webgl-viewer test && pnpm --filter @afilmory/web test && pnpm exec vitest run --project scripts",
+    "test": "pnpm exec vitest run",
     "test:coverage": "pnpm exec vitest run --coverage",
     "test:e2e": "env -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 playwright test",
     "test:e2e:install": "env -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 playwright install chromium",
