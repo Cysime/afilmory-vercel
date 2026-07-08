@@ -21,16 +21,21 @@ export interface WebGLInputControllerHost {
  * - 单指 = 平移，双指 = 缩放（以 `Map<pointerId>` 追踪多指）。
  * - `setPointerCapture` 保证按下后即便指针移出画布/窗口也持续收到事件（取代旧的
  *   window mousemove/mouseup 动态监听）。
- * - 双击（含触摸双击）由指针 tap 合成（300ms + 50px），取代原生 `dblclick` 与
- *   手写的触摸双击两套逻辑。
+ * - 双击（含触摸双击）由指针 tap 合成（两次 tap 相距 300ms/50px 内；按下→抬起
+ *   位移 ≥10px 的拖拽或捏合收尾的抬指不算 tap），取代原生 `dblclick` 与手写的
+ *   触摸双击两套逻辑。
  * - `wheel` 仍是独立监听（滚轮非指针事件）。
  * - 供照片查看器「下滑关闭」手势仲裁：当祖先手势夺走某指针的捕获时，本控制器会收到
  *   `lostpointercapture` 并清理该指针的在途平移/缩放状态（见 photo-viewer 的
  *   useDismissGesture）。
  */
 export class WebGLInputController {
-  // 活跃指针位置（clientX/clientY）。size===1 → 平移；size>=2 → 缩放。
-  private readonly pointers = new Map<number, { x: number; y: number }>();
+  // 活跃指针：当前位置（clientX/clientY）+ 按下位置（tap 位移判定用）。
+  // size===1 → 平移；size>=2 → 缩放。
+  private readonly pointers = new Map<
+    number,
+    { x: number; y: number; downX: number; downY: number }
+  >();
   private lastPinchDistance = 0;
   // 本次手势（从第一指按下到全部抬起）是否发生过捏合：全部抬起时通知宿主，
   // 供其对微小缩放残留做回吸贴合。
@@ -114,7 +119,12 @@ export class WebGLInputController {
     // 手势开始时刷新缓存的 rect，pinch/双击/wheel 途中即可复用、不再逐帧读布局。
     this.canvasRect = this.canvas.getBoundingClientRect();
 
-    this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    this.pointers.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+      downX: event.clientX,
+      downY: event.clientY,
+    });
     // 捕获该指针：即便移出画布/窗口也持续收到 move/up（取代 window 监听）。
     this.canvas.setPointerCapture?.(event.pointerId);
 
@@ -171,14 +181,18 @@ export class WebGLInputController {
     const pointer = this.pointers.get(event.pointerId);
     if (!pointer) return;
 
-    const wasPinch = this.pointers.size >= 2;
     this.pointers.delete(event.pointerId);
 
-    // 仅「非缩放收尾且所有指针都抬起」的干净单指抬手才参与双击合成：
-    // 300ms 内、位移 <50px 的连续两次 tap 触发一次双击动作。
+    // 仅「非捏合手势、所有指针已抬起、按下→抬起位移 <10px」的干净单指 tap 才
+    // 参与双击合成：300ms 内、相距 <50px 的连续两次 tap 触发一次双击动作。
+    // gestureHadPinch 到下方 notifyPinchEndIfGestureFinished 才复位，因此捏合
+    // 收尾的最后一次抬指在这里仍被识别、不会记成 tap（否则捏合后 300ms 内的
+    // 一次单击会误触发双击缩放）；位移门槛把拖拽/甩动的抬手排除在外。
     if (
-      !wasPinch &&
+      !this.gestureHadPinch &&
       this.pointers.size === 0 &&
+      Math.hypot(event.clientX - pointer.downX, event.clientY - pointer.downY) <
+        10 &&
       !this.config.doubleClick.disabled
     ) {
       const now = Date.now();
