@@ -1,24 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { isMobileDevice } from "~/lib/device-viewport";
 import type { ImageLoaderManager } from "~/lib/image-loader-manager";
+import type { VideoSource } from "~/lib/image-loading-types";
 import { useAfilmoryRuntime } from "~/runtime/app-runtime";
 import type { PhotoManifest } from "~/types/photo";
+
+import { useStableVideoSource } from "./useStableVideoSource";
 
 interface UseLivePhotoHandlerProps {
   data: PhotoManifest;
   imageLoaded: boolean;
 }
-
-type LoadableVideo =
-  | {
-      type: "motion-photo";
-      offset: number;
-      size?: number;
-      presentationTimestamp?: number;
-    }
-  | { type: "live-photo"; videoUrl: string }
-  | undefined;
 
 function isAbortLikeError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
@@ -34,29 +27,21 @@ function resetVideoElement(videoElement: HTMLVideoElement | null): void {
   videoElement.load();
 }
 
-function getVideoLoadKey(
-  dataVideo: LoadableVideo,
+function toVideoSource(
+  video: PhotoManifest["video"],
   originalUrl: string,
-): string {
-  if (!dataVideo) {
-    return "none";
+): VideoSource {
+  switch (video?.type) {
+    case "motion-photo": {
+      return { ...video, imageUrl: originalUrl };
+    }
+    case "live-photo": {
+      return { type: "live-photo", videoUrl: video.videoUrl };
+    }
+    default: {
+      return { type: "none" };
+    }
   }
-
-  if (dataVideo.type === "motion-photo") {
-    return [
-      "motion-photo",
-      originalUrl,
-      dataVideo.offset,
-      dataVideo.size ?? "",
-      dataVideo.presentationTimestamp ?? "",
-    ].join(":");
-  }
-
-  if (dataVideo.type === "live-photo") {
-    return `live-photo:${dataVideo.videoUrl}`;
-  }
-
-  return "none";
 }
 
 export const useLivePhotoHandler = ({
@@ -70,67 +55,56 @@ export const useLivePhotoHandler = ({
   const [isConvertingVideo, setIsConvertingVideo] = useState(false);
   const [videoConversionError, setVideoConversionError] =
     useState<unknown>(null);
+  // Video bytes are multi-MB (motion photos range-fetch the original file), so
+  // the grid only loads them once the user signals intent by hovering the
+  // cell. Grid playback is hover-only, so touch devices never request them.
+  const [videoLoadRequested, setVideoLoadRequested] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const hoverTimerRef = useRef<NodeJS.Timeout | null>(null);
   const imageLoaderManagerRef = useRef<ImageLoaderManager | null>(null);
   const loadedVideoKeyRef = useRef<string | null>(null);
-  const videoType = video?.type;
-  const livePhotoUrl = videoType === "live-photo" ? video?.videoUrl : undefined;
-  const motionPhotoOffset =
-    videoType === "motion-photo" ? video?.offset : undefined;
-  const motionPhotoSize =
-    videoType === "motion-photo" ? video?.size : undefined;
-  const motionPhotoPresentationTimestamp =
-    videoType === "motion-photo" ? video?.presentationTimestamp : undefined;
-  const stableVideo = useMemo(() => {
-    if (!videoType) {
-      return;
-    }
+  const isHoveringRef = useRef(false);
+  const { videoSource, videoSourceKey } = useStableVideoSource(
+    toVideoSource(video, originalUrl),
+  );
 
-    if (videoType === "motion-photo") {
-      return {
-        type: "motion-photo" as const,
-        offset: motionPhotoOffset!,
-        size: motionPhotoSize,
-        presentationTimestamp: motionPhotoPresentationTimestamp,
-      };
-    }
-
-    if (videoType === "live-photo") {
-      return {
-        type: "live-photo" as const,
-        videoUrl: livePhotoUrl!,
-      };
-    }
-  }, [
-    videoType,
-    livePhotoUrl,
-    motionPhotoOffset,
-    motionPhotoSize,
-    motionPhotoPresentationTimestamp,
-  ]);
-  const videoLoadKey = getVideoLoadKey(stableVideo, originalUrl);
-
-  const hasVideo = videoType !== undefined;
+  const hasVideo = videoSource.type !== "none";
 
   useEffect(() => {
     setIsPlayingLivePhoto(false);
     setLivePhotoVideoLoaded(false);
     setIsConvertingVideo(false);
     setVideoConversionError(null);
+    setVideoLoadRequested(false);
     loadedVideoKeyRef.current = null;
+    isHoveringRef.current = false;
 
     resetVideoElement(videoRef.current);
   }, [id]);
 
-  // Live Photo/Motion Photo video loading logic
+  const startPlayTimer = useCallback(() => {
+    hoverTimerRef.current = setTimeout(() => {
+      setIsPlayingLivePhoto(true);
+      const video = videoRef.current;
+      if (video) {
+        video.currentTime = 0;
+        void video.play().catch((error: unknown) => {
+          console.error("Failed to play masonry live photo video:", error);
+          setIsPlayingLivePhoto(false);
+        });
+      }
+    }, 200);
+  }, []);
+
+  // Live Photo/Motion Photo video loading logic (deferred until hover intent)
   useEffect(() => {
     if (
-      !stableVideo ||
+      !videoLoadRequested ||
+      videoSource.type === "none" ||
       !imageLoaded ||
       !videoRef.current ||
-      loadedVideoKeyRef.current === videoLoadKey
+      loadedVideoKeyRef.current === videoSourceKey
     ) {
       return;
     }
@@ -147,30 +121,14 @@ export const useLivePhotoHandler = ({
       imageLoaderManagerRef.current = imageLoaderManager;
 
       try {
-        let videoSource: Parameters<typeof imageLoaderManager.processVideo>[0];
-
-        if (stableVideo.type === "motion-photo") {
-          videoSource = {
-            type: "motion-photo",
-            imageUrl: originalUrl,
-            offset: stableVideo.offset,
-            size: stableVideo.size,
-            presentationTimestamp: stableVideo.presentationTimestamp,
-          };
-        } else if (stableVideo.type === "live-photo") {
-          videoSource = {
-            type: "live-photo",
-            videoUrl: stableVideo.videoUrl,
-          };
-        } else {
-          videoSource = { type: "none" };
-        }
-
-        if (videoSource.type !== "none") {
-          await imageLoaderManager.processVideo(videoSource, videoEl);
-          if (!cancelled) {
-            loadedVideoKeyRef.current = videoLoadKey;
-            setLivePhotoVideoLoaded(true);
+        await imageLoaderManager.processVideo(videoSource, videoEl);
+        if (!cancelled) {
+          loadedVideoKeyRef.current = videoSourceKey;
+          setLivePhotoVideoLoaded(true);
+          // The load was hover-initiated; if the pointer is still on the
+          // cell, start playback now instead of requiring a second hover.
+          if (isHoveringRef.current) {
+            startPlayTimer();
           }
         }
       } catch (videoError) {
@@ -196,39 +154,39 @@ export const useLivePhotoHandler = ({
       resetVideoElement(videoEl);
     };
   }, [
-    stableVideo,
-    originalUrl,
+    videoLoadRequested,
+    videoSource,
+    videoSourceKey,
     imageLoaded,
-    videoLoadKey,
     runtime.imageLoading,
+    startPlayTimer,
   ]);
 
   // Live Photo/Motion Photo hover handling (desktop only)
   const handleMouseEnter = useCallback(() => {
-    if (
-      isMobileDevice ||
-      !hasVideo ||
-      !livePhotoVideoLoaded ||
-      isPlayingLivePhoto ||
-      isConvertingVideo
-    ) {
+    if (isMobileDevice || !hasVideo) {
       return;
     }
 
-    hoverTimerRef.current = setTimeout(() => {
-      setIsPlayingLivePhoto(true);
-      const video = videoRef.current;
-      if (video) {
-        video.currentTime = 0;
-        void video.play().catch((error: unknown) => {
-          console.error("Failed to play masonry live photo video:", error);
-          setIsPlayingLivePhoto(false);
-        });
-      }
-    }, 200);
-  }, [hasVideo, livePhotoVideoLoaded, isPlayingLivePhoto, isConvertingVideo]);
+    isHoveringRef.current = true;
+    setVideoLoadRequested(true);
+
+    if (!livePhotoVideoLoaded || isPlayingLivePhoto || isConvertingVideo) {
+      return;
+    }
+
+    startPlayTimer();
+  }, [
+    hasVideo,
+    livePhotoVideoLoaded,
+    isPlayingLivePhoto,
+    isConvertingVideo,
+    startPlayTimer,
+  ]);
 
   const handleMouseLeave = useCallback(() => {
+    isHoveringRef.current = false;
+
     if (hoverTimerRef.current) {
       clearTimeout(hoverTimerRef.current);
       hoverTimerRef.current = null;

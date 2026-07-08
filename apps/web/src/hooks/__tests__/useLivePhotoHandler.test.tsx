@@ -1,4 +1,4 @@
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import {
   afterAll,
   afterEach,
@@ -15,22 +15,12 @@ import { useLivePhotoHandler } from "../useLivePhotoHandler";
 let processVideoMock: ReturnType<typeof vi.fn>;
 let cleanupMock: ReturnType<typeof vi.fn>;
 
-vi.mock("~/lib/image-loader-manager", () => {
-  class MockImageLoaderManager {
-    processVideo(...args: unknown[]) {
-      return processVideoMock(...args);
-    }
-
-    cleanup(...args: unknown[]) {
-      return cleanupMock(...args);
-    }
-  }
-
-  return { ImageLoaderManager: MockImageLoaderManager };
-});
+const deviceState = vi.hoisted(() => ({ isMobile: false }));
 
 vi.mock("~/lib/device-viewport", () => ({
-  isMobileDevice: false,
+  get isMobileDevice() {
+    return deviceState.isMobile;
+  },
 }));
 
 const runtimeMock = vi.hoisted(() => ({
@@ -58,17 +48,41 @@ function LivePhotoHandlerHarness({
   };
   tick: number;
 }) {
-  const { videoRef } = useLivePhotoHandler({
+  const {
+    videoRef,
+    isConvertingVideo,
+    isPlayingLivePhoto,
+    handleMouseEnter,
+    handleMouseLeave,
+  } = useLivePhotoHandler({
     data: data as never,
     imageLoaded: true,
   });
 
   return (
-    <div data-testid="live-photo-handler" data-tick={String(tick)}>
+    <div
+      data-testid="live-photo-handler"
+      data-tick={String(tick)}
+      data-converting={String(isConvertingVideo)}
+      data-playing={String(isPlayingLivePhoto)}
+    >
       <video ref={videoRef} />
+      {/* React synthesizes mouseenter from mouseover, which fireEvent.mouseEnter
+          does not emulate — drive the handlers through plain clicks instead. */}
+      <button data-testid="enter" type="button" onClick={handleMouseEnter} />
+      <button data-testid="leave" type="button" onClick={handleMouseLeave} />
     </div>
   );
 }
+
+const photoData = {
+  id: "photo-1",
+  originalUrl: "https://example.com/photo.jpg",
+  video: {
+    type: "live-photo" as const,
+    videoUrl: "https://example.com/photo.mov",
+  },
+};
 
 describe("useLivePhotoHandler", () => {
   let loadSpy: ReturnType<typeof vi.spyOn>;
@@ -92,6 +106,7 @@ describe("useLivePhotoHandler", () => {
   });
 
   beforeEach(() => {
+    deviceState.isMobile = false;
     processVideoMock = vi.fn();
     cleanupMock = vi.fn();
     runtimeMock.imageLoading.createLoader.mockImplementation(() => ({
@@ -110,25 +125,26 @@ describe("useLivePhotoHandler", () => {
   afterEach(() => {
     runtimeMock.imageLoading.createLoader.mockReset();
     runtimeMock.imageLoading.cleanupLoader.mockClear();
+    playSpy.mockClear();
     cleanup();
   });
 
-  it("keeps the masonry live photo video source after loading completes", async () => {
-    const data = {
-      id: "photo-1",
-      originalUrl: "https://example.com/photo.jpg",
-      video: {
-        type: "live-photo" as const,
-        videoUrl: "https://example.com/photo.mov",
-      },
-    };
+  it("does not fetch video bytes before hover intent", () => {
+    render(<LivePhotoHandlerHarness data={photoData} tick={0} />);
 
-    const { container, rerender } = render(
-      <LivePhotoHandlerHarness data={data} tick={0} />,
+    expect(runtimeMock.imageLoading.createLoader).not.toHaveBeenCalled();
+    expect(processVideoMock).not.toHaveBeenCalled();
+  });
+
+  it("loads once on first hover and keeps the video source across re-renders", async () => {
+    const { container, getByTestId, rerender } = render(
+      <LivePhotoHandlerHarness data={photoData} tick={0} />,
     );
 
     const videoElement = container.querySelector("video");
     expect(videoElement).not.toBeNull();
+
+    fireEvent.click(getByTestId("enter"));
 
     await waitFor(() => {
       expect(processVideoMock).toHaveBeenCalledTimes(1);
@@ -141,9 +157,9 @@ describe("useLivePhotoHandler", () => {
     rerender(
       <LivePhotoHandlerHarness
         data={{
-          id: data.id,
-          originalUrl: data.originalUrl,
-          video: { ...data.video },
+          id: photoData.id,
+          originalUrl: photoData.originalUrl,
+          video: { ...photoData.video },
         }}
         tick={1}
       />,
@@ -151,5 +167,72 @@ describe("useLivePhotoHandler", () => {
 
     expect(processVideoMock).toHaveBeenCalledTimes(1);
     expect(videoElement?.getAttribute("src")).toBe("blob:masonry-live-photo");
+  });
+
+  it("starts playback when a hover-initiated load finishes while still hovered", async () => {
+    const { getByTestId } = render(
+      <LivePhotoHandlerHarness data={photoData} tick={0} />,
+    );
+
+    fireEvent.click(getByTestId("enter"));
+
+    await waitFor(() => {
+      expect(processVideoMock).toHaveBeenCalledTimes(1);
+    });
+
+    await waitFor(() => {
+      expect(playSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(getByTestId("live-photo-handler").dataset.playing).toBe("true");
+  });
+
+  it("does not autoplay when the pointer left before the load finished", async () => {
+    let resolveLoad: (() => void) | undefined;
+    processVideoMock.mockImplementation(
+      (_videoSource, videoElement: HTMLVideoElement) =>
+        new Promise<object>((resolve) => {
+          resolveLoad = () => {
+            videoElement.setAttribute("src", "blob:masonry-live-photo");
+            resolve({});
+          };
+        }),
+    );
+
+    const { getByTestId } = render(
+      <LivePhotoHandlerHarness data={photoData} tick={0} />,
+    );
+
+    fireEvent.click(getByTestId("enter"));
+    await waitFor(() => {
+      expect(processVideoMock).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(getByTestId("leave"));
+    resolveLoad?.();
+
+    await waitFor(() => {
+      expect(getByTestId("live-photo-handler").dataset.converting).toBe(
+        "false",
+      );
+    });
+
+    // The play timer is 200ms; give it room to (wrongly) fire before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(playSpy).not.toHaveBeenCalled();
+    expect(getByTestId("live-photo-handler").dataset.playing).toBe("false");
+  });
+
+  it("never requests the video on touch devices", async () => {
+    deviceState.isMobile = true;
+
+    const { getByTestId } = render(
+      <LivePhotoHandlerHarness data={photoData} tick={0} />,
+    );
+
+    fireEvent.click(getByTestId("enter"));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(runtimeMock.imageLoading.createLoader).not.toHaveBeenCalled();
+    expect(processVideoMock).not.toHaveBeenCalled();
   });
 });
