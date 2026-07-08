@@ -5,7 +5,7 @@ import { use, useCallback, useEffect, useMemo } from "react";
 
 import type { GallerySetting } from "~/atoms/app";
 import { gallerySettingAtom } from "~/atoms/app";
-import { getPhotoDateString } from "~/lib/photo-date";
+import { getPhotoSortTime } from "~/lib/photo-date";
 import { PhotosContext } from "~/providers/photos-provider";
 import type { AppRuntime } from "~/runtime/app-runtime";
 import { useAfilmoryRuntime, usePhotoRepository } from "~/runtime/app-runtime";
@@ -20,30 +20,16 @@ type ViewerSourceMode = "filtered" | "all";
 
 const sortPhotos = (photos: PhotoManifestItem[], sortOrder: "asc" | "desc") => {
   return photos.toSorted((a, b) => {
-    const aDateStr = getPhotoDateString(a);
-    const bDateStr = getPhotoDateString(b);
+    const aTime = getPhotoSortTime(a);
+    const bTime = getPhotoSortTime(b);
 
-    return sortOrder === "asc"
-      ? aDateStr.localeCompare(bDateStr)
-      : bDateStr.localeCompare(aDateStr);
+    return sortOrder === "asc" ? aTime - bTime : bTime - aTime;
   });
 };
 
-type PhotoFilterSetting = Pick<
-  GallerySetting,
-  | "selectedTags"
-  | "selectedCameras"
-  | "selectedLenses"
-  | "selectedGeoCountries"
-  | "selectedGeoRegions"
-  | "selectedGeoCities"
-  | "selectedGeoDistricts"
-  | "sortOrder"
->;
-
 const filterAndSortPhotosImpl = (
   photos: PhotoManifestItem[],
-  gallerySetting: PhotoFilterSetting,
+  gallerySetting: GallerySetting,
 ) => {
   let filteredPhotos = photos;
   const {
@@ -111,12 +97,12 @@ const filterAndSortPhotosImpl = (
 // 引用相等，利于下游 memo），任一引用变化即重算；WeakMap 不阻止旧对象被 GC。
 const filterResultCache = new WeakMap<
   PhotoManifestItem[],
-  WeakMap<PhotoFilterSetting, PhotoManifestItem[]>
+  WeakMap<GallerySetting, PhotoManifestItem[]>
 >();
 
 export const filterAndSortPhotos = (
   photos: PhotoManifestItem[],
-  gallerySetting: PhotoFilterSetting,
+  gallerySetting: GallerySetting,
 ) => {
   let settingCache = filterResultCache.get(photos);
   if (!settingCache) {
@@ -278,6 +264,10 @@ export const useContextPhotos = () => {
   }
   return photos;
 };
+
+// 窄订阅：只关心开/关的组件（如 (main)/layout 的隐藏图库逻辑）用这个，
+// 避免经由 usePhotoViewer 订阅 currentIndex 等每次滑动都变化的原子。
+export const useIsPhotoViewerOpen = () => useAtomValue(openAtom);
 
 export const usePhotoViewerBodyScrollLock = () => {
   const isOpen = useAtomValue(openAtom);

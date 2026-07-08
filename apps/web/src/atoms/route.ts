@@ -1,8 +1,5 @@
 import { atom } from "jotai";
-import { useCallback } from "react";
 import type { Location, NavigateFunction, Params } from "react-router";
-
-import { useAtomSelector } from "~/lib/jotai";
 
 interface RouteAtom {
   params: Readonly<Params<string>>;
@@ -22,16 +19,9 @@ export const routeAtom = atom<RouteAtom>({
   },
 });
 
-export const useReadonlyRouteSelector = <T>(
-  selector: (route: RouteAtom) => T,
-): T =>
-  useAtomSelector(
-    routeAtom,
-    useCallback((route) => selector(route), [selector]),
-  );
-
 // Vite HMR will create new router instance, but RouterProvider always stable
 
+// null until StableRouterProvider mounts; readers navigate with `fn?.(...)`.
 export const navigateAtom = atom<{ fn: NavigateFunction | null }>({
-  fn() {},
+  fn: null,
 });

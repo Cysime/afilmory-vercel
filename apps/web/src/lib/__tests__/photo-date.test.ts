@@ -1,7 +1,7 @@
 import type { PhotoManifestItem } from "@afilmory/schema";
 import { describe, expect, it } from "vitest";
 
-import { getPhotoDate, getPhotoDateString } from "../photo-date";
+import { getPhotoDate, getPhotoSortTime } from "../photo-date";
 
 function createPhoto(
   overrides: Partial<PhotoManifestItem> = {},
@@ -153,63 +153,69 @@ describe("getPhotoDate", () => {
   });
 });
 
-describe("getPhotoDateString", () => {
-  it("should return DateTimeOriginal when available", () => {
-    const photo = createPhoto({
-      exif: {
-        DateTimeOriginal: "2024:03:15 14:30:00",
-        MeteringMode: undefined,
-        WhiteBalance: undefined,
-        WBShiftAB: undefined,
-        WBShiftGM: undefined,
-        WhiteBalanceBias: undefined,
-        FlashMeteringMode: undefined,
-        SensingMethod: undefined,
-        FocalPlaneXResolution: undefined,
-        FocalPlaneYResolution: undefined,
-        GPSAltitude: undefined,
-        GPSLatitude: undefined,
-        GPSLongitude: undefined,
-        GPSAltitudeRef: undefined,
-        GPSLatitudeRef: undefined,
-        GPSLongitudeRef: undefined,
-      },
-    });
-
-    expect(getPhotoDateString(photo)).toBe("2024:03:15 14:30:00");
+describe("getPhotoSortTime", () => {
+  const exifWithDate = (DateTimeOriginal: string) => ({
+    DateTimeOriginal,
+    MeteringMode: undefined,
+    WhiteBalance: undefined,
+    WBShiftAB: undefined,
+    WBShiftGM: undefined,
+    WhiteBalanceBias: undefined,
+    FlashMeteringMode: undefined,
+    SensingMethod: undefined,
+    FocalPlaneXResolution: undefined,
+    FocalPlaneYResolution: undefined,
+    GPSAltitude: undefined,
+    GPSLatitude: undefined,
+    GPSLongitude: undefined,
+    GPSAltitudeRef: undefined,
+    GPSLatitudeRef: undefined,
+    GPSLongitudeRef: undefined,
   });
 
-  it("should fall back to lastModified when exif is null", () => {
+  it("should match getPhotoDate's timestamp", () => {
+    const photo = createPhoto({
+      exif: exifWithDate("2024:03:15 14:30:00"),
+    });
+
+    expect(getPhotoSortTime(photo)).toBe(getPhotoDate(photo).getTime());
+  });
+
+  it("should order raw-EXIF dates against ISO dates chronologically", () => {
+    // 字符串比较在 ':'(58) vs '-'(45) 处判定 EXIF 串更大，三月会排到六月之后；
+    // 时间戳比较必须给出三月 < 六月。
+    const exifMarch = createPhoto({
+      id: "exif-march",
+      exif: exifWithDate("2024:03:15 14:30:00"),
+      lastModified: "2024-01-01T00:00:00Z",
+    });
+    const isoJune = createPhoto({
+      id: "iso-june",
+      exif: null,
+      lastModified: "2024-06-01T12:00:00Z",
+    });
+
+    expect(getPhotoSortTime(exifMarch)).toBeLessThan(getPhotoSortTime(isoJune));
+  });
+
+  it("should collapse unparsable dates to 0", () => {
+    const photo = createPhoto({
+      exif: null,
+      lastModified: "not-a-date",
+    });
+
+    expect(getPhotoSortTime(photo)).toBe(0);
+  });
+
+  it("should memoize by manifest item identity", () => {
     const photo = createPhoto({
       exif: null,
       lastModified: "2024-06-01T12:00:00Z",
     });
 
-    expect(getPhotoDateString(photo)).toBe("2024-06-01T12:00:00Z");
-  });
+    const first = getPhotoSortTime(photo);
+    photo.lastModified = "2025-01-01T00:00:00Z";
 
-  it("should fall back to lastModified when DateTimeOriginal is undefined", () => {
-    const photo = createPhoto({
-      exif: {
-        MeteringMode: undefined,
-        WhiteBalance: undefined,
-        WBShiftAB: undefined,
-        WBShiftGM: undefined,
-        WhiteBalanceBias: undefined,
-        FlashMeteringMode: undefined,
-        SensingMethod: undefined,
-        FocalPlaneXResolution: undefined,
-        FocalPlaneYResolution: undefined,
-        GPSAltitude: undefined,
-        GPSLatitude: undefined,
-        GPSLongitude: undefined,
-        GPSAltitudeRef: undefined,
-        GPSLatitudeRef: undefined,
-        GPSLongitudeRef: undefined,
-      },
-      lastModified: "2024-06-01T12:00:00Z",
-    });
-
-    expect(getPhotoDateString(photo)).toBe("2024-06-01T12:00:00Z");
+    expect(getPhotoSortTime(photo)).toBe(first);
   });
 });

@@ -72,6 +72,7 @@ vi.mock("~/hooks/useMobile", () => ({
 
 vi.mock("~/hooks/usePhotoViewer", () => ({
   getFilteredPhotos: () => [],
+  useIsPhotoViewerOpen: () => false,
   usePhotoViewer: () => ({
     currentIndex: 0,
     closeViewer: vi.fn(),

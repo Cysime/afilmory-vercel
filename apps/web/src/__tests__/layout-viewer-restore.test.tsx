@@ -90,6 +90,7 @@ vi.mock("~/hooks/useMobile", () => ({
 vi.mock("~/hooks/usePhotoViewer", () => ({
   getViewerPhotos: (...args: unknown[]) => getViewerPhotos(...args),
   getViewerSourceMode: (...args: unknown[]) => getViewerSourceMode(...args),
+  useIsPhotoViewerOpen: () => viewerState.isOpen,
   usePhotoViewer: () => ({
     ...viewerState,
     closeViewer,
