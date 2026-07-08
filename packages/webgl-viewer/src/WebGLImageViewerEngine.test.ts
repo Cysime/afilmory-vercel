@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { WebGLInputControllerHost } from "./input-controller";
 import { WebGLInputController } from "./input-controller";
-import type { WebGLImageViewerProps } from "./interface";
+import type { DebugInfo, WebGLImageViewerProps } from "./interface";
 import { WebGLImageViewerEngine } from "./WebGLImageViewerEngine";
 
 function firePointer(
@@ -610,6 +610,109 @@ describe("WebGLImageViewerEngine lifecycle", () => {
     for (const [message] of calls) {
       expect(message.payload.lodLevel).toBe(2);
     }
+
+    engine.destroy();
+  });
+
+  it("downgrades the quality signal back to the base texture when zooming from tiles to fit", () => {
+    // 回归：底图覆盖跳过路径不再触发 onVisibleLodReady，缩回 fit 后质量会滞留在
+    // 瓦片态的偏高值——需要显式 onCoveredByBase 把 currentQuality 降回底图水平。
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
+    const onLoadingStateChange = vi.fn();
+    const canvas = document.createElement("canvas");
+    const gl = createWebGLMock();
+    vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    });
+
+    // 通过 debug 回调读取引擎自己的可见瓦片集合，避免依赖分帧派发的时序：
+    // 缩放后整段可见集可能跨多帧派发，这里直接把可见集里每片都喂成就绪。
+    let visibleTiles: string[] = [];
+    const debugRef: React.RefObject<(info: DebugInfo) => void> = {
+      current: (info: DebugInfo) => {
+        visibleTiles = info.tileSystem?.visibleKeys ?? [];
+      },
+    };
+
+    const engine = new WebGLImageViewerEngine(
+      canvas,
+      {
+        src: "blob:photo",
+        sourceBlob: null,
+        className: "",
+        width: 100,
+        height: 100,
+        initialScale: 1,
+        minScale: 0.1,
+        maxScale: 10,
+        wheel: { step: 0.2 },
+        pinch: {},
+        doubleClick: { step: 0.7, mode: "toggle", animationTime: 200 },
+        panning: {},
+        limitToBounds: true,
+        centerOnInit: true,
+        smooth: true,
+        onZoomChange: () => {},
+        onLoadingStateChange,
+        onImagePainted: () => {},
+        onError: () => {},
+        debug: false,
+      } as Required<WebGLImageViewerProps>,
+      debugRef,
+    );
+    const worker = WorkerMock.instances.at(-1)!;
+    const emit = (data: unknown) =>
+      worker.onmessage?.({ data } as MessageEvent);
+    const lastQuality = () =>
+      onLoadingStateChange.mock.calls.at(-1)?.[2] as string | undefined;
+    // emit() 只接受 unknown，结构化位图夹具无需断言成 ImageBitmap
+    const makeBitmap = () => ({ width: 512, height: 512, close: vi.fn() });
+
+    // destroy 会拒绝仍挂起的 loadImage promise，测试侧需吞掉这个预期内的拒绝
+    engine.loadImage("blob:photo", 1000, 1000).catch(() => {});
+
+    // fit：0.5x 底图（LOD 1 → low）覆盖 LOD 0，瓦片按兵不动
+    emit({
+      type: "image-loaded",
+      payload: {
+        imageBitmap: { width: 500, height: 500, close: vi.fn() },
+        imageWidth: 1000,
+        imageHeight: 1000,
+        lodLevel: 1,
+      },
+    });
+    emit({ type: "init-done" });
+    vi.runAllTimers();
+    expect(lastQuality()).toBe("low");
+
+    // 放大越过底图分辨率（0.1 → 0.6 > 0.5）→ 选中 LOD 2（scale 1 → medium）。
+    // 把整段可见集喂成就绪 → onVisibleLodReady 触发，质量升级为 medium。
+    engine.zoomAt(50, 50, 6);
+    vi.runAllTimers();
+    engine.setTileOutlineEnabled(engine.isTileOutlineEnabled()); // 触发一次 render 刷新 debug 快照
+    expect(visibleTiles.length).toBeGreaterThan(0);
+    for (const key of visibleTiles) {
+      emit({
+        type: "tile-created",
+        payload: { key, imageBitmap: makeBitmap(), lodLevel: 2 },
+      });
+    }
+    expect(lastQuality()).toBe("medium");
+
+    // 缩回 fit：底图重新覆盖选中 LOD → 质量必须降回底图的 low，而不是滞留在 medium
+    engine.zoomAt(50, 50, 1 / 6);
+    vi.runAllTimers();
+    expect(lastQuality()).toBe("low");
 
     engine.destroy();
   });

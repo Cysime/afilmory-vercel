@@ -39,6 +39,7 @@ function createHost(overrides: Partial<HostState> = {}) {
   const requestRender = vi.fn();
   const requestTileFromWorker = vi.fn();
   const onVisibleLodReady = vi.fn();
+  const onCoveredByBase = vi.fn();
 
   const host: TileManagerHost = {
     getViewport: () => ({
@@ -59,6 +60,7 @@ function createHost(overrides: Partial<HostState> = {}) {
     canDispatchTiles: () => state.canDispatch,
     requestTileFromWorker,
     onVisibleLodReady,
+    onCoveredByBase,
   };
 
   return {
@@ -69,6 +71,7 @@ function createHost(overrides: Partial<HostState> = {}) {
     requestRender,
     requestTileFromWorker,
     onVisibleLodReady,
+    onCoveredByBase,
   };
 }
 
@@ -192,6 +195,25 @@ describe("TileManager", () => {
       // 已缓存纹理留给容量/年龄回收（再放大时直接复用），此处不删
       expect(deleteTexture).not.toHaveBeenCalled();
       expect(manager.tileCache.size).toBe(1);
+    });
+
+    it("reports coverage via onCoveredByBase (not onVisibleLodReady) on the skip path so the engine can refresh quality", () => {
+      const { host, state, onCoveredByBase, onVisibleLodReady } = createHost({
+        lodCoveredByBase: true,
+      });
+      const manager = new TileManager(host);
+
+      // 底图覆盖跳过路径：清空可见集，同时通知引擎“现在只画底图”——onVisibleLodReady
+      // 在此永不触发，缺了 onCoveredByBase 引擎的质量信号就会滞留在瓦片态偏高值。
+      manager.updateTileCache();
+      expect(onCoveredByBase).toHaveBeenCalledTimes(1);
+      expect(onVisibleLodReady).not.toHaveBeenCalled();
+
+      // 缩放越过底图分辨率：走正常路径，改由 onVisibleLodReady 上报，不再触发 onCoveredByBase
+      state.lodCoveredByBase = false;
+      onCoveredByBase.mockClear();
+      manager.updateTileCache();
+      expect(onCoveredByBase).not.toHaveBeenCalled();
     });
   });
 

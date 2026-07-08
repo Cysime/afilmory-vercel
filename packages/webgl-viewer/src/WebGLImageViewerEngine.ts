@@ -141,6 +141,10 @@ export class WebGLImageViewerEngine {
         this.workerBridge?.createTile(request);
       },
       onVisibleLodReady: (lodLevel) => this.handleVisibleLodReady(lodLevel),
+      // 回到底图覆盖区间：质量应反映常驻底图（textureManager.currentLOD），否则
+      // 从放大态缩回 fit 时 currentQuality 会滞留在瓦片态的偏高值。
+      onCoveredByBase: () =>
+        this.handleVisibleLodReady(this.textureManager.currentLOD),
     });
 
     this.boundResizeCanvas = () => this.resizeCanvas();

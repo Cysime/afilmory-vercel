@@ -72,6 +72,14 @@ export interface TileManagerHost {
    * repeatedly for the same LOD — callers dedupe.
    */
   onVisibleLodReady: (lodLevel: number) => void;
+  /**
+   * Fired when an update takes the base-coverage skip path: no tiles are (or
+   * will be) drawn, so the screen now shows only the base texture. The engine's
+   * quality signal is otherwise refreshed exclusively by `onVisibleLodReady`,
+   * which never fires here — so zooming back to fit after tiles were active
+   * would leave a stale (too-high) quality. Callers dedupe.
+   */
+  onCoveredByBase?: () => void;
 }
 
 /**
@@ -298,6 +306,8 @@ export class TileManager {
       this.lastViewportHash = "";
       this.requestRuntime.pruneInvisiblePending(this.visibleTiles);
       this.cleanupOldTiles();
+      // 只画底图了：onVisibleLodReady 不会再触发，需显式让引擎把质量降回底图水平。
+      this.host.onCoveredByBase?.();
       return;
     }
 
