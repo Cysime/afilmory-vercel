@@ -161,7 +161,7 @@ test("opens the viewer from command search and restores route and scroll state",
   const input = await openCommandPalette(page);
   await input.fill("SYNTH00");
   await expect(
-    page.getByRole("button", { name: /SYNTH00/ }).first(),
+    page.getByRole("option", { name: /SYNTH00/ }).first(),
   ).toBeVisible();
   await input.press("Enter");
 
@@ -203,7 +203,7 @@ test("applies and resets command-palette camera filters through URL state", asyn
   const input = await openCommandPalette(page);
   await input.fill("Lumina LX-7");
   await expect(
-    page.getByRole("button", { name: /Lumina LX-7.*Camera Filter/ }),
+    page.getByRole("option", { name: /Lumina LX-7.*Camera Filter/ }),
   ).toBeVisible();
   await input.press("Enter");
 
