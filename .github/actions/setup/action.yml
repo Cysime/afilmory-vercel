@@ -1,6 +1,14 @@
 name: Setup
 description: Install pnpm, Node.js, and project dependencies (with pnpm store caching)
 
+inputs:
+  install:
+    description: >-
+      Set to 'false' to skip `pnpm install` (and the pnpm store cache) for
+      jobs that only need pnpm + Node, e.g. lockfile-only commands.
+    required: false
+    default: 'true'
+
 runs:
   using: composite
   steps:
@@ -11,8 +19,10 @@ runs:
       uses: actions/setup-node@v6
       with:
         node-version: 22
-        cache: pnpm
+        # An empty `cache` disables store caching; the store only matters for installs.
+        cache: ${{ inputs.install == 'true' && 'pnpm' || '' }}
 
     - name: Install dependencies
+      if: inputs.install == 'true'
       shell: bash
       run: pnpm install --frozen-lockfile
