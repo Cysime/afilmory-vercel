@@ -406,4 +406,63 @@ describe("main layout viewer URL restore", () => {
       { replace: true },
     );
   });
+
+  it("cancels the deferred close return when the user leaves the detail route within the delay", async () => {
+    vi.useFakeTimers();
+    viewerState = {
+      currentIndex: 0,
+      isOpen: true,
+    };
+    paramsState = {
+      photoId: "visible-photo",
+    };
+    locationState = {
+      pathname: "/photos/visible-photo",
+      search: "?cameras=SONY+ILCE-7C",
+    };
+    gallerySetting = {
+      selectedTags: [],
+      selectedCameras: [],
+      selectedLenses: [],
+      selectedGeoCountries: [],
+      selectedGeoRegions: [],
+      selectedGeoCities: [],
+      selectedGeoDistricts: [],
+      sortOrder: "desc",
+    };
+    getViewerPhotos.mockReturnValue([visiblePhoto]);
+
+    const { rerender } = render(<Component />);
+
+    expect(getViewerPhotos).toHaveBeenCalledWith(
+      expect.any(Object),
+      "visible-photo",
+    );
+
+    vi.clearAllMocks();
+    viewerState = {
+      currentIndex: 0,
+      isOpen: false,
+    };
+
+    rerender(<Component />);
+
+    navigationTypeState = "POP";
+    paramsState = {};
+    locationState = {
+      pathname: "/",
+      search: "",
+    };
+    rerender(<Component />);
+
+    // 仅剩 URL 恢复效应的一次筛选同步；不应有延迟返回的第二次
+    expect(hoisted.setGallerySetting).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(navigate).not.toHaveBeenCalled();
+    expect(hoisted.setGallerySetting).toHaveBeenCalledTimes(1);
+  });
 });

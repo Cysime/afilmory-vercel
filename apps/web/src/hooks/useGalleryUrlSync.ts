@@ -204,6 +204,13 @@ const useSyncStateToUrl = (urlRestoreStateRef: RefObject<UrlRestoreState>) => {
     const justClosedViewer = wasOpenRef.current;
     wasOpenRef.current = false;
 
+    // 用户在 500ms 延迟内已自行离开详情路由：废弃延迟返回，
+    // 否则它会 replace 掉用户刚到达的历史记录并回写过期筛选。
+    if (!isPhotoDetailPath && closeReturnTimerRef.current) {
+      clearTimeout(closeReturnTimerRef.current);
+      closeReturnTimerRef.current = null;
+    }
+
     if (justClosedViewer && isPhotoDetailPath) {
       const returnTo = getSafeReturnTo(location.search);
       const gallerySearchParams = new URLSearchParams(location.search);
