@@ -2,11 +2,13 @@ import type { StorageManager } from "../storage/index.js";
 import type { StorageObject } from "../storage/interfaces.js";
 import { getPhotoProcessingLoggers } from "./logger-adapter.js";
 
-export interface LivePhotoResult {
-  isLivePhoto: boolean;
-  livePhotoVideoUrl?: string;
-  livePhotoVideoS3Key?: string;
-}
+export type LivePhotoResult =
+  | { isLivePhoto: false }
+  | {
+      isLivePhoto: true;
+      livePhotoVideoUrl: string;
+      livePhotoVideoS3Key: string;
+    };
 
 /**
  * 检测并处理 Live Photo

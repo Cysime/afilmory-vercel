@@ -175,8 +175,6 @@ function createHarness(
     logger,
     photoId: {
       getIdForKey: (key) => key.replace(/\.[^.]+$/, ""),
-      hasCollision: () => false,
-      setCollisionKeys: vi.fn(),
     },
     storage: {
       createManager,

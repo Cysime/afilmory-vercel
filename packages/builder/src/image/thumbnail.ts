@@ -3,9 +3,9 @@ import path from "node:path";
 
 import sharp from "sharp";
 
+import type { ThumbnailResult } from "../photo/data-processors.js";
 import { getPhotoExecutionContext } from "../photo/execution-context.js";
 import { getPhotoProcessingLoggers } from "../photo/logger-adapter.js";
-import type { ThumbnailResult } from "../types/photo.js";
 import { writeFileAtomic } from "../utils/atomic-write.js";
 import { SOURCE_SHARP_OPTIONS } from "./sharp-options.js";
 import { generateThumbHash } from "./thumbhash.js";
@@ -69,15 +69,6 @@ export function getThumbnailPublicUrl(photoId: string): string {
   return `/thumbnails/${encodeURIComponent(`${photoId}.jpg`)}`;
 }
 
-// 创建失败结果
-function createFailureResult(): ThumbnailResult {
-  return {
-    thumbnailUrl: null,
-    thumbnailBuffer: null,
-    thumbHash: null,
-  };
-}
-
 // 创建成功结果
 function createSuccessResult(
   thumbnailUrl: string,
@@ -133,11 +124,11 @@ async function processExistingThumbnail(
   }
 }
 
-// 生成新的缩略图
+// 生成新的缩略图（失败返回 null）
 async function generateNewThumbnail(
   imageBuffer: Buffer,
   photoId: string,
-): Promise<ThumbnailResult> {
+): Promise<ThumbnailResult | null> {
   const { thumbnailPath, thumbnailUrl } = getThumbnailPaths(photoId);
 
   const log = getPhotoProcessingLoggers().thumbnail;
@@ -172,16 +163,17 @@ async function generateNewThumbnail(
     return createSuccessResult(thumbnailUrl, thumbnailBuffer, thumbHash);
   } catch (error) {
     log.error(`生成失败：${photoId}`, error);
-    return createFailureResult();
+    return null;
   }
 }
 
-// 生成缩略图和 thumbhash（复用 Sharp 实例）
+// 生成缩略图和 thumbhash（复用 Sharp 实例）。失败返回 null——
+// 这是唯一的失败编码，调用方据此把整张照片标记为失败并跳过。
 export async function generateThumbnailAndThumbHash(
   imageBuffer: Buffer,
   photoId: string,
   forceRegenerate = false,
-): Promise<ThumbnailResult> {
+): Promise<ThumbnailResult | null> {
   const thumbnailLog = getPhotoProcessingLoggers().thumbnail;
 
   try {
@@ -207,6 +199,6 @@ export async function generateThumbnailAndThumbHash(
     return await generateNewThumbnail(imageBuffer, photoId);
   } catch (error) {
     thumbnailLog.error(`处理失败：${photoId}`, error);
-    return createFailureResult();
+    return null;
   }
 }

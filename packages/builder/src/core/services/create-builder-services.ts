@@ -23,9 +23,7 @@ export interface BuilderServicesBacking {
   getStorageManager: () => StorageManager;
   getExifService: () => ExifReaderService;
   createStorageManager: (config: StorageConfig) => StorageManager;
-  hasPhotoIdCollision: (key: string) => boolean;
   getPhotoIdForKey: (key: string, existingItem?: PhotoManifestItem) => string;
-  setPhotoIdCollisionKeys: (keys: Iterable<string>) => void;
 }
 
 export function createBuilderServices(
@@ -38,10 +36,8 @@ export function createBuilderServices(
   };
 
   const photoId: PhotoIdService = {
-    hasCollision: (key) => backing.hasPhotoIdCollision(key),
     getIdForKey: (key, existingItem) =>
       backing.getPhotoIdForKey(key, existingItem),
-    setCollisionKeys: (keys) => backing.setPhotoIdCollisionKeys(keys),
   };
 
   return {

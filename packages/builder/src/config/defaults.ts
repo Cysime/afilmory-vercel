@@ -29,7 +29,7 @@ export function createDefaultBuilderConfig(): BuilderConfig {
         },
       },
     },
-    user: null!,
+    user: null,
     output: createDefaultOutputSettings(),
     plugins: [],
   };

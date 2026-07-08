@@ -22,6 +22,11 @@ import type {
 import { getPhotoExecutionContext } from "./execution-context.js";
 import { getPhotoProcessingLoggers } from "./logger-adapter.js";
 
+/**
+ * 缩略图处理的唯一结果契约：成功时三个字段全部就位（thumbHash 可能因
+ * 图像内容无法哈希而为 null），失败一律用 null 表达——绝不出现
+ * 「字段各自为 null」的中间态。
+ */
 export interface ThumbnailResult {
   thumbnailUrl: string;
   thumbnailBuffer: Buffer;
@@ -80,21 +85,17 @@ export async function processThumbnailAndThumbHash(
     contentChanged || options.isForceMode || options.isForceThumbnails,
   );
 
-  // 生成失败时不要伪造非空断言：返回 null，让上层把该照片标记为失败并跳过，
+  // 生成失败（null）时原样传导：让上层把该照片标记为失败并跳过，
   // 绝不向 manifest 写入 thumbnailUrl: null——lenient 解析会把它抢救成空串
   // 并长期保留一张永久破图，严格校验（web 构建的 assertManifest 门）则直接失败。
-  if (!result.thumbnailUrl || !result.thumbnailBuffer) {
+  if (!result) {
     loggers.thumbnail.error(
       `缩略图生成失败，跳过该照片（不写入 manifest）：${photoId}`,
     );
     return null;
   }
 
-  return {
-    thumbnailUrl: result.thumbnailUrl,
-    thumbnailBuffer: result.thumbnailBuffer,
-    thumbHash: result.thumbHash,
-  };
+  return result;
 }
 
 /**

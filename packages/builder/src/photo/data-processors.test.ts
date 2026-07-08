@@ -60,16 +60,12 @@ describe("processThumbnailAndThumbHash failure handling", () => {
     mockedGenerate.mockReset();
   });
 
-  it("returns null (skip the photo) when thumbnail generation fails, instead of null-filled fields", async () => {
+  it("returns null (skip the photo) when thumbnail generation fails", async () => {
     // Regression guard: a failed thumbnail must NOT produce a manifest item with
     // thumbnailUrl: null — lenient parsing would salvage it into a permanently
     // broken image, and the web build's strict assertManifest gate would fail.
     // The photo should be dropped (counted as failed) instead.
-    mockedGenerate.mockResolvedValue({
-      thumbnailUrl: null,
-      thumbnailBuffer: null,
-      thumbHash: null,
-    });
+    mockedGenerate.mockResolvedValue(null);
 
     const result = await processThumbnailAndThumbHash(
       Buffer.from("not-a-real-image"),

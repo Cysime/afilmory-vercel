@@ -276,27 +276,30 @@ export class ClusterPool<T> extends EventEmitter {
 
     const workerLogger = this.logger.worker(workerId);
 
-    if (handle.state === "starting") {
-      // 首次 ready：发送初始化数据，等待 init-complete 后才算真正就绪
-      if (this.sharedData) {
-        // IPC 通道已启用 advanced（v8）序列化，existingManifestMap / livePhotoMap
-        // 等 Map 结构可原生传输并在 worker 侧还原类型，直接发送共享数据本体。
-        const initMessage: WorkerInitMessage = {
-          type: "init",
-          sharedData: this.sharedData,
-        };
-        handle.worker.send(initMessage);
-        workerLogger.info(`发送初始化数据到 Worker ${workerId}`);
-      }
-
-      handle.state = "initializing";
-      workerLogger.info(`Worker ${workerId} 已接收初始化请求，等待初始化完成`);
-    } else {
-      // 重复的 ready 消息：worker 已初始化，直接标记就绪
-      handle.state = "ready";
-      workerLogger.info(`Worker ${workerId} 已准备就绪`);
-      this.emit("workerReady", workerId);
+    // 生命周期是严格线性的 starting → initializing → ready；ready 消息只在
+    // starting 阶段有意义，其余状态一律忽略（绝不能把未完成 init 握手的
+    // worker 标记为可接任务）。
+    if (handle.state !== "starting") {
+      workerLogger.warn(
+        `Worker ${workerId} sent "ready" while in "${handle.state}" state; ignoring (ready is only expected once, before init).`,
+      );
+      return;
     }
+
+    // 首次 ready：发送初始化数据，等待 init-complete 后才算真正就绪
+    if (this.sharedData) {
+      // IPC 通道已启用 advanced（v8）序列化，existingManifestMap / livePhotoMap
+      // 等 Map 结构可原生传输并在 worker 侧还原类型，直接发送共享数据本体。
+      const initMessage: WorkerInitMessage = {
+        type: "init",
+        sharedData: this.sharedData,
+      };
+      handle.worker.send(initMessage);
+      workerLogger.info(`发送初始化数据到 Worker ${workerId}`);
+    }
+
+    handle.state = "initializing";
+    workerLogger.info(`Worker ${workerId} 已接收初始化请求，等待初始化完成`);
   }
 
   private handleWorkerInitComplete(workerId: number): void {

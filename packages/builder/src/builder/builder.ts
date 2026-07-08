@@ -90,10 +90,8 @@ export class AfilmoryBuilder {
       getStorageManager: () => this.getStorageManager(),
       getExifService: () => this.exifService,
       createStorageManager: (config) => this.createStorageManager(config),
-      hasPhotoIdCollision: (key) => this.hasPhotoIdCollision(key),
       getPhotoIdForKey: (key, existingItem) =>
         this.getPhotoIdForKey(key, existingItem),
-      setPhotoIdCollisionKeys: (keys) => this.setPhotoIdCollisionKeys(keys),
     });
   }
 

@@ -118,8 +118,6 @@ function createHarness() {
     logger,
     photoId: {
       getIdForKey: (key) => path.basename(key, path.extname(key)),
-      hasCollision: () => false,
-      setCollisionKeys: vi.fn(),
     },
     storage: {
       createManager: () => storageManager,

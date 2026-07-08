@@ -15,7 +15,6 @@ import type { ThumbnailPluginData } from "../plugins/thumbnail-storage/shared.js
 import { THUMBNAIL_PLUGIN_DATA_KEY } from "../plugins/thumbnail-storage/shared.js";
 import type { BuilderOptions } from "../types/options.js";
 import type { PhotoManifestItem, ProcessPhotoResult } from "../types/photo.js";
-import { shouldProcessPhoto } from "./cache-manager.js";
 import {
   processExifData,
   processThumbnailAndThumbHash,
@@ -26,6 +25,7 @@ import { detectGainMap } from "./gainmap-detector.js";
 import { extractPhotoInfo } from "./info-extractor.js";
 import { processLivePhoto } from "./live-photo-handler.js";
 import { detectMotionPhoto } from "./motion-photo-detector.js";
+import { shouldProcessPhoto } from "./work-decision.js";
 
 export interface ProcessedImageData {
   sharpInstance: sharp.Sharp;
@@ -254,8 +254,8 @@ async function executePhotoProcessingPipeline(
           : livePhotoResult.isLivePhoto
             ? {
                 type: "live-photo",
-                videoUrl: livePhotoResult.livePhotoVideoUrl!,
-                s3Key: livePhotoResult.livePhotoVideoS3Key!,
+                videoUrl: livePhotoResult.livePhotoVideoUrl,
+                s3Key: livePhotoResult.livePhotoVideoS3Key,
               }
             : undefined,
       // HDR 相关字段

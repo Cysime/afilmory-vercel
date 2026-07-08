@@ -399,6 +399,56 @@ describe("ClusterPool", () => {
     await expect(run).rejects.toThrow("Worker 1 exited unexpectedly");
   });
 
+  it("ignores duplicate ready messages instead of promoting an uninitialized worker", async () => {
+    const pool = new ClusterPool<string>({
+      concurrency: 1,
+      sharedData: createTestSharedData(),
+      totalTasks: 1,
+      workerConcurrency: 1,
+    });
+    const readyEvents: number[] = [];
+    pool.on("workerReady", (workerId: number) => readyEvents.push(workerId));
+
+    const run = pool.execute();
+    const worker = getWorker();
+    worker.emitOnline();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    worker.emitMessage({ type: "ready", workerId: 1 });
+    // init-complete 之前的重复 ready：绝不能把尚未初始化的 worker 标记为可接任务
+    worker.emitMessage({ type: "ready", workerId: 1 });
+    expect(worker.sentMessages.map((message) => message.type)).toEqual([
+      "init",
+    ]);
+    expect(readyEvents).toEqual([]);
+    expect(pool.getWorkerStats()[0]?.isReady).toBe(false);
+
+    worker.emitMessage({ type: "init-complete", workerId: 1 });
+    expect(readyEvents).toEqual([1]);
+
+    // ready 之后的重复 ready 同样只告警：不重发 init，也不重复触发 workerReady
+    worker.emitMessage({ type: "ready", workerId: 1 });
+    expect(readyEvents).toEqual([1]);
+    expect(
+      worker.sentMessages.filter((message) => message.type === "init"),
+    ).toHaveLength(1);
+    expect(pool.getWorkerStats()[0]?.isReady).toBe(true);
+
+    const batch = getLastBatchTaskMessage(worker);
+    worker.emitMessage({
+      results: [
+        {
+          result: "photo-0",
+          taskId: batch.tasks[0].taskId,
+          taskIndex: batch.tasks[0].taskIndex,
+          type: "result",
+        },
+      ],
+      type: "batch-result",
+    });
+    await expect(run).resolves.toEqual(["photo-0"]);
+  });
+
   it("rejects and shuts down remaining workers when a worker exits unexpectedly", async () => {
     const pool = new ClusterPool<string>({
       concurrency: 2,

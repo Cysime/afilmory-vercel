@@ -1,9 +1,25 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PhotoProcessorOptions } from "../core/contracts/photo-processing.js";
+import { thumbnailExists } from "../image/thumbnail.js";
 import type { StorageObject } from "../storage/interfaces.js";
 import type { PhotoManifestItem } from "../types/photo.js";
-import { decidePhotoWork } from "./work-decision.js";
+import { decidePhotoWork, shouldProcessPhoto } from "./work-decision.js";
+
+vi.mock("../image/thumbnail.js", () => ({
+  thumbnailExists: vi.fn(async () => true),
+}));
+
+// shouldProcessPhoto 从照片执行上下文读取缩略图目录；单测里固定为测试路径。
+vi.mock("./execution-context.js", () => ({
+  getPhotoExecutionContext: () => ({
+    output: {
+      manifestPath: "/test-out/photos-manifest.json",
+      thumbnailsDir: "/test-out/thumbnails",
+      originalsDir: "/test-out/originals",
+    },
+  }),
+}));
 
 function createExistingPhoto(
   overrides: Partial<PhotoManifestItem> = {},
@@ -188,5 +204,43 @@ describe("decidePhotoWork", () => {
     );
 
     expect(result).toEqual({ shouldProcess: true, reason: "缩略图缺失" });
+  });
+});
+
+describe("shouldProcessPhoto", () => {
+  beforeEach(() => {
+    vi.mocked(thumbnailExists).mockClear();
+    vi.mocked(thumbnailExists).mockResolvedValue(true);
+  });
+
+  it("probes thumbnail existence in the photo execution context's thumbnails dir", async () => {
+    vi.mocked(thumbnailExists).mockResolvedValue(false);
+
+    const result = await shouldProcessPhoto(
+      "photo",
+      createExistingPhoto(),
+      createStorageObject(),
+      createOptions(),
+    );
+
+    expect(result).toEqual({ shouldProcess: true, reason: "缩略图缺失" });
+    expect(thumbnailExists).toHaveBeenCalledWith(
+      "photo",
+      "/test-out/thumbnails",
+    );
+  });
+
+  it("processes same-timestamp size changes without probing thumbnails", async () => {
+    // Regression guard: worker 侧包装必须与 DiffPlanner 共用 decidePhotoWork，
+    // same-timestamp 的 size/etag 变更不能进入 worker 后又被跳过。
+    const result = await shouldProcessPhoto(
+      "photo",
+      createExistingPhoto(),
+      createStorageObject({ size: 2 }),
+      createOptions(),
+    );
+
+    expect(result).toEqual({ shouldProcess: true, reason: "文件已更新" });
+    expect(thumbnailExists).not.toHaveBeenCalled();
   });
 });

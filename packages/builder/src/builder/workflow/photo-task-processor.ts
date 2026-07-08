@@ -21,10 +21,9 @@ export interface ProcessingStats {
   failedCount: number;
 }
 
+// processorOptions/mode/concurrency 不在返回值里：它们已经通过
+// beforeProcessTasks 插件事件与 progressListener.onStart 载荷对外发布。
 export interface PhotoTaskProcessingResult {
-  processorOptions: PhotoProcessorOptions;
-  mode: "cluster" | "worker";
-  concurrency: number;
   results: ProcessPhotoResult[];
   stats: ProcessingStats;
 }
@@ -124,9 +123,6 @@ export class PhotoTaskProcessor {
     });
 
     return {
-      processorOptions,
-      mode,
-      concurrency,
       results,
       stats,
     };

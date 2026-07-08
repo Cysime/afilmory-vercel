@@ -106,8 +106,6 @@ function createBuilderServicesFixture(config: BuilderConfig): BuilderServices {
     logger,
     photoId: {
       getIdForKey: (key) => key.replace(/\.[^.]+$/, ""),
-      hasCollision: () => false,
-      setCollisionKeys: vi.fn(),
     },
     storage: {
       createManager: (nextConfig) => new StorageManager(nextConfig),

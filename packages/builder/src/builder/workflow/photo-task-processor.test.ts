@@ -159,8 +159,6 @@ function createBuilderServicesFixture(config: BuilderConfig): BuilderServices {
     logger,
     photoId: {
       getIdForKey: (key) => key.replace(/\.[^.]+$/, ""),
-      hasCollision: (key) => key === "collision.jpg",
-      setCollisionKeys: vi.fn(),
     },
     storage: {
       createManager: (nextConfig) => new StorageManager(nextConfig),
@@ -262,14 +260,8 @@ describe("PhotoTaskProcessor", () => {
       livePhotoMap,
     );
 
-    expect(output).toMatchObject({
-      concurrency: 2,
-      mode: "worker",
-      processorOptions: {
-        isForceMode: false,
-        isForceManifest: true,
-        isForceThumbnails: true,
-      },
+    expect(output).toEqual({
+      results,
       stats: {
         failedCount: 1,
         newCount: 1,
@@ -277,7 +269,6 @@ describe("PhotoTaskProcessor", () => {
         skippedCount: 1,
       },
     });
-    expect(output.results).toEqual(results);
     expect(processorMocks.workerPoolInstances).toHaveLength(1);
     expect(processorMocks.clusterPoolInstances).toHaveLength(0);
     expect(processorMocks.workerPoolInstances[0].options.logger).toBe(
@@ -290,7 +281,11 @@ describe("PhotoTaskProcessor", () => {
         concurrency: 2,
         mode: "worker",
         options: session.options,
-        processorOptions: output.processorOptions,
+        processorOptions: {
+          isForceMode: false,
+          isForceManifest: true,
+          isForceThumbnails: true,
+        },
         tasks,
       },
     );
@@ -370,7 +365,12 @@ describe("PhotoTaskProcessor", () => {
       livePhotoMap,
     );
 
-    expect(output.mode).toBe("cluster");
+    // mode/concurrency 不再出现在返回值里；通过 beforeProcessTasks 事件载荷断言
+    expect(session.emitPluginEvent).toHaveBeenCalledWith(
+      session.runState,
+      "beforeProcessTasks",
+      expect.objectContaining({ concurrency: 2, mode: "cluster" }),
+    );
     expect(output.results).toEqual(processorMocks.clusterResults);
     expect(output.stats).toMatchObject({
       failedCount: 1,

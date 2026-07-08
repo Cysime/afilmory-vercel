@@ -6,7 +6,6 @@
 
 ```text
 photo/
-├── cache-manager.ts          # 判断现有 manifest/缩略图/缓存能否复用
 ├── data-processors.ts        # 缩略图、EXIF、影调分析处理器
 ├── execution-context.ts      # AsyncLocalStorage 执行上下文
 ├── gainmap-detector.ts       # Ultra HDR gain map 检测
@@ -18,6 +17,7 @@ photo/
 ├── logger-adapter.ts         # worker/logger 适配器
 ├── motion-photo-detector.ts  # Android/Google Motion Photo metadata 检测
 ├── processor.ts              # processPhoto 入口
+├── work-decision.ts          # 是否需要重新处理的共享判定（DiffPlanner/worker 共用）
 └── index.ts                  # 模块导出
 ```
 
@@ -54,7 +54,7 @@ photo/
 
 ## Cache Reuse
 
-缓存判断集中在 `cache-manager.ts` 和 `data-processors.ts`：
+缓存判断集中在 `work-decision.ts` 和 `data-processors.ts`：
 
 - 非强制模式下，如果源对象未变化，会复用已有 manifest item。
 - 已有缩略图和 `thumbHash` 时会复用缩略图文件。
