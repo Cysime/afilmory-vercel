@@ -102,7 +102,7 @@ export class S3StorageProvider implements StorageProvider {
 
         try {
           logger.s3.info(
-            `下载开始：${key} (attempt ${attempt}/${maxAttempts})`,
+            `Download started: ${key} (attempt ${attempt}/${maxAttempts})`,
           );
 
           const command = new GetObjectCommand({
@@ -116,7 +116,7 @@ export class S3StorageProvider implements StorageProvider {
           });
 
           if (!response.Body) {
-            logger.s3.error(`S3 响应中没有 Body: ${key}`);
+            logger.s3.error(`No Body in S3 response: ${key}`);
             return null;
           }
 
@@ -125,7 +125,7 @@ export class S3StorageProvider implements StorageProvider {
             const duration = Date.now() - startTime;
             const sizeKB = Math.round(response.Body.length / 1024);
             logger.s3.success(
-              `下载完成：${key} (${sizeKB}KB, ${duration}ms, attempt ${attempt})`,
+              `Download complete: ${key} (${sizeKB}KB, ${duration}ms, attempt ${attempt})`,
             );
             return response.Body;
           }
@@ -135,7 +135,7 @@ export class S3StorageProvider implements StorageProvider {
           const LARGE_FILE_THRESHOLD = 500 * 1024 * 1024; // 500MB
           if (contentLength && contentLength > LARGE_FILE_THRESHOLD) {
             logger.s3.warn(
-              `大文件下载警告：${key} (${Math.round(contentLength / 1024 / 1024)}MB)，可能造成内存压力`,
+              `Large file download warning: ${key} (${Math.round(contentLength / 1024 / 1024)}MB), may cause memory pressure`,
             );
           }
 
@@ -175,23 +175,23 @@ export class S3StorageProvider implements StorageProvider {
           const ttfb = firstByteAt ? firstByteAt - startTime : duration;
           const sizeKB = Math.round(buffer.length / 1024);
           logger.s3.success(
-            `下载完成：${key} (${sizeKB}KB, ${duration}ms, TTFB ${ttfb}ms, attempt ${attempt})`,
+            `Download complete: ${key} (${sizeKB}KB, ${duration}ms, TTFB ${ttfb}ms, attempt ${attempt})`,
           );
           return buffer;
         } catch (error) {
           const elapsed = Date.now() - startTime;
           logger.s3.warn(
-            `下载失败：${key} (attempt ${attempt}/${maxAttempts}, ${elapsed}ms)`,
+            `Download failed: ${key} (attempt ${attempt}/${maxAttempts}, ${elapsed}ms)`,
             error,
           );
 
           if (attempt < maxAttempts) {
             const delay = backoffDelay(attempt);
-            logger.s3.info(`等待 ${delay}ms 后重试：${key}`);
+            logger.s3.info(`Retrying after ${delay}ms: ${key}`);
             await sleep(delay);
             continue;
           }
-          logger.s3.error(`下载最终失败：${key}`);
+          logger.s3.error(`Download failed permanently: ${key}`);
           return null;
         } finally {
           clearTimers();
@@ -215,7 +215,7 @@ export class S3StorageProvider implements StorageProvider {
       this.config.excludeRegex,
       (error) => {
         logger.s3.warn(
-          `S3_EXCLUDE_REGEX 无效，已忽略：${this.config.excludeRegex}`,
+          `S3_EXCLUDE_REGEX is invalid, ignored: ${this.config.excludeRegex}`,
           error,
         );
       },
@@ -283,7 +283,7 @@ export class S3StorageProvider implements StorageProvider {
             contents.length > pageObjects.length
           ) {
             logger.s3.warn(
-              `已达到 maxFileLimit=${this.config.maxFileLimit}，对象列举被截断；超出部分（含图片）将被忽略。`,
+              `Reached maxFileLimit=${this.config.maxFileLimit}, object listing was truncated; objects beyond the limit (including images) will be ignored.`,
             );
           }
           break;

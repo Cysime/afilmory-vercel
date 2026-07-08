@@ -111,7 +111,7 @@ async function processExistingThumbnail(
   const { thumbnailPath, thumbnailUrl } = getThumbnailPaths(photoId);
 
   const thumbnailLog = getPhotoProcessingLoggers().thumbnail;
-  thumbnailLog.info(`复用现有缩略图：${photoId}`);
+  thumbnailLog.info(`Reusing existing thumbnail: ${photoId}`);
 
   try {
     const existingBuffer = await fs.readFile(thumbnailPath);
@@ -119,7 +119,10 @@ async function processExistingThumbnail(
 
     return createSuccessResult(thumbnailUrl, existingBuffer, thumbHash);
   } catch (error) {
-    thumbnailLog?.warn(`读取现有缩略图失败，重新生成：${photoId}`, error);
+    thumbnailLog?.warn(
+      `Failed to read existing thumbnail, regenerating: ${photoId}`,
+      error,
+    );
     return null;
   }
 }
@@ -132,7 +135,7 @@ async function generateNewThumbnail(
   const { thumbnailPath, thumbnailUrl } = getThumbnailPaths(photoId);
 
   const log = getPhotoProcessingLoggers().thumbnail;
-  log.info(`生成缩略图：${photoId}`);
+  log.info(`Generating thumbnail: ${photoId}`);
   const startTime = Date.now();
 
   try {
@@ -155,14 +158,14 @@ async function generateNewThumbnail(
     // 记录生成信息
     const duration = Date.now() - startTime;
     const sizeKB = Math.round(thumbnailBuffer.length / 1024);
-    log.success(`生成完成：${photoId} (${sizeKB}KB, ${duration}ms)`);
+    log.success(`Generated: ${photoId} (${sizeKB}KB, ${duration}ms)`);
 
     // 基于生成的缩略图生成 thumbhash
     const thumbHash = await generateThumbHash(thumbnailBuffer);
 
     return createSuccessResult(thumbnailUrl, thumbnailBuffer, thumbHash);
   } catch (error) {
-    log.error(`生成失败：${photoId}`, error);
+    log.error(`Generation failed: ${photoId}`, error);
     return null;
   }
 }
@@ -198,7 +201,7 @@ export async function generateThumbnailAndThumbHash(
     // 生成新的缩略图
     return await generateNewThumbnail(imageBuffer, photoId);
   } catch (error) {
-    thumbnailLog.error(`处理失败：${photoId}`, error);
+    thumbnailLog.error(`Processing failed: ${photoId}`, error);
     return null;
   }
 }

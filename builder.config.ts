@@ -34,34 +34,37 @@ if (missingS3Vars.length > 0) {
 }
 
 /**
- * 静态部署配置 - 默认使用 S3 存储
+ * Static deployment config - uses S3 storage by default
  *
- * 这个配置用于静态站点部署（如 Vercel、Netlify、GitHub Pages 等）
- * 照片存储在 S3 兼容的对象存储中
+ * This config targets static site deployment (Vercel, Netlify, GitHub Pages, etc.).
+ * Photos are stored in S3-compatible object storage.
  *
- * 使用方式：
- * 1. 配置 .env 文件中的 S3 相关环境变量（必填）
- * 2. 可选：配置 REPO_URL 和 REPO_TOKEN，让部署脚本启用远程产物缓存
- * 3. 运行 pnpm build:manifest 生成 manifest 和缩略图
- * 4. 再运行 pnpm build:web 或 pnpm build 打包静态站点
- * 5. 部署 apps/web/dist 目录到托管平台
+ * How to use:
+ * 1. Set the S3 environment variables in .env (required).
+ * 2. Optional: set REPO_URL and REPO_TOKEN so the deploy script enables the
+ *    remote artifact cache.
+ * 3. Run pnpm build:manifest to generate the manifest and thumbnails.
+ * 4. Then run pnpm build:web or pnpm build to bundle the static site.
+ * 5. Deploy the apps/web/dist directory to your hosting platform.
  *
- * 零凭据本地运行（provider: "local"）：
- * 不想配置 S3 时，可以把 storage 换成本地文件系统 provider——
+ * Zero-credential local runs (provider: "local"):
+ * If you would rather not configure S3, swap storage for the local filesystem
+ * provider:
  *
  *   storage: {
  *     provider: "local",
- *     // 照片源目录；仓库根的 photos/ 目录正是 dev 下
- *     // apps/web/plugins/vite/photos-static.ts 服务 /photos/* 的目录
+ *     // photos source directory; the repo-root photos/ dir is exactly the one
+ *     // apps/web/plugins/vite/photos-static.ts serves at /photos/* in dev
  *     basePath: path.resolve(__dirname, "photos"),
- *     // originalUrl 前缀，默认 "/photos"，与上述 Vite 插件的路径约定一致
+ *     // originalUrl prefix, defaults to "/photos", matching the Vite plugin's path convention
  *     // baseUrl: "/photos",
  *     // excludeRegex: "^drafts/",
  *   },
  *
- * 这样 pnpm build:manifest 不需要任何对象存储凭据，manifest 里的 originalUrl
- * 形如 /photos/...，pnpm dev 时由 Vite 插件直接服务本地原图。
- * 详见 packages/builder/README.md 的 "Local filesystem provider" 一节。
+ * With this, pnpm build:manifest needs no object-storage credentials at all;
+ * the manifest's originalUrl values look like /photos/..., and pnpm dev serves
+ * the local originals directly through the Vite plugin.
+ * See the "Local filesystem provider" section in packages/builder/README.md.
  */
 export default defineBuilderConfig(() => ({
   output: {
@@ -70,7 +73,7 @@ export default defineBuilderConfig(() => ({
     originalsDir: path.resolve(__dirname, "apps/web/public/originals"),
   },
 
-  // 使用 S3 存储
+  // Use S3 storage
   storage: {
     provider: "s3",
     bucket: env.S3_BUCKET_NAME,
@@ -81,11 +84,12 @@ export default defineBuilderConfig(() => ({
     prefix: env.S3_PREFIX,
     customDomain: env.S3_CUSTOM_DOMAIN,
     excludeRegex: env.S3_EXCLUDE_REGEX,
-    // S3 客户端寻址风格（path-style vs virtual-hosted-style）。
-    // 默认按 endpoint 自动推导，与公开 URL 生成规则保持一致：
-    // AWS / 阿里云 OSS → virtual-hosted-style；其余自定义 endpoint
-    // （MinIO 等自建服务）→ path-style。仅当推导不符合实际服务时才需要
-    // 显式设置，详见 packages/builder/src/storage/providers/README.md。
+    // S3 client addressing style (path-style vs virtual-hosted-style).
+    // Auto-derived from the endpoint by default, matching how public URLs are
+    // generated: AWS / Alibaba Cloud OSS -> virtual-hosted-style; any other
+    // custom endpoint (MinIO and similar self-hosted services) -> path-style.
+    // Only set this explicitly when the derivation does not match your actual
+    // service; see packages/builder/src/storage/providers/README.md.
     // forcePathStyle: true,
     keepAlive: true,
     maxSockets: 64,
@@ -105,8 +109,9 @@ export default defineBuilderConfig(() => ({
       enableLivePhotoDetection: true,
       digestSuffixLength: 0,
       worker: {
-        // 支持环境变量临时压低并发：本地带宽有限时，CPU×2 个 worker × 并发 2
-        // 会把 S3 大文件下载全部挤到 60s 超时（参见 s3-provider 重试日志）。
+        // An environment variable can temporarily lower concurrency: when local
+        // bandwidth is limited, CPU x 2 workers x concurrency 2 can push large
+        // S3 downloads into the 60s timeout (see the s3-provider retry logs).
         workerCount: env.BUILDER_WORKER_COUNT
           ? Number(env.BUILDER_WORKER_COUNT)
           : os.cpus().length * 2,

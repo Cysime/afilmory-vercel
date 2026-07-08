@@ -57,13 +57,13 @@ export async function extractExifData(
   try {
     await writeFile(tempImagePath, originalBuffer || imageBuffer);
 
-    log.info(`开始提取 EXIF 数据, 文件路径: ${tempImagePath}`);
+    log.info(`Extracting EXIF data, file path: ${tempImagePath}`);
     const exifData = await exifService.read(tempImagePath);
 
     const result = handleExifData(exifData);
 
     if (!exifData) {
-      log.warn("EXIF 数据解析失败");
+      log.warn("Failed to parse EXIF data");
       return null;
     }
 
@@ -72,10 +72,10 @@ export async function extractExifData(
     delete exifData.warnings;
     delete exifData.errors;
 
-    log.success("EXIF 数据提取完成");
+    log.success("EXIF data extraction complete");
     return result;
   } catch (error) {
-    log.error("提取 EXIF 数据失败:", error);
+    log.error("Failed to extract EXIF data:", error);
     return null;
   } finally {
     await unlink(tempImagePath).catch(noop);

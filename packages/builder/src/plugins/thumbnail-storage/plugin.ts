@@ -151,7 +151,10 @@ export default function thumbnailStoragePlugin(
             });
             state.uploaded.add(remoteKey);
           } catch (error) {
-            logger.thumbnail.error(`上传缩略图失败：${remoteKey}`, error);
+            logger.thumbnail.error(
+              `Failed to upload thumbnail: ${remoteKey}`,
+              error,
+            );
             return;
           }
         }
@@ -162,7 +165,10 @@ export default function thumbnailStoragePlugin(
             remoteUrl = await storageManager.generatePublicUrl(remoteKey);
             state.urlCache.set(remoteKey, remoteUrl);
           } catch (error) {
-            logger.thumbnail.error(`生成缩略图 URL 失败：${remoteKey}`, error);
+            logger.thumbnail.error(
+              `Failed to generate thumbnail URL: ${remoteKey}`,
+              error,
+            );
             return;
           }
         }
@@ -180,8 +186,8 @@ export default function thumbnailStoragePlugin(
         if (payload.manifest.length === 0 || payload.result.failedCount > 0) {
           logger.thumbnail.warn(
             payload.manifest.length === 0
-              ? "跳过远端缩略图孤儿清理：本次 manifest 为空。"
-              : `跳过远端缩略图孤儿清理：本次有 ${payload.result.failedCount} 张照片处理失败。`,
+              ? "Skipping remote thumbnail orphan cleanup: this run's manifest is empty."
+              : `Skipping remote thumbnail orphan cleanup: ${payload.result.failedCount} photo(s) failed to process this run.`,
           );
           return;
         }
@@ -204,7 +210,10 @@ export default function thumbnailStoragePlugin(
             `${config.remotePrefix}/`,
           );
         } catch (error) {
-          logger.thumbnail.warn("列举远端缩略图失败，跳过孤儿清理。", error);
+          logger.thumbnail.warn(
+            "Failed to list remote thumbnails; skipping orphan cleanup.",
+            error,
+          );
           return;
         }
 
@@ -214,8 +223,8 @@ export default function thumbnailStoragePlugin(
         // 破坏性删除默认走 dry-run：仅当显式设置 THUMBNAIL_STORAGE_CLEANUP=true 时才真正删除。
         if (process.env.THUMBNAIL_STORAGE_CLEANUP !== "true") {
           logger.thumbnail.warn(
-            `发现 ${orphans.length} 个远端缩略图孤儿（dry-run，未删除）。` +
-              `设置 THUMBNAIL_STORAGE_CLEANUP=true 可实际删除。示例：${orphans
+            `Found ${orphans.length} remote thumbnail orphan(s) (dry-run, nothing deleted). ` +
+              `Set THUMBNAIL_STORAGE_CLEANUP=true to actually delete them. Examples: ${orphans
                 .slice(0, 5)
                 .join(", ")}`,
           );
@@ -228,11 +237,14 @@ export default function thumbnailStoragePlugin(
             await storageManager.deleteFile(key);
             deleted++;
           } catch (error) {
-            logger.thumbnail.warn(`删除远端缩略图孤儿失败：${key}`, error);
+            logger.thumbnail.warn(
+              `Failed to delete remote thumbnail orphan: ${key}`,
+              error,
+            );
           }
         }
         logger.thumbnail.info(
-          `已清理 ${deleted}/${orphans.length} 个远端缩略图孤儿。`,
+          `Cleaned up ${deleted}/${orphans.length} remote thumbnail orphan(s).`,
         );
       },
     },

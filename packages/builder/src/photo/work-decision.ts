@@ -29,12 +29,12 @@ export async function decidePhotoWork(
 ): Promise<PhotoWorkDecision> {
   // 强制模式下总是处理
   if (options.isForceMode) {
-    return { shouldProcess: true, reason: "强制模式" };
+    return { shouldProcess: true, reason: "force mode" };
   }
 
   // 新照片总是需要处理
   if (!existingItem) {
-    return { shouldProcess: true, reason: "新照片" };
+    return { shouldProcess: true, reason: "new photo" };
   }
 
   const fileNeedsUpdate = needsUpdate(existingItem, obj);
@@ -42,7 +42,7 @@ export async function decidePhotoWork(
   if (fileNeedsUpdate || options.isForceManifest) {
     return {
       shouldProcess: true,
-      reason: fileNeedsUpdate ? "文件已更新" : "强制更新清单",
+      reason: fileNeedsUpdate ? "file updated" : "force update manifest",
     };
   }
 
@@ -51,11 +51,13 @@ export async function decidePhotoWork(
   if (!thumbnailPresent || options.isForceThumbnails) {
     return {
       shouldProcess: true,
-      reason: options.isForceThumbnails ? "强制重新生成缩略图" : "缩略图缺失",
+      reason: options.isForceThumbnails
+        ? "force regenerate thumbnail"
+        : "thumbnail missing",
     };
   }
 
-  return { shouldProcess: false, reason: "无需处理" };
+  return { shouldProcess: false, reason: "no processing needed" };
 }
 
 /**

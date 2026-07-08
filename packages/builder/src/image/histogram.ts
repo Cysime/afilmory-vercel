@@ -23,7 +23,7 @@ async function calculateHistogram(
   const log = getPhotoProcessingLoggers().image;
 
   try {
-    log?.info("开始计算图片直方图");
+    log?.info("Computing image histogram");
     const startTime = Date.now();
 
     // 获取图片的原始像素数据
@@ -69,11 +69,11 @@ async function calculateHistogram(
     });
 
     const duration = Date.now() - startTime;
-    log?.success(`直方图计算完成 (${duration}ms)`);
+    log?.success(`Histogram computed (${duration}ms)`);
 
     return histogram;
   } catch (error) {
-    log?.error("计算直方图失败：", error);
+    log?.error("Failed to compute histogram:", error);
     return null;
   }
 }
@@ -88,7 +88,7 @@ function analyzeTone(histogram: HistogramData): ToneAnalysis {
   const log = getPhotoProcessingLoggers().image;
 
   try {
-    log?.info("开始分析图片影调");
+    log?.info("Analyzing image tone");
 
     const { luminance } = histogram;
 
@@ -150,12 +150,12 @@ function analyzeTone(histogram: HistogramData): ToneAnalysis {
     };
 
     log?.success(
-      `影调分析完成：${toneType} (亮度：${brightness}, 对比度：${contrast})`,
+      `Tone analysis complete: ${toneType} (brightness: ${brightness}, contrast: ${contrast})`,
     );
 
     return result;
   } catch (error) {
-    log.error("分析影调失败：", error);
+    log.error("Tone analysis failed:", error);
     // 返回默认值
 
     return {

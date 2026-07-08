@@ -21,7 +21,7 @@ export async function generateThumbHash(
     const thumbHash = rgbaToThumbHash(info.width, info.height, data);
     return thumbHash;
   } catch (error) {
-    logger.thumbhash.error("生成失败：", error);
+    logger.thumbhash.error("Generation failed:", error);
     return null;
   }
 }

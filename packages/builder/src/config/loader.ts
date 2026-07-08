@@ -45,7 +45,7 @@ export async function loadBuilderConfig(
   const config = resolveBuilderConfig(userConfig);
 
   if (!config.user?.storage) {
-    throw new Error("缺失存储配置，请配置 storage 字段");
+    throw new Error("Missing storage config: please set the storage field");
   }
 
   if (process.env.DEBUG === "1") {

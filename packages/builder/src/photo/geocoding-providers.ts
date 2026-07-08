@@ -85,20 +85,20 @@ export class MapboxGeocodingProvider implements GeocodingProvider {
           url.searchParams.set("language", this.language);
         }
 
-        log.info(`调用 Mapbox API: ${lat}, ${lon}`);
+        log.info(`Calling Mapbox API: ${lat}, ${lon}`);
 
         const response = await fetch(url.toString());
 
         if (!response.ok) {
           throw new Error(
-            `Mapbox API 错误: ${response.status} ${response.statusText}`,
+            `Mapbox API error: ${response.status} ${response.statusText}`,
           );
         }
 
         const data = await response.json();
 
         if (!data || !data.features || data.features.length === 0) {
-          log.warn("Mapbox API 未返回结果");
+          log.warn("Mapbox API returned no results");
           return null;
         }
 
@@ -126,7 +126,7 @@ export class MapboxGeocodingProvider implements GeocodingProvider {
           properties.name,
         );
 
-        log.success(`成功获取位置: ${admin.city}, ${admin.country}`);
+        log.success(`Location resolved: ${admin.city}, ${admin.country}`);
 
         return createLocationInfo({
           latitude: lat,
@@ -137,13 +137,13 @@ export class MapboxGeocodingProvider implements GeocodingProvider {
       } catch (error) {
         const isLastAttempt = attempt === this.maxRetries;
         if (isLastAttempt) {
-          log.error("Mapbox 反向地理编码失败:", error);
+          log.error("Mapbox reverse geocoding failed:", error);
           break;
         }
 
         const delay = getBackoffDelay(attempt, this.retryBaseDelayMs);
         log.warn(
-          `Mapbox API 调用失败，${Math.round(delay)}ms 后重试 (${attempt}/${this.maxRetries})`,
+          `Mapbox API call failed, retrying in ${Math.round(delay)}ms (${attempt}/${this.maxRetries})`,
           error,
         );
         await sleep(delay);
@@ -200,7 +200,7 @@ export class NominatimGeocodingProvider implements GeocodingProvider {
           url.searchParams.set("accept-language", this.language);
         }
 
-        log.info(`调用 Nominatim API: ${lat}, ${lon}`);
+        log.info(`Calling Nominatim API: ${lat}, ${lon}`);
 
         const response = await fetch(url.toString(), {
           headers: {
@@ -211,14 +211,14 @@ export class NominatimGeocodingProvider implements GeocodingProvider {
 
         if (!response.ok) {
           throw new Error(
-            `Nominatim API 错误: ${response.status} ${response.statusText}`,
+            `Nominatim API error: ${response.status} ${response.statusText}`,
           );
         }
 
         const data = await response.json();
 
         if (!data || data.error) {
-          throw new Error(`Nominatim API 返回错误: ${data?.error}`);
+          throw new Error(`Nominatim API returned an error: ${data?.error}`);
         }
 
         const address = data.address || {};
@@ -256,7 +256,7 @@ export class NominatimGeocodingProvider implements GeocodingProvider {
 
         const locationName = cleanString(data.display_name);
 
-        log.success(`成功获取位置: ${admin.city}, ${admin.country}`);
+        log.success(`Location resolved: ${admin.city}, ${admin.country}`);
 
         return createLocationInfo({
           latitude: lat,
@@ -267,13 +267,13 @@ export class NominatimGeocodingProvider implements GeocodingProvider {
       } catch (error) {
         const isLastAttempt = attempt === this.maxRetries;
         if (isLastAttempt) {
-          log.error("Nominatim 反向地理编码失败:", error);
+          log.error("Nominatim reverse geocoding failed:", error);
           break;
         }
 
         const delay = getBackoffDelay(attempt, this.retryBaseDelayMs);
         log.warn(
-          `Nominatim API 调用失败，${Math.round(delay)}ms 后重试 (${attempt}/${this.maxRetries})`,
+          `Nominatim API call failed, retrying in ${Math.round(delay)}ms (${attempt}/${this.maxRetries})`,
           error,
         );
         await sleep(delay);

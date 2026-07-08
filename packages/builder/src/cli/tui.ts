@@ -71,7 +71,9 @@ export class BuilderTUI {
       const summaryLine = this.formatSuccessSummary(this.state.summary);
       this.stream.write(`${summaryLine}\n`);
     } else if (this.state.status === "error" && this.state.error) {
-      this.stream.write(`${color("构建失败：", "red")}${this.state.error}\n`);
+      this.stream.write(
+        `${color("Build failed: ", "red")}${this.state.error}\n`,
+      );
     }
   }
 
@@ -157,11 +159,11 @@ export class BuilderTUI {
     lines.push("");
     lines.push(this.composeStatusLine());
     lines.push("");
-    lines.push(color("最近日志：", "gray"));
+    lines.push(color("Recent logs:", "gray"));
     lines.push(
       ...(this.state.logs.length > 0
         ? this.state.logs
-        : [color("暂无日志输出…", "gray")]),
+        : [color("No log output yet…", "gray")]),
     );
 
     return lines.join("\n");
@@ -174,9 +176,9 @@ export class BuilderTUI {
     }
     const parts = [
       color("📸 Afilmory Builder", "cyan"),
-      `模式: ${color(meta.runMode, "green")}`,
-      `处理: ${color(meta.processingMode === "cluster" ? "多进程集群" : "单进程并发池", "green")}`,
-      `并发: ${color(String(meta.concurrency), "green")}`,
+      `Mode: ${color(meta.runMode, "green")}`,
+      `Processing: ${color(meta.processingMode === "cluster" ? "multi-process cluster" : "single-process concurrency pool", "green")}`,
+      `Concurrency: ${color(String(meta.concurrency), "green")}`,
     ];
     const header = parts.join(" · ");
     return header.length > columns ? header.slice(0, columns - 1) : header;
@@ -187,16 +189,16 @@ export class BuilderTUI {
     if (!progress) {
       switch (this.state.status) {
         case "success": {
-          return color("构建已完成", "green");
+          return color("Build complete", "green");
         }
         case "error": {
-          return color("构建出现错误", "red");
+          return color("Build encountered an error", "red");
         }
         case "running": {
-          return color("准备处理中…", "yellow");
+          return color("Preparing…", "yellow");
         }
         default: {
-          return color("等待开始…", "yellow");
+          return color("Waiting to start…", "yellow");
         }
       }
     }
@@ -210,21 +212,23 @@ export class BuilderTUI {
     const bar = `${"█".repeat(filledLength)}${"░".repeat(Math.max(0, barWidth - filledLength))}`;
     const percent = progress.total > 0 ? (ratio * 100).toFixed(1) : "100";
     const segments = [
-      `新 ${progress.newCount}`,
-      `更新 ${progress.processedCount}`,
-      `跳过 ${progress.skippedCount}`,
+      `New ${progress.newCount}`,
+      `Updated ${progress.processedCount}`,
+      `Skipped ${progress.skippedCount}`,
     ];
     if (progress.failedCount > 0) {
-      segments.push(`失败 ${progress.failedCount}`);
+      segments.push(`Failed ${progress.failedCount}`);
     }
     const counts = segments.join(" · ");
 
     const parts = [
-      `处理照片 [${bar}] ${percent}% (${progress.completed}/${progress.total})`,
+      `Processing photos [${bar}] ${percent}% (${progress.completed}/${progress.total})`,
       counts,
     ];
     if (progress.currentKey) {
-      parts.push(`当前: ${truncateMiddle(progress.currentKey, columns - 10)}`);
+      parts.push(
+        `Current: ${truncateMiddle(progress.currentKey, columns - 10)}`,
+      );
     }
 
     return parts.join("\n");
@@ -236,16 +240,19 @@ export class BuilderTUI {
         if (this.state.summary) {
           return this.formatSuccessSummary(this.state.summary);
         }
-        return color("构建完成", "green");
+        return color("Build complete", "green");
       }
       case "error": {
-        return color(`构建失败：${this.state.error ?? "未知错误"}`, "red");
+        return color(
+          `Build failed: ${this.state.error ?? "unknown error"}`,
+          "red",
+        );
       }
       case "running": {
-        return color("构建进行中…", "yellow");
+        return color("Build in progress…", "yellow");
       }
       default: {
-        return color("等待开始…", "gray");
+        return color("Waiting to start…", "gray");
       }
     }
   }
@@ -254,7 +261,7 @@ export class BuilderTUI {
     const { result, durationMs } = summary;
     const durationSeconds = Math.round(durationMs / 1000);
     return color(
-      `✅ 构建成功 · 照片 ${result.totalPhotos} · 新增 ${result.newCount} · 更新 ${result.processedCount} · 删除 ${result.deletedCount} · 耗时 ${formatDuration(durationSeconds)}`,
+      `✅ Build succeeded · Photos ${result.totalPhotos} · New ${result.newCount} · Updated ${result.processedCount} · Deleted ${result.deletedCount} · Elapsed ${formatDuration(durationSeconds)}`,
       "green",
     );
   }
@@ -326,9 +333,9 @@ function formatDuration(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   if (minutes === 0) {
-    return `${seconds}秒`;
+    return `${seconds}s`;
   }
-  return `${minutes}分${seconds}秒`;
+  return `${minutes}m${seconds}s`;
 }
 
 function truncateMiddle(value: string, maxLength: number): string {

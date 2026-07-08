@@ -93,7 +93,7 @@ export class PhotoTaskProcessor {
     emitProgress();
 
     session.services.logger.main.info(
-      `开始${shouldUseCluster ? "多进程" : "并发"}处理任务，${shouldUseCluster ? "进程" : "Worker"}数：${concurrency}${shouldUseCluster ? `，每进程并发：${session.config.system.observability.performance.worker.workerConcurrency}` : ""}`,
+      `Starting ${shouldUseCluster ? "multi-process" : "concurrent"} task processing, ${shouldUseCluster ? "processes" : "workers"}: ${concurrency}${shouldUseCluster ? `, concurrency per process: ${session.config.system.observability.performance.worker.workerConcurrency}` : ""}`,
     );
 
     const results = shouldUseCluster

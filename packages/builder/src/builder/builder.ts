@@ -111,7 +111,7 @@ export class AfilmoryBuilder {
       this.ensureStorageManager();
       return await this.#buildManifest(options);
     } catch (error) {
-      logger.main.error("❌ 构建 manifest 失败：", error);
+      logger.main.error("❌ Failed to build manifest:", error);
       throw error;
     }
   }
@@ -167,11 +167,11 @@ export class AfilmoryBuilder {
       });
 
       logger.main.info(
-        `现有 manifest 包含 ${existingManifestItems.length} 张照片`,
+        `Existing manifest contains ${existingManifestItems.length} photos`,
       );
 
       const storageConfig = this.getStorageConfig();
-      logger.main.info("使用存储提供商：", storageConfig.provider);
+      logger.main.info("Using storage provider:", storageConfig.provider);
 
       const sourceScan = await new SourceScanner().scan(session);
       const { imageObjects, livePhotoMap } = sourceScan;
@@ -186,7 +186,7 @@ export class AfilmoryBuilder {
             `⚠️ Storage returned zero photos but the existing manifest has ${existingManifestItems.length}; keeping it untouched. Pass --force to publish an empty gallery, or check your storage prefix.`,
           );
         } else {
-          logger.main.error("❌ 没有找到需要处理的照片");
+          logger.main.error("❌ No photos found to process");
         }
         const result: BuilderResult = {
           hasUpdates: false,
@@ -223,7 +223,9 @@ export class AfilmoryBuilder {
       const assembler = new ManifestAssembler();
 
       if (tasksToProcess.length === 0) {
-        logger.main.info("💡 没有需要处理的照片，使用现有 manifest");
+        logger.main.info(
+          "💡 No photos to process; using the existing manifest",
+        );
         await assembler.addExistingItems(
           session,
           manifest,
@@ -307,7 +309,7 @@ export class AfilmoryBuilder {
       // 失败照片汇总：即使被跳过也要醒目提示，避免“绿色构建”掩盖照片丢失。
       if (processingStats.failedCount > 0) {
         logger.main.warn(
-          `⚠️ 有 ${processingStats.failedCount} 张照片处理失败并已从 manifest 中跳过，请检查上方失败日志。`,
+          `⚠️ ${processingStats.failedCount} photo(s) failed to process. New photos that failed are omitted from the manifest; photos that failed while being reprocessed keep their previous manifest entry (which may now be stale). Check the failure logs above.`,
         );
       }
 
@@ -386,22 +388,26 @@ export class AfilmoryBuilder {
     const storage = this.getStorageConfig();
     switch (storage.provider) {
       case "s3": {
-        const endpoint = storage.endpoint || "默认 AWS S3";
-        const customDomain = storage.customDomain || "未设置";
+        const endpoint = storage.endpoint || "default AWS S3";
+        const customDomain = storage.customDomain || "not set";
         const { bucket } = storage;
-        const prefix = storage.prefix || "无前缀";
+        const prefix = storage.prefix || "no prefix";
 
-        logger.main.info("🚀 开始从存储获取照片列表...");
-        logger.main.info(`🔗 使用端点：${endpoint}`);
-        logger.main.info(`🌐 自定义域名：${customDomain}`);
-        logger.main.info(`🪣 存储桶：${bucket}`);
-        logger.main.info(`📂 前缀：${prefix}`);
+        logger.main.info("🚀 Fetching photo list from storage...");
+        logger.main.info(`🔗 Endpoint: ${endpoint}`);
+        logger.main.info(`🌐 Custom domain: ${customDomain}`);
+        logger.main.info(`🪣 Bucket: ${bucket}`);
+        logger.main.info(`📂 Prefix: ${prefix}`);
         break;
       }
       case "local": {
-        logger.main.info("🚀 开始从本地文件系统获取照片列表...");
-        logger.main.info(`📂 照片目录：${storage.basePath}`);
-        logger.main.info(`🌐 公共 URL 前缀：${storage.baseUrl ?? "/photos"}`);
+        logger.main.info(
+          "🚀 Fetching photo list from the local file system...",
+        );
+        logger.main.info(`📂 Photo directory: ${storage.basePath}`);
+        logger.main.info(
+          `🌐 Public URL prefix: ${storage.baseUrl ?? "/photos"}`,
+        );
         break;
       }
     }
@@ -422,20 +428,20 @@ export class AfilmoryBuilder {
     const durationMinutes = Math.floor(durationSeconds / 60);
     const remainingSeconds = durationSeconds % 60;
 
-    logger.main.success(`🎉 Manifest 构建完成!`);
-    logger.main.info(`📊 处理统计:`);
-    logger.main.info(`   📸 总照片数：${manifest.length}`);
-    logger.main.info(`   🆕 新增照片：${stats.newCount}`);
-    logger.main.info(`   🔄 处理照片：${stats.processedCount}`);
-    logger.main.info(`   ⏭️ 跳过照片：${stats.skippedCount}`);
+    logger.main.success(`🎉 Manifest build complete!`);
+    logger.main.info(`📊 Processing stats:`);
+    logger.main.info(`   📸 Total photos: ${manifest.length}`);
+    logger.main.info(`   🆕 New photos: ${stats.newCount}`);
+    logger.main.info(`   🔄 Processed photos: ${stats.processedCount}`);
+    logger.main.info(`   ⏭️ Skipped photos: ${stats.skippedCount}`);
     if (stats.failedCount > 0) {
       logger.main.warn(
-        `   ❌ 失败照片：${stats.failedCount}（已跳过，未写入 manifest）`,
+        `   ❌ Failed photos: ${stats.failedCount} (new ones omitted; reprocessed ones keep their previous entry)`,
       );
     }
-    logger.main.info(`   🗑️ 删除照片：${stats.deletedCount}`);
+    logger.main.info(`   🗑️ Deleted photos: ${stats.deletedCount}`);
     logger.main.info(
-      `   ⏱️ 总耗时：${durationMinutes > 0 ? `${durationMinutes}分${remainingSeconds}秒` : `${durationSeconds}秒`}`,
+      `   ⏱️ Total time: ${durationMinutes > 0 ? `${durationMinutes}m${remainingSeconds}s` : `${durationSeconds}s`}`,
     );
   }
 
@@ -539,7 +545,7 @@ export class AfilmoryBuilder {
   private getUserSettings(): UserBuilderSettings {
     if (!this.config.user) {
       throw new Error(
-        "User configuration is missing. 请配置 system/user 设置。",
+        "User configuration is missing. Please configure your system/user settings.",
       );
     }
     return this.config.user;
@@ -549,7 +555,7 @@ export class AfilmoryBuilder {
     const { storage } = this.getUserSettings();
     if (!storage) {
       throw new Error(
-        "Storage configuration is missing. 请配置 system/user storage 设置。",
+        "Storage configuration is missing. Please configure your system/user storage settings.",
       );
     }
     // 兜底缺失的 provider 判别字段（历史配置默认 s3），使 getManifestSource /

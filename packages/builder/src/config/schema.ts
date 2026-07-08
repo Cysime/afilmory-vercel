@@ -7,23 +7,25 @@ import type {
 } from "../types/config.js";
 
 /**
- * 配置输入的形状描述、合并与校验。
+ * Shape description, merging, and validation for config input.
  *
- * builder.config.ts 是每个 self-hoster 都要编辑的文件，所以这里必须 fail loud：
- * - 未登记的键收集成警告（不抛错，保留向前兼容），拼写错误一眼可见；
- * - 已知键上的类型错误直接抛出精确错误信息。
+ * builder.config.ts is a file every self-hoster edits, so this must fail loud:
+ * - unregistered keys are collected into warnings (no throw, keeps forward
+ *   compatibility), so typos are immediately visible;
+ * - type errors on known keys throw a precise error message.
  *
- * 刻意手写描述表而不引入 zod：与 @afilmory/schema 的零依赖、零魔法风格一致。
- * 新增配置键时只需在对应 FIELDS 表登记一行。
+ * The spec table is hand-written on purpose instead of pulling in zod: it
+ * matches @afilmory/schema's zero-dependency, zero-magic style. Adding a config
+ * key only takes one line in the corresponding FIELDS table.
  */
 
 type LeafSpec =
   | { kind: "number" }
   | { kind: "boolean" }
-  /** ignoreEmpty：空字符串视为未设置（保留旧行为：output 路径为空串时回退默认值） */
+  /** ignoreEmpty: an empty string is treated as unset (keeps the old behavior: an empty output path falls back to the default) */
   | { kind: "string"; ignoreEmpty?: boolean }
   | { kind: "enum"; values: readonly string[] }
-  /** Set<string> 或 string[]，合并时统一拷贝为新 Set */
+  /** Set<string> or string[]; always copied into a new Set when merging */
   | { kind: "string-set" };
 
 type FieldSpec = LeafSpec | { kind: "section"; fields: FieldSpecMap };

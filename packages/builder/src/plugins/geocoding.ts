@@ -78,7 +78,9 @@ function ensureProvider(
   );
 
   if (!provider) {
-    logger.warn("无法创建地理编码提供者，请检查 geocoding 配置和 Token");
+    logger.warn(
+      "Failed to create geocoding provider; check your geocoding config and token",
+    );
     return null;
   }
 
@@ -212,7 +214,7 @@ export default function geocodingPlugin(
 
             if (attempted > 0) {
               locationLogger.info(
-                `📍 为 ${attempted} 张缺失位置信息的照片尝试补全，成功 ${updated} 张`,
+                `📍 Attempted to backfill location for ${attempted} photos missing it, ${updated} succeeded`,
               );
             }
 

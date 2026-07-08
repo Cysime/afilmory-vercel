@@ -81,7 +81,7 @@ describe("decidePhotoWork", () => {
       hasThumbnail,
     );
 
-    expect(result).toEqual({ shouldProcess: true, reason: "新照片" });
+    expect(result).toEqual({ shouldProcess: true, reason: "new photo" });
     expect(hasThumbnail).not.toHaveBeenCalled();
   });
 
@@ -95,7 +95,7 @@ describe("decidePhotoWork", () => {
       async () => true,
     );
 
-    expect(result).toEqual({ shouldProcess: true, reason: "文件已更新" });
+    expect(result).toEqual({ shouldProcess: true, reason: "file updated" });
   });
 
   it("processes same-timestamp changes when size changes", async () => {
@@ -106,7 +106,7 @@ describe("decidePhotoWork", () => {
       async () => true,
     );
 
-    expect(result).toEqual({ shouldProcess: true, reason: "文件已更新" });
+    expect(result).toEqual({ shouldProcess: true, reason: "file updated" });
   });
 
   it("processes same-timestamp changes when etag changes", async () => {
@@ -117,7 +117,7 @@ describe("decidePhotoWork", () => {
       async () => true,
     );
 
-    expect(result).toEqual({ shouldProcess: true, reason: "文件已更新" });
+    expect(result).toEqual({ shouldProcess: true, reason: "file updated" });
   });
 
   it("processes when the thumbnail is missing", async () => {
@@ -128,7 +128,10 @@ describe("decidePhotoWork", () => {
       async () => false,
     );
 
-    expect(result).toEqual({ shouldProcess: true, reason: "缩略图缺失" });
+    expect(result).toEqual({
+      shouldProcess: true,
+      reason: "thumbnail missing",
+    });
   });
 
   it("skips unchanged photos with an existing thumbnail", async () => {
@@ -139,7 +142,10 @@ describe("decidePhotoWork", () => {
       async () => true,
     );
 
-    expect(result).toEqual({ shouldProcess: false, reason: "无需处理" });
+    expect(result).toEqual({
+      shouldProcess: false,
+      reason: "no processing needed",
+    });
   });
 
   it("always processes in force mode without probing thumbnails", async () => {
@@ -152,7 +158,7 @@ describe("decidePhotoWork", () => {
       hasThumbnail,
     );
 
-    expect(result).toEqual({ shouldProcess: true, reason: "强制模式" });
+    expect(result).toEqual({ shouldProcess: true, reason: "force mode" });
     expect(hasThumbnail).not.toHaveBeenCalled();
   });
 
@@ -166,7 +172,10 @@ describe("decidePhotoWork", () => {
       hasThumbnail,
     );
 
-    expect(result).toEqual({ shouldProcess: true, reason: "强制更新清单" });
+    expect(result).toEqual({
+      shouldProcess: true,
+      reason: "force update manifest",
+    });
     expect(hasThumbnail).not.toHaveBeenCalled();
   });
 
@@ -178,7 +187,7 @@ describe("decidePhotoWork", () => {
       async () => true,
     );
 
-    expect(result).toEqual({ shouldProcess: true, reason: "文件已更新" });
+    expect(result).toEqual({ shouldProcess: true, reason: "file updated" });
   });
 
   it("processes unchanged photos in force-thumbnails mode even when a thumbnail exists", async () => {
@@ -191,7 +200,7 @@ describe("decidePhotoWork", () => {
 
     expect(result).toEqual({
       shouldProcess: true,
-      reason: "强制重新生成缩略图",
+      reason: "force regenerate thumbnail",
     });
   });
 
@@ -203,7 +212,10 @@ describe("decidePhotoWork", () => {
       () => false,
     );
 
-    expect(result).toEqual({ shouldProcess: true, reason: "缩略图缺失" });
+    expect(result).toEqual({
+      shouldProcess: true,
+      reason: "thumbnail missing",
+    });
   });
 });
 
@@ -223,7 +235,10 @@ describe("shouldProcessPhoto", () => {
       createOptions(),
     );
 
-    expect(result).toEqual({ shouldProcess: true, reason: "缩略图缺失" });
+    expect(result).toEqual({
+      shouldProcess: true,
+      reason: "thumbnail missing",
+    });
     expect(thumbnailExists).toHaveBeenCalledWith(
       "photo",
       "/test-out/thumbnails",
@@ -240,7 +255,7 @@ describe("shouldProcessPhoto", () => {
       createOptions(),
     );
 
-    expect(result).toEqual({ shouldProcess: true, reason: "文件已更新" });
+    expect(result).toEqual({ shouldProcess: true, reason: "file updated" });
     expect(thumbnailExists).not.toHaveBeenCalled();
   });
 });

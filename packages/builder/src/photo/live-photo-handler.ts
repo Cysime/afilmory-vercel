@@ -37,7 +37,7 @@ export async function processLivePhoto(
 
   const livePhotoVideoUrl = await storageManager.generatePublicUrl(videoKey);
 
-  loggers.image.info(`📱 检测到 Live Photo：${photoKey} -> ${videoKey}`);
+  loggers.image.info(`📱 Detected Live Photo: ${photoKey} -> ${videoKey}`);
 
   return {
     isLivePhoto: true,

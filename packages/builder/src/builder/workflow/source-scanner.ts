@@ -14,7 +14,7 @@ export class SourceScanner {
     const { options, storageManager } = session;
 
     const allObjects = await storageManager.listAllFiles();
-    logger.main.info(`存储中找到 ${allObjects.length} 个文件`);
+    logger.main.info(`Found ${allObjects.length} files in storage`);
 
     await session.emit("afterAllFilesListed", {
       options,
@@ -23,7 +23,7 @@ export class SourceScanner {
 
     const livePhotoMap = await this.detectLivePhotos(session, allObjects);
     if (session.config.system.processing.enableLivePhotoDetection) {
-      logger.main.info(`检测到 ${livePhotoMap.size} 个 Live Photo`);
+      logger.main.info(`Detected ${livePhotoMap.size} Live Photos`);
     }
 
     await session.emit("afterLivePhotoDetection", {
@@ -37,7 +37,7 @@ export class SourceScanner {
     const imageObjects = allObjects.filter((object) =>
       isSupportedImageKey(object.key),
     );
-    logger.main.info(`存储中找到 ${imageObjects.length} 张照片`);
+    logger.main.info(`Found ${imageObjects.length} photos in storage`);
 
     return {
       allObjects,

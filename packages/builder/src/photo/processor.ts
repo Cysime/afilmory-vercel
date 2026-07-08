@@ -61,7 +61,7 @@ export async function processPhoto(
   const { obj, index, workerId, totalImages } = task;
   const { key } = obj;
   if (!key) {
-    logger.image.warn(`跳过没有 Key 的对象`);
+    logger.image.warn(`Skipping object without a key`);
     return { item: null, type: "failed" };
   }
 

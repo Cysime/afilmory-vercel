@@ -277,7 +277,7 @@ describe("loadBuilderConfig", () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "afilmory-config-"));
     try {
       await expect(loadBuilderConfig({ cwd: dir })).rejects.toThrow(
-        "缺失存储配置",
+        "Missing storage config",
       );
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
