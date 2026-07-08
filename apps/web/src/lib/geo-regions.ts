@@ -11,8 +11,12 @@ import type {
   GeographicRegionLevel,
   PhotoMarker,
 } from "~/types/map";
+import type { PhotoManifest } from "~/types/photo";
 
-import { calculateMapBounds } from "./map-utils";
+import {
+  calculateMapBounds,
+  convertPhotosToMarkersFromEXIF,
+} from "./map-utils";
 
 const createRegionLabel = (
   admin: Parameters<typeof getRegionAdminPath>[0],
@@ -53,6 +57,9 @@ export function createGeographicRegions(
     });
   }
 
+  // Regions come out ordered by first marker appearance for free: each group
+  // is inserted into the Map when its first marker is encountered, and Map
+  // iteration preserves insertion order — no sort needed.
   return Array.from(groups.entries())
     .map(([id, group]): GeographicRegion | null => {
       const bounds = calculateMapBounds(group.markers);
@@ -73,16 +80,42 @@ export function createGeographicRegions(
         bounds,
       };
     })
-    .filter((region): region is GeographicRegion => region !== null)
-    .sort((a, b) => {
-      const firstIndex = markers.findIndex((marker) =>
-        a.photoIds.includes(marker.photo.id),
-      );
-      const secondIndex = markers.findIndex((marker) =>
-        b.photoIds.includes(marker.photo.id),
-      );
-      return firstIndex - secondIndex;
-    });
+    .filter((region): region is GeographicRegion => region !== null);
+}
+
+export type GeoRegionsByLevel = Record<
+  GeographicRegionLevel,
+  GeographicRegion[]
+>;
+
+export type PhotoGeoData = {
+  markers: PhotoMarker[];
+  regionsByLevel: GeoRegionsByLevel;
+};
+
+// Full-library EXIF-GPS parsing + 4-level region grouping is expensive, and the
+// callers (virtualized gallery header, filter panel, /explore map) all derive it
+// from the same stable PhotoRepository array. Memoize by array identity — same
+// pattern as filterAndSortPhotos' WeakMap memo — so remounts are cache hits and
+// the WeakMap never keeps a stale manifest alive.
+const photoGeoDataCache = new WeakMap<PhotoManifest[], PhotoGeoData>();
+
+export function getPhotoGeoData(photos: PhotoManifest[]): PhotoGeoData {
+  const cached = photoGeoDataCache.get(photos);
+  if (cached) return cached;
+
+  const markers = convertPhotosToMarkersFromEXIF(photos);
+  const data: PhotoGeoData = {
+    markers,
+    regionsByLevel: {
+      country: createGeographicRegions(markers, "country"),
+      region: createGeographicRegions(markers, "region"),
+      city: createGeographicRegions(markers, "city"),
+      district: createGeographicRegions(markers, "district"),
+    },
+  };
+  photoGeoDataCache.set(photos, data);
+  return data;
 }
 
 export function createRegionMarker(region: GeographicRegion): PhotoMarker {

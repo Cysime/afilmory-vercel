@@ -1,11 +1,7 @@
 import type { CameraInfo, LensInfo } from "@afilmory/schema";
 import type { GeoFilterState } from "@afilmory/schema/geo";
 
-import {
-  createGeographicRegions,
-  getRegionDisplayName,
-} from "~/lib/geo-regions";
-import { convertPhotosToMarkersFromEXIF } from "~/lib/map-utils";
+import { getPhotoGeoData, getRegionDisplayName } from "~/lib/geo-regions";
 import type { GeographicRegion } from "~/types/map";
 import type { PhotoManifest } from "~/types/photo";
 
@@ -19,16 +15,12 @@ export type FilterItem = {
   label: string;
 };
 
+// Delegates to the WeakMap-memoized geo computation so virtualized remounts
+// and the other consumers (header stats, filter panel, map) share one result.
 export function createGalleryGeoRegions(
   photos: PhotoManifest[],
 ): GalleryGeoRegions {
-  const markers = convertPhotosToMarkersFromEXIF(photos);
-  return {
-    country: createGeographicRegions(markers, "country"),
-    region: createGeographicRegions(markers, "region"),
-    city: createGeographicRegions(markers, "city"),
-    district: createGeographicRegions(markers, "district"),
-  };
+  return getPhotoGeoData(photos).regionsByLevel;
 }
 
 export function createGeoRegionLabelMaps(
