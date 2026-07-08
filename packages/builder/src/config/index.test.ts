@@ -9,6 +9,7 @@ import type { StorageConfig } from "../storage/interfaces.js";
 import type { BuilderConfigInput } from "../types/config.js";
 import { createDefaultBuilderConfig } from "./defaults.js";
 import { loadBuilderConfig, resolveBuilderConfig } from "./index.js";
+import type { BuilderConfigFileInput } from "./schema.js";
 
 function asInput(value: unknown): BuilderConfigInput {
   return value as BuilderConfigInput;
@@ -39,7 +40,7 @@ describe("resolveBuilderConfig — old merge semantics preserved", () => {
     const plugins = [
       { plugin: "geocoding" as const, options: { enable: true } },
     ];
-    const input: BuilderConfigInput = {
+    const input: BuilderConfigFileInput = {
       output: {
         manifestPath: "/repo/generated/photos-manifest.json",
         thumbnailsDir: "/repo/apps/web/public/thumbnails",
@@ -51,13 +52,13 @@ describe("resolveBuilderConfig — old merge semantics preserved", () => {
           defaultConcurrency: 12,
           enableLivePhotoDetection: false,
           digestSuffixLength: 6,
+          // worker 的用户侧路径已迁到 processing 下；resolved config 仍存放在
+          // observability.performance.worker（见 schema.ts 的 mergeSystemSection）
+          worker: { workerCount: 4, useClusterMode: false },
         },
         observability: {
           showProgress: false,
           logging: { level: "debug" },
-          performance: {
-            worker: { workerCount: 4, useClusterMode: false },
-          },
         },
       },
       plugins,
@@ -209,6 +210,32 @@ describe("resolveBuilderConfig — old merge semantics preserved", () => {
     expect(base.system.processing.defaultConcurrency).toBe(10);
   });
 
+  it("resolves the legacy worker path identically to system.processing.worker (with a loud deprecation warning)", () => {
+    const warn = vi.spyOn(consola, "warn").mockImplementation(() => {});
+    try {
+      const modern = resolveBuilderConfig({
+        system: { processing: { worker: { workerCount: 4, timeout: 1000 } } },
+      });
+      expect(warn).not.toHaveBeenCalled();
+
+      const legacy = resolveBuilderConfig(
+        asInput({
+          system: {
+            observability: {
+              performance: { worker: { workerCount: 4, timeout: 1000 } },
+            },
+          },
+        }),
+      );
+      expect(legacy).toEqual(modern);
+      expect(warn).toHaveBeenCalledWith(
+        '[config] Deprecated key "system.observability.performance.worker" — did you mean "system.processing.worker"? The legacy path still works this release.',
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("logs unknown-key warnings loudly via consola", () => {
     const warn = vi.spyOn(consola, "warn").mockImplementation(() => {});
     try {
@@ -228,7 +255,7 @@ describe("loadBuilderConfig", () => {
     try {
       await fs.writeFile(
         path.join(dir, "builder.config.ts"),
-        'export default { storage: { provider: "local", basePath: "/tmp/photos" } };\n',
+        'export default { storage: { provider: "local", basePath: "/tmp/photos" }, system: { processing: { worker: { workerCount: 3 } } } };\n',
       );
       const config = await loadBuilderConfig({ cwd: dir });
       expect(config.user?.storage).toEqual({
@@ -237,6 +264,10 @@ describe("loadBuilderConfig", () => {
       });
       // 未覆盖的部分保持默认值
       expect(config.system.processing.defaultConcurrency).toBe(10);
+      // 新路径 system.processing.worker 端到端落到内部 worker 配置
+      expect(config.system.observability.performance.worker.workerCount).toBe(
+        3,
+      );
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

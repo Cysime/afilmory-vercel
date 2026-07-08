@@ -25,4 +25,17 @@ describe("defineBuilderConfig", () => {
     defineBuilderConfig(factory);
     expect(calls).toBe(1);
   });
+
+  it("accepts the canonical system.processing.worker path (compile-time check)", () => {
+    // 编译期断言：builder.config.ts 迁移到新路径后必须能通过类型检查
+    const config = defineBuilderConfig({
+      system: {
+        processing: {
+          defaultConcurrency: 10,
+          worker: { workerCount: 4, useClusterMode: false },
+        },
+      },
+    });
+    expect(config.system?.processing?.worker?.workerCount).toBe(4);
+  });
 });

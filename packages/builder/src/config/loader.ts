@@ -2,9 +2,10 @@ import { loadConfig } from "c12";
 import consola from "consola";
 
 import { normalizeBuilderOutputSettings } from "../output-paths.js";
-import type { BuilderConfig, BuilderConfigInput } from "../types/config.js";
+import type { BuilderConfig } from "../types/config.js";
 import { clone } from "../utils/clone.js";
 import { createDefaultBuilderConfig } from "./defaults.js";
+import type { BuilderConfigFileInput } from "./schema.js";
 import { applyBuilderConfigInput, redactConfigSecrets } from "./schema.js";
 
 export interface LoadBuilderConfigOptions {
@@ -13,7 +14,7 @@ export interface LoadBuilderConfigOptions {
 }
 
 export function resolveBuilderConfig(
-  input: BuilderConfigInput,
+  input: BuilderConfigFileInput,
   base?: BuilderConfig,
 ): BuilderConfig {
   const config = base ? clone(base) : createDefaultBuilderConfig();
@@ -31,7 +32,7 @@ export function resolveBuilderConfig(
 export async function loadBuilderConfig(
   options: LoadBuilderConfigOptions = {},
 ): Promise<BuilderConfig> {
-  const result = await loadConfig<BuilderConfigInput>({
+  const result = await loadConfig<BuilderConfigFileInput>({
     name: "builder",
     cwd: options.cwd ?? process.cwd(),
     configFile: options.configFile,

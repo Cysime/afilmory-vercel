@@ -104,6 +104,16 @@ export default defineBuilderConfig(() => ({
       defaultConcurrency: 10,
       enableLivePhotoDetection: true,
       digestSuffixLength: 0,
+      worker: {
+        // 支持环境变量临时压低并发：本地带宽有限时，CPU×2 个 worker × 并发 2
+        // 会把 S3 大文件下载全部挤到 60s 超时（参见 s3-provider 重试日志）。
+        workerCount: env.BUILDER_WORKER_COUNT
+          ? Number(env.BUILDER_WORKER_COUNT)
+          : os.cpus().length * 2,
+        timeout: 30_000,
+        useClusterMode: env.BUILDER_USE_CLUSTER_MODE !== "false",
+        workerConcurrency: 2,
+      },
     },
     observability: {
       showProgress: true,
@@ -112,18 +122,6 @@ export default defineBuilderConfig(() => ({
         verbose: false,
         level: "info",
         outputToFile: false,
-      },
-      performance: {
-        worker: {
-          // 支持环境变量临时压低并发：本地带宽有限时，CPU×2 个 worker × 并发 2
-          // 会把 S3 大文件下载全部挤到 60s 超时（参见 s3-provider 重试日志）。
-          workerCount: env.BUILDER_WORKER_COUNT
-            ? Number(env.BUILDER_WORKER_COUNT)
-            : os.cpus().length * 2,
-          timeout: 30_000,
-          useClusterMode: env.BUILDER_USE_CLUSTER_MODE !== "false",
-          workerConcurrency: 2,
-        },
       },
     },
   },

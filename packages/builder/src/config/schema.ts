@@ -3,6 +3,7 @@ import type {
   BuilderConfig,
   BuilderConfigInput,
   UserBuilderSettings,
+  WorkerPerformanceConfig,
 } from "../types/config.js";
 
 /**
@@ -31,14 +32,40 @@ type FieldSpecMap = Readonly<Record<string, FieldSpec>>;
 
 type LeafSpecMap = Readonly<Record<string, LeafSpec>>;
 
+/**
+ * Worker-pool tuning is a processing knob, so its canonical input path is
+ * `system.processing.worker`. The resolved config still stores it at
+ * `system.observability.performance.worker` (downstream consumers read that
+ * path); mergeSystemSection routes both input paths there. Following the
+ * schema's existing legacy-path pattern (provider-less storage treated as
+ * legacy s3, legacy `token` still redacted), the old input path is honored
+ * this release and only emits a deprecation warning.
+ */
+const WORKER_FIELDS: LeafSpecMap = {
+  timeout: { kind: "number" },
+  useClusterMode: { kind: "boolean" },
+  workerConcurrency: { kind: "number" },
+  workerCount: { kind: "number" },
+};
+
+const WORKER_INPUT_PATH = "system.processing.worker";
+const LEGACY_WORKER_INPUT_PATH = "system.observability.performance.worker";
+
 const SYSTEM_FIELDS: FieldSpecMap = {
   processing: {
     kind: "section",
     fields: {
+      // Fallback task concurrency, used ONLY when buildManifest() is called
+      // programmatically without options.concurrencyLimit. The CLI always
+      // passes worker.workerCount as concurrencyLimit, so this knob has no
+      // effect on CLI builds — tune worker.workerCount instead.
       defaultConcurrency: { kind: "number" },
       enableLivePhotoDetection: { kind: "boolean" },
       supportedFormats: { kind: "string-set" },
       digestSuffixLength: { kind: "number" },
+      // Registered here for unknown-key suggestions; the actual merge is
+      // routed by mergeSystemSection (see WORKER_FIELDS above).
+      worker: { kind: "section", fields: WORKER_FIELDS },
     },
   },
   observability: {
@@ -53,20 +80,6 @@ const SYSTEM_FIELDS: FieldSpecMap = {
           level: { kind: "enum", values: ["info", "warn", "error", "debug"] },
           outputToFile: { kind: "boolean" },
           logFilePath: { kind: "string" },
-        },
-      },
-      performance: {
-        kind: "section",
-        fields: {
-          worker: {
-            kind: "section",
-            fields: {
-              timeout: { kind: "number" },
-              useClusterMode: { kind: "boolean" },
-              workerConcurrency: { kind: "number" },
-              workerCount: { kind: "number" },
-            },
-          },
         },
       },
     },
@@ -342,13 +355,136 @@ function ensureUserSettings(target: BuilderConfig): UserBuilderSettings {
 }
 
 /**
- * 把 BuilderConfigInput 合并进（已克隆的）默认配置，原地修改 target。
+ * Shape accepted from builder.config.ts. Extends BuilderConfigInput with the
+ * canonical worker path (`system.processing.worker`); the legacy
+ * `system.observability.performance.worker` path stays typed through
+ * BuilderConfigInput and is honored with a deprecation warning this release.
+ */
+export type BuilderConfigFileInput = BuilderConfigInput & {
+  system?: {
+    processing?: {
+      /** Worker-pool tuning: workerCount, workerConcurrency, useClusterMode, timeout. */
+      worker?: Partial<WorkerPerformanceConfig>;
+    };
+  };
+};
+
+interface SystemWorkerInputSplit {
+  /** system 输入去掉两个 worker 路径后的剩余部分（浅克隆，不改动调用方对象） */
+  rest: Record<string, unknown>;
+  canonicalWorker?: unknown;
+  hasCanonicalWorker: boolean;
+  legacyWorker?: unknown;
+  hasLegacyWorker: boolean;
+}
+
+function splitWorkerInput(
+  system: Record<string, unknown>,
+): SystemWorkerInputSplit {
+  const rest = { ...system };
+  const split: SystemWorkerInputSplit = {
+    rest,
+    hasCanonicalWorker: false,
+    hasLegacyWorker: false,
+  };
+
+  const { processing } = system;
+  if (isPlainObject(processing) && "worker" in processing) {
+    split.hasCanonicalWorker = true;
+    split.canonicalWorker = processing.worker;
+    const processingRest = { ...processing };
+    delete processingRest.worker;
+    rest.processing = processingRest;
+  }
+
+  const { observability } = system;
+  if (
+    isPlainObject(observability) &&
+    isPlainObject(observability.performance)
+  ) {
+    const { performance } = observability;
+    if ("worker" in performance) {
+      split.hasLegacyWorker = true;
+      split.legacyWorker = performance.worker;
+      const performanceRest = { ...performance };
+      delete performanceRest.worker;
+      const observabilityRest = { ...observability };
+      if (Object.keys(performanceRest).length > 0) {
+        // performance 下的其余键仍走未知键告警（performance 已不再登记）
+        observabilityRest.performance = performanceRest;
+      } else {
+        delete observabilityRest.performance;
+      }
+      rest.observability = observabilityRest;
+    }
+  }
+
+  return split;
+}
+
+/**
+ * system 分区的合并入口：worker 段的用户侧路径已迁到 system.processing.worker，
+ * 但 resolved config 内部仍存放在 system.observability.performance.worker
+ * （cli/photo-task-processor 等消费方读那里），所以两个输入路径都路由到内部位置。
+ * 旧路径本版本继续生效，只发一条弃用告警；两者同时给出时新路径胜出。
+ */
+function mergeSystemSection(
+  target: BuilderConfig,
+  input: unknown,
+  warnings: string[],
+): void {
+  if (input === undefined || input === null) return;
+  if (!isPlainObject(input)) {
+    throw invalidValueError("system", "an object", input);
+  }
+
+  const split = splitWorkerInput(input);
+  if (split.hasLegacyWorker) {
+    warnings.push(
+      `[config] Deprecated key "${LEGACY_WORKER_INPUT_PATH}" — did you mean "${WORKER_INPUT_PATH}"? The legacy path still works this release.`,
+    );
+  }
+
+  mergeSection(
+    asMutableRecord(target.system),
+    split.rest,
+    SYSTEM_FIELDS,
+    "system",
+    warnings,
+  );
+
+  const workerTarget = asMutableRecord(
+    target.system.observability.performance.worker,
+  );
+  // 先合并旧路径再合并新路径：canonical path wins when both are set
+  if (split.hasLegacyWorker) {
+    mergeSection(
+      workerTarget,
+      split.legacyWorker,
+      WORKER_FIELDS,
+      LEGACY_WORKER_INPUT_PATH,
+      warnings,
+    );
+  }
+  if (split.hasCanonicalWorker) {
+    mergeSection(
+      workerTarget,
+      split.canonicalWorker,
+      WORKER_FIELDS,
+      WORKER_INPUT_PATH,
+      warnings,
+    );
+  }
+}
+
+/**
+ * 把 BuilderConfigFileInput 合并进（已克隆的）默认配置，原地修改 target。
  * 返回未知键警告列表，由调用方决定如何输出（resolveBuilderConfig 用 consola 大声打印）。
  * 已知键上的类型错误直接抛出。
  */
 export function applyBuilderConfigInput(
   target: BuilderConfig,
-  input: BuilderConfigInput,
+  input: BuilderConfigFileInput,
 ): string[] {
   const warnings: string[] = [];
   if (input === undefined || input === null) return warnings;
@@ -362,13 +498,7 @@ export function applyBuilderConfigInput(
     }
   }
 
-  mergeSection(
-    asMutableRecord(target.system),
-    input.system,
-    SYSTEM_FIELDS,
-    "system",
-    warnings,
-  );
+  mergeSystemSection(target, input.system, warnings);
 
   // user 分区：user: null 视为未设置（config.user 保持 null）；
   // user: {} 会物化出 { storage: null }——保留旧 ensureUserSettings 行为

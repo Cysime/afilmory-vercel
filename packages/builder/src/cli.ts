@@ -62,7 +62,7 @@ async function main() {
   tsx packages/builder/src/cli.ts --config                  # 显示配置信息
 
 配置：
-  在 builder.config.ts 中设置 performance.worker.useClusterMode = true
+  在 builder.config.ts 中设置 system.processing.worker.useClusterMode = true
   可启用多进程集群模式，发挥多核心优势。
 `);
     return;
