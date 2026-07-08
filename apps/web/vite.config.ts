@@ -122,7 +122,7 @@ export default defineConfig(async ({ command }) => {
       localesJsonPlugin(),
       tailwindcss(),
       ...staticWebBuildPlugins,
-      process.env.analyzer && analyzer(),
+      process.env.analyzer ? analyzer() : undefined,
     ],
     server: {
       port: 1924, // 1924 年首款 35mm 相机问世
@@ -158,13 +158,16 @@ function getGitHash() {
   }
 }
 
+// process.noDeprecation is a real Node API that @types/node 24 doesn't declare.
+const proc = process as NodeJS.Process & { noDeprecation?: boolean };
+
 async function loadTailwindcssPlugin() {
   // Tailwind 4.1.x calls the deprecated module.register() during import on Node 26.
-  const previousNoDeprecation = process.noDeprecation;
-  process.noDeprecation = true;
+  const previousNoDeprecation = proc.noDeprecation;
+  proc.noDeprecation = true;
   try {
     return (await import("@tailwindcss/vite")).default;
   } finally {
-    process.noDeprecation = previousNoDeprecation;
+    proc.noDeprecation = previousNoDeprecation;
   }
 }
