@@ -82,6 +82,12 @@ interface Field<T> {
 
 type Shape = Record<string, Field<unknown>>;
 
+// Shape 与产出类型没有静态关联，而 normalizeShape 只拷贝 shape 里声明的键——
+// 目标类型新增字段却漏写描述符时会编译通过、字段被两个入口静默剥掉。各 shape
+// 声明处用 `satisfies ShapeFor<目标类型>` 把"每个键都有描述符"变成编译期约束
+// （Field 对 T 协变，Field<T[K]> 仍可赋给 Field<unknown>，运行时不受影响）。
+type ShapeFor<T> = { [K in keyof T]-?: Field<T[K]> };
+
 function field<T>(
   guard: (value: unknown) => value is T,
   message: string,
@@ -181,21 +187,21 @@ const presentStr = () => optStr("must be a string when present");
 
 // —— source ——
 
+type S3Source = Extract<ManifestSource, { provider: "s3" }>;
+type LocalSource = Extract<ManifestSource, { provider: "local" }>;
+
 const s3SourceShape: Shape = {
   bucket: presentStr(),
   region: presentStr(),
   endpoint: presentStr(),
   prefix: presentStr(),
   customDomain: presentStr(),
-};
+} satisfies ShapeFor<Omit<S3Source, "provider">>;
 
 const localSourceShape: Shape = {
   basePath: presentStr(),
   baseUrl: presentStr(),
-};
-
-type S3Source = Extract<ManifestSource, { provider: "s3" }>;
-type LocalSource = Extract<ManifestSource, { provider: "local" }>;
+} satisfies ShapeFor<Omit<LocalSource, "provider">>;
 
 const sourceField: Field<ManifestSource> = {
   check: (value) => {
@@ -232,18 +238,18 @@ const cameraShape: Shape = {
   make: requiredStr(),
   model: requiredStr(),
   displayName: requiredStr(),
-};
+} satisfies ShapeFor<CameraInfo>;
 
 const lensShape: Shape = {
   make: optStr(),
   model: requiredStr(),
   displayName: requiredStr(),
-};
+} satisfies ShapeFor<LensInfo>;
 
 const indexesShape: Shape = {
   cameras: arrayField<CameraInfo>(cameraShape),
   lenses: arrayField<LensInfo>(lensShape),
-};
+} satisfies ShapeFor<ManifestIndexes>;
 
 function normalizeIndexes(value: unknown): ManifestIndexes {
   return (
@@ -272,18 +278,33 @@ function nullableObjectField<T>(shape: Shape): Field<T | null> {
 const isToneType = (value: unknown): value is ToneType =>
   typeof value === "string" && VALID_TONE_TYPES.has(value as ToneType);
 
-const toneAnalysisField = nullableObjectField<ToneAnalysis>({
+const toneAnalysisShape: Shape = {
   toneType: field(isToneType, "is invalid", "normal" as ToneType),
   brightness: num(0),
   contrast: num(0),
   shadowRatio: num(0),
   highlightRatio: num(0),
-});
+} satisfies ShapeFor<ToneAnalysis>;
 
+const toneAnalysisField = nullableObjectField<ToneAnalysis>(toneAnalysisShape);
+
+// Omit 列出的键不进 shape，由 locationField.normalize 手工抢救（见下）；
+// LocationInfo 新增字段会在这里编译失败，倒逼作者显式选择两种归属之一。
 const locationShape: Shape = {
   latitude: num(0),
   longitude: num(0),
-};
+} satisfies ShapeFor<
+  Omit<
+    LocationInfo,
+    | "admin"
+    | "adminI18n"
+    | "adminKey"
+    | "country"
+    | "city"
+    | "locationName"
+    | "locationNameI18n"
+  >
+>;
 
 // 键值对逐条抢救：坏值丢弃，全空则整体视为缺失（undefined）
 function normalizeRecordOf<T>(
@@ -305,7 +326,7 @@ const adminInfoShape: Shape = {
   region: optStr(),
   city: optStr(),
   district: optStr(),
-};
+} satisfies ShapeFor<LocationAdminInfo>;
 
 function normalizeAdminInfo(value: unknown): LocationAdminInfo | undefined {
   if (!isRecord(value)) return undefined;
@@ -353,13 +374,13 @@ type MotionPhoto = Extract<VideoSource, { type: "motion-photo" }>;
 const livePhotoShape: Shape = {
   videoUrl: requiredStr(),
   s3Key: requiredStr(),
-};
+} satisfies ShapeFor<Omit<LivePhoto, "type">>;
 
 const motionPhotoShape: Shape = {
   offset: requiredField(isFiniteNumber, "must be a number"),
   size: optionalField(isFiniteNumber, "must be a number"),
   presentationTimestamp: optionalField(isFiniteNumber, "must be a number"),
-};
+} satisfies ShapeFor<Omit<MotionPhoto, "type">>;
 
 const videoField: Field<VideoSource | undefined> = {
   check: (value) => {
@@ -463,7 +484,7 @@ const photoShape: Shape = {
   description: str(),
   isHDR: optionalField(isBoolean, "must be a boolean", true),
   video: videoField,
-};
+} satisfies ShapeFor<PhotoManifestItem>;
 
 function validatePhoto(
   value: unknown,
