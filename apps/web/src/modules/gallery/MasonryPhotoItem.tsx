@@ -203,7 +203,8 @@ export const MasonryPhotoItem = memo(
         role="button"
         tabIndex={0}
         aria-label={ariaLabel}
-        className="bg-fill-quaternary group relative w-full cursor-pointer overflow-hidden"
+        // ring-inset：格子 overflow-hidden 且边贴边，外扩的 ring 会被裁掉/被相邻格子盖住
+        className="bg-fill-quaternary focus-visible:ring-accent/45 group relative w-full cursor-pointer overflow-hidden focus-visible:ring-2 focus-visible:ring-inset"
         style={{
           width,
           height: calculatedHeight,

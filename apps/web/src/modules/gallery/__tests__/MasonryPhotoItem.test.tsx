@@ -206,6 +206,17 @@ describe("MasonryPhotoItem", () => {
     expect(img.getAttribute("fetchpriority")).toBe("low");
   });
 
+  it("renders a visible keyboard focus ring on the cell root (global CSS strips outlines)", () => {
+    // styles/tailwind.css 全局压掉 outline，可聚焦控件必须自带 focus-visible ring；
+    // ring-inset 是因为格子 overflow-hidden 且边贴边，外扩 ring 会被裁掉。
+    const { getByRole } = renderItem({ data: photo, width: 300, index: 0 });
+
+    const cell = getByRole("button", { name: "A7C01202" });
+    expect(cell.className).toContain("focus-visible:ring-2");
+    expect(cell.className).toContain("focus-visible:ring-accent/45");
+    expect(cell.className).toContain("focus-visible:ring-inset");
+  });
+
   it("labels untitled photos with their formatted taken date for screen readers", () => {
     const untitled = { ...photo, title: "", description: "" };
     // 期望值用同一套 Intl 参数计算，避免测试机时区导致日期偏移
