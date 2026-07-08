@@ -161,6 +161,33 @@ describe("startManifestInlineFetch", () => {
     );
   });
 
+  it("does not surface a failed fetch as an unhandled rejection before a consumer awaits", async () => {
+    const unhandled: unknown[] = [];
+    const trap = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", trap);
+    try {
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValue(
+          new Error("network down"),
+        ) as typeof globalThis.fetch;
+
+      startManifestInlineFetch("/x.json");
+
+      // 故意几个宏任务不 await —— 模拟 main.tsx bootstrap 尚未挂处理器的窗口。
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+
+      // 迟到的消费方仍能观察到 rejection。
+      await expect(
+        (globalThis as GlobalWithRuntime).__AFILMORY__?.manifest?.promise,
+      ).rejects.toThrow("network down");
+    } finally {
+      process.off("unhandledRejection", trap);
+    }
+  });
+
   it("aborts the request after exactly MANIFEST_REQUEST_TIMEOUT_MS", () => {
     vi.useFakeTimers();
     let capturedSignal: AbortSignal | undefined;
