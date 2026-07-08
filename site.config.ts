@@ -25,9 +25,8 @@ export interface SiteConfig {
 }
 
 /**
- * Map configuration - can be either:
- * - A string for a single provider: 'maplibre'
- * - An array for multiple providers in priority order: ['maplibre']
+ * Map configuration: `map: ["maplibre"]` enables the map; omitting `map` (or
+ * an empty array) disables it. The array form is reserved for future providers.
  */
 type MapConfig = "maplibre"[];
 

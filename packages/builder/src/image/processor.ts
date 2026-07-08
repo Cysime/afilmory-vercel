@@ -24,7 +24,7 @@ export async function getImageMetadataWithSharp(
     const metadata = await sharpInstance.metadata();
 
     if (!metadata.width || !metadata.height || !metadata.format) {
-      log.error("图片元数据不完整");
+      log.error("Image metadata is incomplete");
       return null;
     }
 
@@ -42,7 +42,7 @@ export async function getImageMetadataWithSharp(
       // 对于需要旋转 90°的图片，需要交换宽高
       [width, height] = [height, width];
       log.info(
-        `检测到需要旋转 90°的图片 (orientation: ${orientation})，交换宽高：${width}x${height}`,
+        `Image needs 90° rotation (orientation: ${orientation}), swapping width/height: ${width}x${height}`,
       );
     }
 
@@ -52,7 +52,7 @@ export async function getImageMetadataWithSharp(
       format: metadata.format,
     };
   } catch (error) {
-    log.error("获取图片元数据失败：", error);
+    log.error("Failed to read image metadata:", error);
     return null;
   }
 }
@@ -63,7 +63,7 @@ export async function convertHeicToJpeg(heicBuffer: Buffer): Promise<Buffer> {
 
   try {
     log.info(
-      `开始 HEIC/HEIF → JPEG 转换 (${Math.round(heicBuffer.length / 1024)}KB)`,
+      `Starting HEIC/HEIF → JPEG conversion (${Math.round(heicBuffer.length / 1024)}KB)`,
     );
     const startTime = Date.now();
 
@@ -75,11 +75,13 @@ export async function convertHeicToJpeg(heicBuffer: Buffer): Promise<Buffer> {
 
     const duration = Date.now() - startTime;
     const outputSizeKB = Math.round(jpegBuffer.byteLength / 1024);
-    log.success(`HEIC/HEIF 转换完成 (${outputSizeKB}KB, ${duration}ms)`);
+    log.success(
+      `HEIC/HEIF conversion complete (${outputSizeKB}KB, ${duration}ms)`,
+    );
 
     return Buffer.from(jpegBuffer);
   } catch (error) {
-    log.error("HEIC/HEIF 转换失败：", error);
+    log.error("HEIC/HEIF conversion failed:", error);
     throw error;
   }
 }
@@ -94,7 +96,7 @@ export async function preprocessImageBuffer(
 
   // 如果是 HEIC/HEIF 格式，先转换为 JPEG
   if (HEIC_FORMATS.has(ext)) {
-    log.info(`检测到 HEIC/HEIF 格式：${key}`);
+    log.info(`Detected HEIC/HEIF format: ${key}`);
     return await convertHeicToJpeg(buffer);
   }
 
@@ -123,13 +125,15 @@ export async function convertBmpToJpegSharpInstance(
   const log = getPhotoProcessingLoggers().image;
 
   try {
-    log.info(`开始 BMP → JPEG 转换 (${Math.round(bmpBuffer.length / 1024)}KB)`);
+    log.info(
+      `Starting BMP → JPEG conversion (${Math.round(bmpBuffer.length / 1024)}KB)`,
+    );
     const startTime = Date.now();
 
     // 使用 @vingle/bmp-js 解析 BMP
     const bmpImage = bmp.decode(bmpBuffer, true);
     if (!bmpImage) {
-      throw new Error("BMP 解码失败");
+      throw new Error("BMP decoding failed");
     }
 
     // 创建 Sharp 实例
@@ -145,11 +149,11 @@ export async function convertBmpToJpegSharpInstance(
     }).jpeg();
 
     const duration = Date.now() - startTime;
-    log.success(`BMP 转换完成 (${duration}ms)`);
+    log.success(`BMP conversion complete (${duration}ms)`);
 
     return sharpInstance;
   } catch (error) {
-    log.error("BMP 转换失败：", error);
+    log.error("BMP conversion failed:", error);
     throw error;
   }
 }

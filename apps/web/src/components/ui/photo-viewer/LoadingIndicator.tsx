@@ -9,6 +9,23 @@ import { useTranslation } from "react-i18next";
 
 const MIN_VISIBLE_DURATION_MS = 300;
 
+// WebGL 纹理质量徽标：文案走 i18n，颜色用调色板工具类
+// （与旧内联 hex 等值：#4ade80→green-400、#fbbf24→amber-400、#f87171→red-400）。
+const WEBGL_QUALITY_BADGES = {
+  high: {
+    labelKey: "loading.webgl.quality.high",
+    className: "text-green-400",
+  },
+  medium: {
+    labelKey: "loading.webgl.quality.medium",
+    className: "text-amber-400",
+  },
+  low: {
+    labelKey: "loading.webgl.quality.low",
+    className: "text-red-400",
+  },
+} as const;
+
 interface LoadingState {
   isVisible: boolean;
   isConverting: boolean;
@@ -123,8 +140,18 @@ export const LoadingIndicator = ({
     return null;
   }
 
+  const webglQualityBadge =
+    loadingState.webglQuality && loadingState.webglQuality !== "unknown"
+      ? WEBGL_QUALITY_BADGES[loadingState.webglQuality]
+      : null;
+
   return (
-    <div className="pointer-events-none absolute right-4 bottom-4 z-10 rounded-xl border border-white/10 bg-black/80 px-3 py-2 backdrop-blur">
+    // 状态更新已由 MIN_VISIBLE_DURATION_MS 节流，polite 播报不会刷屏。
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none absolute right-4 bottom-4 z-10 rounded-xl border border-white/10 bg-black/80 px-3 py-2 backdrop-blur"
+    >
       <div className="flex items-center gap-3 text-white">
         <div className="relative">
           {loadingState.isError ? (
@@ -158,21 +185,9 @@ export const LoadingIndicator = ({
                 <p className="text-xs font-medium text-white">
                   {loadingState.webglMessage || t("loading.webgl.main")}
                 </p>
-                {loadingState.webglQuality !== "unknown" && (
-                  <span
-                    className="text-xs tabular-nums"
-                    style={{
-                      color:
-                        loadingState.webglQuality === "high"
-                          ? "#4ade80"
-                          : loadingState.webglQuality === "medium"
-                            ? "#fbbf24"
-                            : loadingState.webglQuality === "low"
-                              ? "#f87171"
-                              : "#94a3b8",
-                    }}
-                  >
-                    {loadingState.webglQuality}
+                {webglQualityBadge && (
+                  <span className={`text-xs ${webglQualityBadge.className}`}>
+                    {t(webglQualityBadge.labelKey)}
                   </span>
                 )}
               </div>

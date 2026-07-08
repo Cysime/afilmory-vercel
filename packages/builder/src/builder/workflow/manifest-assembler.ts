@@ -68,7 +68,7 @@ export class ManifestAssembler {
       const isFailedReprocess = reprocessedKeys.has(key);
       if (isFailedReprocess) {
         logger.main.warn(
-          `⚠️ 照片重新处理失败，保留上一次的 manifest 数据（可能已过期）：${key}`,
+          `⚠️ Reprocess failed; keeping the previous manifest entry (may be stale): ${key}`,
         );
       }
 

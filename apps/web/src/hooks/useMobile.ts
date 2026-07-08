@@ -1,14 +1,8 @@
-import { useViewport } from "./useViewport";
+import { useAtomValue } from "jotai";
 
-export const useMobile = () => {
-  return useViewport((v) => v.w < 1024 && v.w !== 0);
-};
+import { isMobileAtom, isMobileWidth } from "~/atoms/viewport";
 
-export const isMobile = () => {
-  if (typeof window === "undefined") {
-    return false;
-  }
+export const useMobile = () => useAtomValue(isMobileAtom);
 
-  const w = window.innerWidth;
-  return w < 1024 && w !== 0;
-};
+export const isMobile = () =>
+  typeof window !== "undefined" && isMobileWidth(window.innerWidth);

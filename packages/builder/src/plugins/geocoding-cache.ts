@@ -127,12 +127,15 @@ export async function ensurePersistentCacheLoaded(
       }
     }
 
-    logger.info(`📍 已载入地理编码缓存：${state.cache.size} 条`);
+    logger.info(`📍 Loaded geocoding cache: ${state.cache.size} entries`);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return;
     }
-    logger.warn("读取地理编码缓存失败，将继续使用空缓存", error);
+    logger.warn(
+      "Failed to read geocoding cache; continuing with an empty cache",
+      error,
+    );
   }
 }
 
@@ -180,7 +183,9 @@ export async function savePersistentCacheIfNeeded(
     ),
   );
   state.cacheDirty = false;
-  logger.info(`📍 已保存地理编码缓存：${Object.keys(entries).length} 条`);
+  logger.info(
+    `📍 Saved geocoding cache: ${Object.keys(entries).length} entries`,
+  );
 }
 
 export function hasRequiredLocalizedLocation(

@@ -1,29 +1,7 @@
-import { fileURLToPath } from "node:url";
-
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 
-// 同 runtime-state.spec：缩略图是 gitignore 的构建产物，用本地 PNG 兜住，让画廊离线渲染；
-// Live Photo 的 .webm 请求回真实 fixture 视频，避免视频加载失败的 console 噪声。
-const VIEWER_FIXTURE_IMAGE_PATH = fileURLToPath(
-  new URL("../public/favicon-48x48.png", import.meta.url),
-);
-const LIVE_PHOTO_FIXTURE_VIDEO_PATH = fileURLToPath(
-  new URL("fixtures/thumbnails/SYNTH0012.webm", import.meta.url),
-);
-
-async function stubLocalThumbnails(page: Page) {
-  await page.route("**/thumbnails/**", async (route) => {
-    const isLivePhotoVideo = route.request().url().endsWith(".webm");
-    await route.fulfill({
-      contentType: isLivePhotoVideo ? "video/webm" : "image/png",
-      headers: { "Cache-Control": "no-store" },
-      path: isLivePhotoVideo
-        ? LIVE_PHOTO_FIXTURE_VIDEO_PATH
-        : VIEWER_FIXTURE_IMAGE_PATH,
-    });
-  });
-}
+import { stubGoogleFonts, stubLocalThumbnails } from "./helpers";
 
 async function openGallery(page: Page) {
   await page.goto(`/?e2e=${Date.now()}`);
@@ -103,6 +81,9 @@ const GALLERY_URL = /\/(\?.*)?$/;
 const VIEWER_URL = /\/photos\/[^/?]+/;
 
 test.beforeEach(async ({ page }) => {
+  // Fonts + thumbnails cover every network dependency of these routes, so the
+  // gesture specs run fully offline (no map view here → no carto stub needed).
+  await stubGoogleFonts(page);
   await stubLocalThumbnails(page);
 });
 

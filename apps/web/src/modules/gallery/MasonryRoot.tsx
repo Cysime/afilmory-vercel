@@ -3,7 +3,7 @@ import { useAtomValue } from "jotai";
 import { AnimatePresence, m } from "motion/react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { gallerySettingAtom } from "~/atoms/app";
+import { galleryColumnsAtom } from "~/atoms/app";
 import { DateRangeIndicator } from "~/components/ui/date-range-indicator";
 import { useMobile } from "~/hooks/useMobile";
 import { useContextPhotos } from "~/hooks/usePhotoViewer";
@@ -29,7 +29,7 @@ import type { MasonryRef } from "./VirtualMasonry";
 import { Masonry } from "./VirtualMasonry";
 
 export const MasonryRoot = () => {
-  const { columns } = useAtomValue(gallerySettingAtom);
+  const columns = useAtomValue(galleryColumnsAtom);
   const hasAnimatedRef = useRef(false);
   const [showFloatingActions, setShowFloatingActions] = useState(false);
 

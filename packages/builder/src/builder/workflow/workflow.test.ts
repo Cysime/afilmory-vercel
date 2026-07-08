@@ -106,8 +106,6 @@ function createBuilderServicesFixture(config: BuilderConfig): BuilderServices {
     logger,
     photoId: {
       getIdForKey: (key) => key.replace(/\.[^.]+$/, ""),
-      hasCollision: () => false,
-      setCollisionKeys: vi.fn(),
     },
     storage: {
       createManager: (nextConfig) => new StorageManager(nextConfig),
@@ -319,6 +317,26 @@ describe("builder workflow modules", () => {
       [{ make: "Sony", model: "A7C", displayName: "Sony A7C" }],
       [{ make: "Sony", model: "FE 35mm", displayName: "Sony FE 35mm" }],
       { provider: "s3", bucket: "photos" },
+    );
+  });
+
+  it("forwards keepPhotoIds to handleDeletedPhotos so failed photos' thumbnails survive cleanup", async () => {
+    manifestManagerMocks.handleDeletedPhotos.mockClear();
+    const session = createSession();
+    const manifest = [createPhoto("kept")];
+    // Deliberately includes an id that is NOT in the manifest: a photo whose
+    // processing failed is dropped from the manifest but still exists in
+    // storage, and the orphan cleanup must spare its thumbnail. builder.ts
+    // relies on this pass-through when it calls write(..., { keepPhotoIds }).
+    const keepPhotoIds = new Set(["kept", "failed-but-still-in-storage"]);
+
+    await new ArtifactWriter().write(session, manifest, { keepPhotoIds });
+
+    expect(manifestManagerMocks.handleDeletedPhotos).toHaveBeenCalledTimes(1);
+    expect(manifestManagerMocks.handleDeletedPhotos).toHaveBeenCalledWith(
+      session.config.output,
+      manifest,
+      keepPhotoIds,
     );
   });
 });

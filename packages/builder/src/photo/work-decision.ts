@@ -1,7 +1,9 @@
 import type { PhotoProcessorOptions } from "../core/contracts/photo-processing.js";
+import { thumbnailExists } from "../image/thumbnail.js";
 import { needsUpdate } from "../manifest/manager.js";
 import type { StorageObject } from "../storage/interfaces.js";
 import type { PhotoManifestItem } from "../types/photo.js";
+import { getPhotoExecutionContext } from "./execution-context.js";
 
 export interface PhotoWorkDecision {
   shouldProcess: boolean;
@@ -27,12 +29,12 @@ export async function decidePhotoWork(
 ): Promise<PhotoWorkDecision> {
   // 强制模式下总是处理
   if (options.isForceMode) {
-    return { shouldProcess: true, reason: "强制模式" };
+    return { shouldProcess: true, reason: "force mode" };
   }
 
   // 新照片总是需要处理
   if (!existingItem) {
-    return { shouldProcess: true, reason: "新照片" };
+    return { shouldProcess: true, reason: "new photo" };
   }
 
   const fileNeedsUpdate = needsUpdate(existingItem, obj);
@@ -40,7 +42,7 @@ export async function decidePhotoWork(
   if (fileNeedsUpdate || options.isForceManifest) {
     return {
       shouldProcess: true,
-      reason: fileNeedsUpdate ? "文件已更新" : "强制更新清单",
+      reason: fileNeedsUpdate ? "file updated" : "force update manifest",
     };
   }
 
@@ -49,9 +51,27 @@ export async function decidePhotoWork(
   if (!thumbnailPresent || options.isForceThumbnails) {
     return {
       shouldProcess: true,
-      reason: options.isForceThumbnails ? "强制重新生成缩略图" : "缩略图缺失",
+      reason: options.isForceThumbnails
+        ? "force regenerate thumbnail"
+        : "thumbnail missing",
     };
   }
 
-  return { shouldProcess: false, reason: "无需处理" };
+  return { shouldProcess: false, reason: "no processing needed" };
+}
+
+/**
+ * 照片管道（worker 侧）对 decidePhotoWork 的绑定：缩略图存在性从照片
+ * 执行上下文读取。DiffPlanner 在主进程规划阶段没有照片上下文，
+ * 用显式的 session 输出目录直接调用 decidePhotoWork。
+ */
+export async function shouldProcessPhoto(
+  photoId: string,
+  existingItem: PhotoManifestItem | undefined,
+  obj: StorageObject,
+  options: PhotoProcessorOptions,
+): Promise<PhotoWorkDecision> {
+  return decidePhotoWork(existingItem, obj, options, () =>
+    thumbnailExists(photoId, getPhotoExecutionContext().output.thumbnailsDir),
+  );
 }

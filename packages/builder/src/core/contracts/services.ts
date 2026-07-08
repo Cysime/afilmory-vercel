@@ -11,10 +11,15 @@ export interface StorageService {
   getManager: () => StorageManager;
 }
 
+/**
+ * Read-only photo-ID lookup. Collision-set mutation is deliberately NOT part
+ * of this contract: it happens exactly once per run on the builder/session
+ * side (DiffPlanner in the primary, worker bootstrap in cluster workers)
+ * before any photo is processed — exposing a mutator here would let a plugin
+ * silently change photo IDs mid-build.
+ */
 export interface PhotoIdService {
-  hasCollision: (key: string) => boolean;
   getIdForKey: (key: string, existingItem?: PhotoManifestItem) => string;
-  setCollisionKeys: (keys: Iterable<string>) => void;
 }
 
 /**

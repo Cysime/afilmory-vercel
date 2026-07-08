@@ -39,7 +39,7 @@ export class LocalFileSystemProvider implements StorageProvider {
     this.basePath = path.resolve(config.basePath);
     this.excludeRegex = compileExcludeRegex(config.excludeRegex, (error) => {
       logger.fs.warn(
-        `本地存储 excludeRegex 无效，已忽略：${config.excludeRegex}`,
+        `Local storage excludeRegex is invalid, ignored: ${config.excludeRegex}`,
         error,
       );
     });
@@ -84,7 +84,7 @@ export class LocalFileSystemProvider implements StorageProvider {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {
           // basePath 不存在时返回空列表（与空 bucket 行为一致），
           // 由上层"没有找到需要处理的照片"给出统一提示。
-          logger.fs.warn(`本地照片目录不存在：${dir}`);
+          logger.fs.warn(`Local photo directory does not exist: ${dir}`);
           return;
         }
         throw error;
@@ -128,7 +128,7 @@ export class LocalFileSystemProvider implements StorageProvider {
   async getFile(key: string): Promise<Buffer | null> {
     const absolute = this.resolveKey(key);
     if (!absolute) {
-      logger.fs.warn(`拒绝越出照片目录的 key：${key}`);
+      logger.fs.warn(`Rejected key outside the photo directory: ${key}`);
       return null;
     }
 
@@ -137,9 +137,9 @@ export class LocalFileSystemProvider implements StorageProvider {
     } catch (error) {
       // 与 S3 provider 的契约一致：最终失败返回 null，由上层按"该照片处理失败"处理。
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        logger.fs.warn(`本地文件不存在：${key}`);
+        logger.fs.warn(`Local file does not exist: ${key}`);
       } else {
-        logger.fs.error(`读取本地文件失败：${key}`, error);
+        logger.fs.error(`Failed to read local file: ${key}`, error);
       }
       return null;
     }
@@ -168,7 +168,7 @@ export class LocalFileSystemProvider implements StorageProvider {
   async deleteFile(key: string): Promise<void> {
     const absolute = this.resolveKey(key);
     if (!absolute) {
-      logger.fs.warn(`拒绝越出照片目录的 key：${key}`);
+      logger.fs.warn(`Rejected key outside the photo directory: ${key}`);
       return;
     }
 
@@ -197,7 +197,7 @@ export class LocalFileSystemProvider implements StorageProvider {
   ): Promise<StorageObject> {
     const absolute = this.resolveKey(key);
     if (!absolute) {
-      throw new Error(`拒绝越出照片目录的 key：${key}`);
+      throw new Error(`Rejected key outside the photo directory: ${key}`);
     }
 
     // 本地文件系统没有对象元数据，contentType/cacheControl 无处存放，忽略。

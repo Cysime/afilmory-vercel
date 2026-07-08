@@ -26,11 +26,13 @@ export async function loadExistingManifest(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw new Error(
-        `读取 manifest 失败：${manifestPath} - ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to read manifest: ${manifestPath} - ${error instanceof Error ? error.message : String(error)}`,
       );
     }
 
-    logger.fs.error("🔍 未找到 manifest 文件，创建新的 manifest 文件...");
+    logger.fs.error(
+      "🔍 Manifest file not found; creating a new manifest file...",
+    );
     await saveManifest(output, []);
     return createManifest();
   }
@@ -43,7 +45,7 @@ export async function loadExistingManifest(
     const { manifest, skipped } = parseManifestLenient(parsed);
     if (skipped.length > 0) {
       logger.fs.warn(
-        `⚠️  已有 manifest 中有 ${skipped.length} 条无效照片记录，已跳过（将重新处理）：${skipped
+        `⚠️  The existing manifest has ${skipped.length} invalid photo records; skipped (will be reprocessed): ${skipped
           .map((entry) => `#${entry.index}`)
           .join(", ")}`,
       );
@@ -53,7 +55,7 @@ export async function loadExistingManifest(
     // 顶层结构损坏（schema/version/source/indexes/photos 非数组）：丢弃缓存做全量重建，
     // 而不是永久抛错卡死整条构建流水线。
     logger.fs.error(
-      `⚠️  已有 manifest 顶层结构无效，丢弃缓存并全量重建：${manifestPath} - ${
+      `⚠️  The existing manifest has an invalid top-level structure; discarding the cache and doing a full rebuild: ${manifestPath} - ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
@@ -111,10 +113,8 @@ export async function saveManifest(
     ),
   );
 
-  logger.fs.info(`📁 Manifest 保存至： ${manifestPath}`);
-  logger.fs.info(
-    `📷 包含 ${cameras.length} 个相机，🔍 ${lenses.length} 个镜头`,
-  );
+  logger.fs.info(`📁 Manifest saved to: ${manifestPath}`);
+  logger.fs.info(`📷 ${cameras.length} cameras, 🔍 ${lenses.length} lenses`);
 }
 
 // 检测并处理已删除的图片。
@@ -128,11 +128,11 @@ export async function handleDeletedPhotos(
   keepPhotoIds?: ReadonlySet<string>,
 ): Promise<number> {
   const { thumbnailsDir } = output;
-  logger.main.info("🔍 检查已删除的图片...");
+  logger.main.info("🔍 Checking for deleted images...");
   if (items.length === 0 && (keepPhotoIds?.size ?? 0) === 0) {
     // Clear all thumbnails
     await fs.rm(thumbnailsDir, { recursive: true, force: true });
-    logger.main.info("🔍 没有图片，清空缩略图...");
+    logger.main.info("🔍 No images; clearing thumbnails...");
     return 0;
   }
 
@@ -141,7 +141,9 @@ export async function handleDeletedPhotos(
     .readdir(thumbnailsDir)
     .catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") {
-        logger.main.info("📁 缩略图目录不存在，跳过删除检查");
+        logger.main.info(
+          "📁 Thumbnail directory does not exist; skipping deletion check",
+        );
         return [];
       }
       throw error;

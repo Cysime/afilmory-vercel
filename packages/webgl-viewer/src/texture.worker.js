@@ -74,7 +74,13 @@ self.onmessage = async (e) => {
     }
     case "create-tile": {
       if (!originalImage) {
+        // 必须回 tile-error（引擎靠它把 key 移出 loadingTiles 重新排队）：
+        // 静默丢弃会让上下文恢复窗口期到达的瓦片永远不再被请求。
         console.warn("Worker has not been initialized with an image.");
+        self.postMessage({
+          type: "tile-error",
+          payload: { key: payload.key, error: "image not loaded" },
+        });
         return;
       }
 

@@ -13,7 +13,6 @@
     "audit:prod": "pnpm audit --registry=https://registry.npmjs.org --prod --audit-level=high",
     "build": "pnpm exec tsx apps/web/scripts/precheck.ts && pnpm build:web",
     "build:manifest": "pnpm --filter @afilmory/builder cli",
-    "build:packages": "pnpm --filter @afilmory/builder build && pnpm --filter @afilmory/webgl-viewer build",
     "build:web": "pnpm --filter @afilmory/web build",
     "dev": "pnpm --filter @afilmory/web dev",
     "fixture:e2e": "tsx scripts/create-synthetic-e2e-fixture.ts",
@@ -28,7 +27,7 @@
     "test:e2e": "env -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 playwright test",
     "test:e2e:install": "env -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 playwright install chromium",
     "test:e2e:prod": "env -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 E2E_PROD_SMOKE=true playwright test",
-    "type-check": "pnpm --filter @afilmory/schema type-check && pnpm --filter @afilmory/media type-check && pnpm --filter @afilmory/ui type-check && pnpm --filter @afilmory/builder type-check && pnpm --filter @afilmory/build-assets type-check && pnpm --filter @afilmory/webgl-viewer type-check && pnpm --filter @afilmory/web type-check"
+    "type-check": "tsc -p tsconfig.tools.json --noEmit && pnpm --filter @afilmory/schema type-check && pnpm --filter @afilmory/media type-check && pnpm --filter @afilmory/ui type-check && pnpm --filter @afilmory/builder type-check && pnpm --filter @afilmory/build-assets type-check && pnpm --filter @afilmory/webgl-viewer type-check && pnpm --filter @afilmory/web type-check"
   },
   "devDependencies": {
     "@afilmory/build-assets": "workspace:*",
@@ -49,7 +48,6 @@
     "fast-glob": "^3.3.2",
     "jsdom": "^29.0.2",
     "lint-staged": "16.2.6",
-    "nbump": "2.1.8",
     "opentype.js": "1.3.4",
     "prettier": "3.6.2",
     "sharp": "0.34.4",

@@ -48,26 +48,26 @@ export async function extractLocationFromGPS(
   const log = logger ?? getPhotoProcessingLoggers().location;
 
   if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
-    log.warn(`无效的 GPS 坐标: ${latitude}, ${longitude}`);
+    log.warn(`Invalid GPS coordinates: ${latitude}, ${longitude}`);
     return null;
   }
 
-  log.info(`反向地理编码坐标: ${latitude}, ${longitude}`);
+  log.info(`Reverse geocoding coordinates: ${latitude}, ${longitude}`);
 
   try {
     const locationInfo = await provider.reverseGeocode(latitude, longitude);
 
     if (locationInfo) {
       log.success?.(
-        `位置已找到: ${locationInfo.city}, ${locationInfo.country}`,
+        `Location found: ${locationInfo.city}, ${locationInfo.country}`,
       );
     } else {
-      log.warn("未找到位置信息");
+      log.warn("No location info found");
     }
 
     return locationInfo;
   } catch (error) {
-    log.error?.("位置提取失败:", error);
+    log.error?.("Location extraction failed:", error);
     return null;
   }
 }

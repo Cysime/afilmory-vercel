@@ -20,9 +20,20 @@ export function getPhotoDate(photo: PhotoManifestItem): Date {
   return new Date(photo.lastModified);
 }
 
+// 排序时每张照片会被比较 O(log n) 次，按 manifest item 标识备忘解析结果。
+const photoSortTimeCache = new WeakMap<PhotoManifestItem, number>();
+
 /**
- * Get a sortable date string from a photo (for locale comparison sorting).
+ * Millisecond timestamp for sorting photos by date. Goes through getPhotoDate
+ * so raw-EXIF ("YYYY:MM:DD HH:mm:ss") and ISO dates order consistently;
+ * unparsable dates collapse to 0 to keep the comparator consistent.
  */
-export function getPhotoDateString(photo: PhotoManifestItem): string {
-  return photo.exif?.DateTimeOriginal ?? photo.lastModified;
+export function getPhotoSortTime(photo: PhotoManifestItem): number {
+  let time = photoSortTimeCache.get(photo);
+  if (time === undefined) {
+    const parsed = getPhotoDate(photo).getTime();
+    time = Number.isNaN(parsed) ? 0 : parsed;
+    photoSortTimeCache.set(photo, time);
+  }
+  return time;
 }

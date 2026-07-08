@@ -4,15 +4,14 @@
 
 ## Package Status
 
-本包在当前仓库中作为 pnpm workspace 包使用：
+本包仅在当前仓库中作为 pnpm workspace 包使用，不发布到 npm：
 
 ```bash
-pnpm --filter @afilmory/webgl-viewer build
 pnpm --filter @afilmory/webgl-viewer type-check
 pnpm --filter @afilmory/webgl-viewer test
 ```
 
-`package.json` 的入口是 `src/index.ts`，构建由 `vite.config.ts` 输出 ESM library 到 `dist/index.js`，并通过 `unplugin-dts` 输出类型声明。
+`package.json` 的入口是 `src/index.ts`，`apps/web` 直接从 TS 源码消费本包，没有独立的 dist 构建产物。
 
 ## Source Layout
 
@@ -86,12 +85,10 @@ The component also accepts normal `div` attributes, except `className` is applie
 type WheelConfig = {
   step: number; // default 0.1
   wheelDisabled?: boolean;
-  touchPadDisabled?: boolean;
 };
 
 type PinchConfig = {
-  step: number; // default 0.5
-  disabled?: boolean;
+  disabled?: boolean; // pinch zoom follows the raw two-finger distance ratio
 };
 
 type DoubleClickConfig = {
@@ -120,6 +117,8 @@ onError?: (error: unknown) => void;
 ```
 
 `onImagePainted` fires after the engine paints the high-resolution image. The web app uses it to coordinate progressive image transitions.
+
+Callbacks are read through a ref, so passing a new function identity (for example an inline arrow, as in the Quick Start) never recreates the engine. The engine — and with it the full-resolution image fetch, decode and GPU upload — is only recreated when `src`, `sourceBlob`, `width`/`height`, scale limits, interaction config values, or `debug` actually change; `className` changes only restyle the canvas.
 
 ## Ref API
 
@@ -183,7 +182,6 @@ When changing viewer behavior:
 ```bash
 pnpm --filter @afilmory/webgl-viewer test
 pnpm --filter @afilmory/webgl-viewer type-check
-pnpm --filter @afilmory/webgl-viewer build
 ```
 
 If the change affects the app integration, also run the relevant `@afilmory/web` photo-viewer tests.

@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { createStore, Provider } from "jotai";
-import type { HTMLAttributes, PropsWithChildren } from "react";
+import type { PropsWithChildren } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { gallerySettingAtom } from "~/atoms/app";
@@ -52,17 +52,6 @@ vi.mock("@afilmory/ui", () => ({
   Thumbhash: ({ className }: { className?: string }) => (
     <div className={className} />
   ),
-}));
-
-vi.mock("motion/react", () => ({
-  m: {
-    div: ({
-      children,
-      ...props
-    }: PropsWithChildren<HTMLAttributes<HTMLDivElement>>) => (
-      <div {...props}>{children}</div>
-    ),
-  },
 }));
 
 vi.mock("react-i18next", () => ({
@@ -215,6 +204,17 @@ describe("MasonryPhotoItem", () => {
     const img = getByAltText("A7C01202");
     expect(img.getAttribute("loading")).toBe("eager");
     expect(img.getAttribute("fetchpriority")).toBe("low");
+  });
+
+  it("renders a visible keyboard focus ring on the cell root (global CSS strips outlines)", () => {
+    // styles/tailwind.css 全局压掉 outline，可聚焦控件必须自带 focus-visible ring；
+    // ring-inset 是因为格子 overflow-hidden 且边贴边，外扩 ring 会被裁掉。
+    const { getByRole } = renderItem({ data: photo, width: 300, index: 0 });
+
+    const cell = getByRole("button", { name: "A7C01202" });
+    expect(cell.className).toContain("focus-visible:ring-2");
+    expect(cell.className).toContain("focus-visible:ring-accent/45");
+    expect(cell.className).toContain("focus-visible:ring-inset");
   });
 
   it("labels untitled photos with their formatted taken date for screen readers", () => {

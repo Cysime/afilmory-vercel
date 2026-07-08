@@ -1,7 +1,14 @@
 import { clsxm } from "@afilmory/ui";
 import { useAtom } from "jotai";
 import * as React from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 
@@ -79,6 +86,16 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // combobox/listbox 语义要求 aria-activedescendant 引用合法且页面唯一的 DOM id。
+  // 命令 id 可能含空格（相机名、标签），encodeURIComponent 保证合法且不撞车。
+  const baseDomId = useId();
+  const listboxDomId = `${baseDomId}-listbox`;
+  const getOptionDomId = useCallback(
+    (commandId: string) =>
+      `${baseDomId}-option-${encodeURIComponent(commandId)}`,
+    [baseDomId],
+  );
 
   // 下拉关闭手势（鼠标 / 触摸 / 触控笔统一 Pointer Events 一套）
   const {
@@ -323,6 +340,15 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
     ? t("action.search.command-count", { count: filteredCommands.length })
     : t("action.search.showing-filters", { count: availableFilterCount });
 
+  // 读屏器可见性：只有真正渲染选项列表时 combobox 才算 expanded，
+  // aria-activedescendant 跟着高亮项走，箭头键选中什么用户就听到什么。
+  const isListboxVisible = !isBrowsingFilters && filteredCommands.length > 0;
+  const selectedCommand = filteredCommands[selectedIndex];
+  const activeOptionDomId =
+    isListboxVisible && selectedCommand
+      ? getOptionDomId(selectedCommand.id)
+      : undefined;
+
   return (
     <div
       className="fixed inset-0 z-[9999] flex items-end justify-center"
@@ -408,6 +434,11 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
               onKeyDown={handleKeyDown}
               placeholder={t("action.search.placeholder")}
               aria-label={t("action.search.placeholder")}
+              role="combobox"
+              aria-expanded={isListboxVisible}
+              aria-controls={isListboxVisible ? listboxDomId : undefined}
+              aria-activedescendant={activeOptionDomId}
+              aria-autocomplete="list"
               className="text-text placeholder-text-tertiary h-full min-w-0 flex-1 bg-transparent text-base outline-none"
             />
           </div>
@@ -454,6 +485,11 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
         {/* Commands List */}
         <div
           ref={listRef}
+          id={isListboxVisible ? listboxDomId : undefined}
+          role={isListboxVisible ? "listbox" : undefined}
+          aria-label={
+            isListboxVisible ? t("action.search.unified.title") : undefined
+          }
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-2"
         >
           {isBrowsingFilters ? (
@@ -473,6 +509,9 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
               <button
                 key={cmd.id}
                 type="button"
+                id={getOptionDomId(cmd.id)}
+                role="option"
+                aria-selected={selectedIndex === index}
                 onClick={() => executeCommandAction(cmd.action)}
                 onMouseEnter={() => setSelectedIndex(index)}
                 className={clsxm(
@@ -543,7 +582,7 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
         {/* Footer */}
         <div className="border-fill-secondary bg-fill-vibrant-quinary/40 relative border-t px-6 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom))] lg:pb-4">
           <div className="text-text-secondary flex items-center justify-between text-xs">
-            <span>{resultSummary}</span>
+            <span aria-live="polite">{resultSummary}</span>
             {hasFilters && (
               <span>
                 {t("action.search.active-count", { count: activeFilterCount })}

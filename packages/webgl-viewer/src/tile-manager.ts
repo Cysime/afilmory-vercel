@@ -50,6 +50,13 @@ export interface TileManagerHost {
   getViewport: () => TileViewportState;
   /** LOD level the engine currently wants on screen. */
   getSelectedLodLevel: () => number;
+  /**
+   * True while the always-rendered base texture already delivers ≥ the
+   * resolution this LOD would produce. Tiles below that only re-decode the
+   * base's content (~2× GPU memory for zero quality gain), so the manager
+   * skips queueing entirely until the zoom passes base resolution.
+   */
+  isLodCoveredByBase: (lodLevel: number) => boolean;
   /** Upload a decoded tile bitmap into a GL texture (via the renderer). */
   createTexture: (source: ImageBitmap) => WebGLTexture | null;
   deleteTexture: (texture: WebGLTexture) => void;
@@ -65,6 +72,14 @@ export interface TileManagerHost {
    * repeatedly for the same LOD — callers dedupe.
    */
   onVisibleLodReady: (lodLevel: number) => void;
+  /**
+   * Fired when an update takes the base-coverage skip path: no tiles are (or
+   * will be) drawn, so the screen now shows only the base texture. The engine's
+   * quality signal is otherwise refreshed exclusively by `onVisibleLodReady`,
+   * which never fires here — so zooming back to fit after tiles were active
+   * would leave a stale (too-high) quality. Callers dedupe.
+   */
+  onCoveredByBase?: () => void;
 }
 
 /**
@@ -277,9 +292,25 @@ export class TileManager {
 
   updateTileCache(): void {
     if (this.disposed) return;
+    this.lastUpdateTime = performance.now();
 
     const viewport = this.host.getViewport();
     const lodLevel = this.host.getSelectedLodLevel();
+
+    // 底图分辨率已 ≥ 该 LOD 的输出分辨率（fit 视图是每张照片的默认状态）：
+    // 瓦片只会重复底图内容。清空可见集、丢弃未派发请求，等缩放越过底图
+    // 分辨率后瓦片才重新参与；已缓存纹理留给 cleanup 按容量/年龄回收。
+    if (this.host.isLodCoveredByBase(lodLevel)) {
+      this.visibleTiles = new Set();
+      this.visibleLodLevel = -1;
+      this.lastViewportHash = "";
+      this.requestRuntime.pruneInvisiblePending(this.visibleTiles);
+      this.cleanupOldTiles();
+      // 只画底图了：onVisibleLodReady 不会再触发，需显式让引擎把质量降回底图水平。
+      this.host.onCoveredByBase?.();
+      return;
+    }
+
     const visibleTiles = calculateVisibleTiles({ ...viewport, lodLevel });
     const newVisibleTiles = new Set<TileKey>();
 
@@ -420,22 +451,25 @@ export class TileManager {
   }
 
   /**
-   * Called from the render loop: debounce a trailing tile-cache update (100ms
-   * threshold + a zero-delay timeout so the update runs off the render stack).
+   * Called from the render loop: schedule a trailing tile-cache update. At
+   * most one update runs per TILE_UPDATE_DEBOUNCE_MS window, but every render
+   * is guaranteed a trailing update — inside the window the timeout is set to
+   * the remaining delay instead of being dropped, so a fast flick that ends
+   * mid-window still refreshes the visible tile set. The timeout (never less
+   * than zero delay) also keeps the update off the render stack.
    */
   maybeScheduleUpdate(isAnimating: boolean): void {
     if (this.disposed || isAnimating) return;
+    if (this.updateTimeoutId !== null) return;
 
-    const now = performance.now();
-    if (now - this.lastUpdateTime <= TILE_UPDATE_DEBOUNCE_MS) return;
-    this.lastUpdateTime = now;
-
-    if (this.updateTimeoutId === null) {
-      this.updateTimeoutId = setTimeout(() => {
+    const elapsed = performance.now() - this.lastUpdateTime;
+    this.updateTimeoutId = setTimeout(
+      () => {
         this.updateTimeoutId = null;
         this.updateTileCache();
-      }, 0);
-    }
+      },
+      Math.max(0, TILE_UPDATE_DEBOUNCE_MS - elapsed),
+    );
   }
 
   // ---- Quality reporting -----------------------------------------------------

@@ -63,7 +63,7 @@ export async function runAsWorker() {
 
   const getTaskRuntime = (): WorkerTaskRuntime => {
     if (!taskRuntime) {
-      throw new Error("Worker 未初始化，请先发送 init 消息");
+      throw new Error("Worker not initialized; send an init message first");
     }
     return taskRuntime;
   };

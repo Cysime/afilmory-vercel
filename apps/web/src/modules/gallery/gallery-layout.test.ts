@@ -98,6 +98,7 @@ describe("gallery-layout helpers", () => {
           width: 204,
           height: 400,
         }),
+        layoutColumnWidth: 100,
         rowGutter: 4,
       },
       photoIndex: 0,
@@ -119,6 +120,7 @@ describe("gallery-layout helpers", () => {
       columnGutter: 4,
       columnWidth: 100,
       containerRect: DOMRect.fromRect({ x: 0, y: 0, width: 204, height: 400 }),
+      layoutColumnWidth: 100,
       rowGutter: 4,
     };
     const photos = [createPhoto("a")];
@@ -367,10 +369,12 @@ describe("resolveEffectiveColumnWidth", () => {
   });
 });
 
-describe("estimatePhotoVirtualRect ≡ computeMasonryLayout (property)", () => {
+describe("estimatePhotoVirtualRect ≡ live VirtualMasonry layout (property)", () => {
   // 关键不变量：估算矩形必须与真实布局（VirtualMasonry 里 computeMasonryLayout
-  // 的输出）对每张照片逐像素一致——现在由「组合调用同一函数」构造性保证，
-  // 这里跨列宽/列数/宽高比全量断言，防止未来又手抄出第二份放置逻辑。
+  // 的输出）对每张照片逐像素一致。真实布局是**双宽度**的：left 由小数
+  // effectiveColumnWidth 算出（小数摊进各列），高度由取整的 renderColumnWidth
+  // 算出（getHeight → itemHeight）。这里按 VirtualMasonry 的推导逐字复刻这条
+  // 链路做基准，跨容器宽/列数/宽高比全量断言，防止估算又漂回单宽度复算。
   const aspectRatios = [0.5, 0.75, 1, 1.337, 1.5, 1.777, 2.35, 3];
   const makePhotos = (count: number) =>
     Array.from({ length: count }, (_, i) =>
@@ -378,53 +382,71 @@ describe("estimatePhotoVirtualRect ≡ computeMasonryLayout (property)", () => {
     );
 
   const cases: {
+    containerWidth: number;
     columnCount: number;
-    columnWidth: number;
     headerHeight: number;
     isMobile: boolean;
   }[] = [
-    { columnCount: 1, columnWidth: 320, headerHeight: 0, isMobile: true },
-    { columnCount: 2, columnWidth: 190, headerHeight: 0, isMobile: true },
-    { columnCount: 3, columnWidth: 150, headerHeight: 0, isMobile: true },
-    { columnCount: 2, columnWidth: 300, headerHeight: 240, isMobile: false },
-    { columnCount: 4, columnWidth: 251, headerHeight: 173, isMobile: false },
-    { columnCount: 5, columnWidth: 205, headerHeight: 320, isMobile: false },
-    { columnCount: 8, columnWidth: 233, headerHeight: 96, isMobile: false },
+    { containerWidth: 320, columnCount: 1, headerHeight: 0, isMobile: true },
+    // (384-4)/2 = 190：整数列宽（layout 宽 == render 宽）
+    { containerWidth: 384, columnCount: 2, headerHeight: 0, isMobile: true },
+    // (385-4)/2 = 190.5：小数列宽（393pt 级手机的真实形态）
+    { containerWidth: 385, columnCount: 2, headerHeight: 0, isMobile: true },
+    { containerWidth: 458, columnCount: 3, headerHeight: 0, isMobile: true },
+    { containerWidth: 604, columnCount: 2, headerHeight: 240, isMobile: false },
+    // (1030-16)/5 = 202.8：小数列宽 + 桌面 header
+    {
+      containerWidth: 1030,
+      columnCount: 5,
+      headerHeight: 320,
+      isMobile: false,
+    },
+    // (2000-28)/8 = 246.5：用取整宽复算 left 会在第 8 列漂 3px（回归旧 bug）
+    { containerWidth: 2000, columnCount: 8, headerHeight: 96, isMobile: false },
   ];
 
   it.each(cases)(
     "matches the real layout cell for every photo (%o)",
-    ({ columnCount, columnWidth, headerHeight, isMobile }) => {
+    ({ containerWidth, columnCount, headerHeight, isMobile }) => {
       const photos = makePhotos(25);
       const columnGutter = 4;
       const rowGutter = 4;
+      // 与 VirtualMasonry 同一条宽度推导链：小数布局宽 + 取整渲染宽。
+      const layoutColumnWidth = resolveEffectiveColumnWidth({
+        containerWidth,
+        columnCount,
+        columnGutter,
+        fallbackColumnWidth: 250,
+      });
+      const renderColumnWidth = Math.max(1, Math.round(layoutColumnWidth));
       const containerRect = DOMRect.fromRect({
         x: 16,
         y: 64,
-        width: columnCount * columnWidth + (columnCount - 1) * columnGutter,
+        width: containerWidth,
         height: 800,
       });
       const metrics = {
         columnCount,
         columnGutter,
-        columnWidth,
+        columnWidth: renderColumnWidth,
         containerRect,
+        layoutColumnWidth,
         rowGutter,
       };
 
-      // 与 MasonryRoot/VirtualMasonry 完全同构的真实布局：
-      // 桌面端 header 哨兵在 index 0（其高度来自 measure），照片高度纯计算。
+      // 与 MasonryRoot/VirtualMasonry 完全同构的真实布局：桌面端 header 哨兵在
+      // index 0（其高度来自 measure）；left 吃小数布局宽，照片高度吃取整渲染宽。
       const items = createMasonryItems(photos, isMobile);
       const layout = computeMasonryLayout({
         items,
         columnCount,
-        columnWidth,
+        columnWidth: layoutColumnWidth,
         columnGutter,
         rowGutter,
         getItemHeight: (item) =>
           item instanceof MasonryHeaderItem
             ? headerHeight
-            : computeMasonryItemHeight(columnWidth, item),
+            : computeMasonryItemHeight(renderColumnWidth, item),
       });
 
       for (const [photoIndex] of photos.entries()) {
@@ -446,62 +468,13 @@ describe("estimatePhotoVirtualRect ≡ computeMasonryLayout (property)", () => {
           width: cell.width,
         });
         // 整数像素几何必须保持（iOS WebKit hairline 缝的根源，见 gallery-layout.ts）。
-        expect(Number.isInteger(cell.left)).toBe(true);
-        expect(Number.isInteger(cell.top)).toBe(true);
-        expect(Number.isInteger(cell.width)).toBe(true);
-        expect(Number.isInteger(cell.height)).toBe(true);
+        expect(Number.isInteger(rect!.left)).toBe(true);
+        expect(Number.isInteger(rect!.top)).toBe(true);
+        expect(Number.isInteger(rect!.width)).toBe(true);
+        expect(Number.isInteger(rect!.height)).toBe(true);
       }
     },
   );
-
-  it("holds for fractional column widths too (all-integer outputs)", () => {
-    const photos = makePhotos(12);
-    const columnWidth = 190.5;
-    const columnCount = 2;
-    const containerRect = DOMRect.fromRect({
-      x: 0,
-      y: 0,
-      width: 385,
-      height: 800,
-    });
-    const metrics = {
-      columnCount,
-      columnGutter: 4,
-      columnWidth,
-      containerRect,
-      rowGutter: 4,
-    };
-    const layout = computeMasonryLayout({
-      items: photos,
-      columnCount,
-      columnWidth,
-      columnGutter: 4,
-      rowGutter: 4,
-      getItemHeight: (item) => computeMasonryItemHeight(columnWidth, item),
-    });
-
-    for (const [photoIndex] of photos.entries()) {
-      const cell = layout.cells[photoIndex]!;
-      const rect = estimatePhotoVirtualRect({
-        headerHeight: 0,
-        isMobile: true,
-        metrics,
-        photoIndex,
-        photos,
-      });
-      expect(rect).toEqual({
-        borderRadius: 0,
-        height: cell.height,
-        left: cell.left,
-        top: cell.top,
-        width: cell.width,
-      });
-      expect(Number.isInteger(rect!.left)).toBe(true);
-      expect(Number.isInteger(rect!.top)).toBe(true);
-      expect(Number.isInteger(rect!.width)).toBe(true);
-      expect(Number.isInteger(rect!.height)).toBe(true);
-    }
-  });
 });
 
 describe("computeMasonryLayout edge cases", () => {

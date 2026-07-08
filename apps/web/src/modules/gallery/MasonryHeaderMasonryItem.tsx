@@ -8,15 +8,12 @@ import { gallerySettingAtom } from "~/atoms/app";
 import { siteConfig } from "~/config";
 import { useContextPhotos } from "~/hooks/usePhotoViewer";
 import { MageLens, TablerAperture } from "~/icons";
-import { convertPhotosToMarkersFromEXIF } from "~/lib/map-utils";
+import { getPhotoGeoData } from "~/lib/geo-regions";
 import { usePhotoRepository } from "~/runtime/app-runtime";
 import type { PhotoManifest } from "~/types/photo";
 
 import { ActionGroup } from "./ActionGroup";
-import {
-  createGalleryGeoRegions,
-  createGeoRegionLabelMaps,
-} from "./filter-options";
+import { createGeoRegionLabelMaps } from "./filter-options";
 
 const getPhotoCameraName = (photo: PhotoManifest) => {
   const make = photo.exif?.Make?.trim();
@@ -80,8 +77,8 @@ export const MasonryHeaderMasonryItem = ({
       if (lens) lensSet.add(lens);
     }
 
-    const photoMarkers = convertPhotosToMarkersFromEXIF(photos);
-    const cityCount = createGalleryGeoRegions(photos).city.length;
+    const { markers: photoMarkers, regionsByLevel } = getPhotoGeoData(photos);
+    const cityCount = regionsByLevel.city.length;
     const hasCityData = cityCount > 0;
 
     return [
@@ -118,7 +115,7 @@ export const MasonryHeaderMasonryItem = ({
 
   const filterChips = useMemo(() => {
     const regionLabelMaps = createGeoRegionLabelMaps(
-      createGalleryGeoRegions(photos),
+      getPhotoGeoData(photos).regionsByLevel,
       i18n.language,
     );
 

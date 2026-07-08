@@ -63,8 +63,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+      # `pnpm audit` resolves advisories from pnpm-lock.yaml against the
+      # registry — it needs pnpm + Node but no node_modules, so skip the
+      # workspace install (and its sharp/esbuild postinstall builds).
       - name: Setup
         uses: ./.github/actions/setup
+        with:
+          install: 'false'
       - name: Dependency audit
         run: pnpm audit:prod
 

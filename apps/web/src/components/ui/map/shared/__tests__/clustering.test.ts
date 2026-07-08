@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { GeographicRegion, PhotoMarker } from "~/types/map";
 
-import { clusterMarkers, clusterRegions } from "../clustering";
+import {
+  createMarkerClusterIndex,
+  createRegionClusterIndex,
+  getClusterPoints,
+} from "../clustering";
+import type { ClusterPoint } from "../types";
 
 const createMarker = (
   id: string,
@@ -23,8 +28,8 @@ const createMarker = (
   }) as PhotoMarker;
 
 const isClusterPoint = (
-  point: ReturnType<typeof clusterMarkers>[number],
-): point is ReturnType<typeof clusterMarkers>[number] & {
+  point: ClusterPoint,
+): point is ClusterPoint & {
   properties: { cluster: true };
 } => "cluster" in point.properties && point.properties.cluster === true;
 
@@ -65,12 +70,12 @@ const createRegion = (
 
 describe("map visual clustering", () => {
   it("clusters photo markers with supercluster", () => {
-    const result = clusterMarkers(
-      [
+    const result = getClusterPoints(
+      createMarkerClusterIndex([
         createMarker("near-a", 120, 30),
         createMarker("near-b", 120.0005, 30.0004),
         createMarker("far", 121, 31),
-      ],
+      ]),
       10,
     );
 
@@ -87,7 +92,7 @@ describe("map visual clustering", () => {
       createRegion("region-b", 120.002, 30),
       createRegion("region-c", 121, 31),
     ];
-    const result = clusterRegions(regions, 10);
+    const result = getClusterPoints(createRegionClusterIndex(regions), 10);
     const cluster = result.find(isClusterPoint);
 
     expect(regions).toHaveLength(3);
@@ -97,12 +102,37 @@ describe("map visual clustering", () => {
   });
 
   it("expands close photos into single points past the configured max zoom", () => {
-    const result = clusterMarkers(
-      [createMarker("a", 120, 30), createMarker("b", 120.0005, 30.0004)],
+    const result = getClusterPoints(
+      createMarkerClusterIndex([
+        createMarker("a", 120, 30),
+        createMarker("b", 120.0005, 30.0004),
+      ]),
       17,
     );
 
     expect(result.every((point) => !isClusterPoint(point))).toBe(true);
     expect(result).toHaveLength(2);
+  });
+
+  it("answers every zoom level from a single index", () => {
+    const markers = [
+      createMarker("near-a", 120, 30),
+      createMarker("near-b", 120.0005, 30.0004),
+      createMarker("far", 121, 31),
+    ];
+    const index = createMarkerClusterIndex(markers);
+
+    const zoomedOut = getClusterPoints(index, 10);
+    const zoomedIn = getClusterPoints(index, 17);
+
+    expect(zoomedOut.find(isClusterPoint)?.properties.point_count).toBe(2);
+    expect(zoomedIn.every((point) => !isClusterPoint(point))).toBe(true);
+    expect(zoomedIn).toHaveLength(3);
+  });
+
+  it("returns an empty result for empty inputs", () => {
+    expect(createMarkerClusterIndex([])).toBeNull();
+    expect(createRegionClusterIndex([])).toBeNull();
+    expect(getClusterPoints(null, 10)).toEqual([]);
   });
 });

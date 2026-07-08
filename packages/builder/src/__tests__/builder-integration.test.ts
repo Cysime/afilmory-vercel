@@ -4,6 +4,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -32,6 +33,9 @@ import type { BuilderOptions } from "../types/options.js";
  *   2. 首次构建把每张照片都当新照片处理，产出缩略图、thumbHash、尺寸/宽高比；
  *   3. 同配置再构建一次是完全增量的（没有任何照片被重新处理，全部照片被保留）；
  *   4. 删掉一张源文件后，该照片连同其缩略图被正确清理。
+ *   5. (second test) a photo whose reprocessing fails is dropped from the
+ *      manifest, but its still-reusable thumbnail survives the orphan cleanup
+ *      (failure containment via the keepPhotoIds chain in builder.ts).
  *
  * 只要这条链路里的任何一环真的坏了（而不仅仅是 mock 的契约漂了），这个测试就会红。
  */
@@ -60,6 +64,10 @@ const FIXTURES = [
 
 // 第三次构建要删掉的那张（连同它的缩略图应当被清理）。
 const DELETED_FIXTURE = FIXTURES.at(-1)!;
+
+// The fixture corrupted in the failure-containment scenario. Must be one that
+// survives build #3 (i.e. not DELETED_FIXTURE).
+const CORRUPTED_FIXTURE = FIXTURES[1];
 
 const BUILD_OPTIONS: BuilderOptions = {
   isForceMode: false,
@@ -256,6 +264,107 @@ describe("AfilmoryBuilder end-to-end (real sharp + exiftool + local FS)", () => 
       expect(
         await pathExists(path.join(thumbnailsDir, `${photo.id}.jpg`)),
       ).toBe(true);
+    }
+  }, 60_000);
+
+  it("contains a single processing failure without deleting the photo's reusable thumbnail", async () => {
+    // Continues from the previous test's terminal state: the two surviving
+    // photos are in the manifest with their thumbnails on disk.
+    const manifestBefore = await readManifestFromDisk();
+    expect(manifestBefore.photos).toHaveLength(FIXTURES.length - 1);
+
+    const corruptedItem = new Map(
+      manifestBefore.photos.map((photo) => [photo.s3Key, photo]),
+    ).get(CORRUPTED_FIXTURE.name);
+    expect(corruptedItem).toBeDefined();
+    const corruptedThumbnailPath = path.join(
+      thumbnailsDir,
+      `${corruptedItem!.id}.jpg`,
+    );
+    expect(await pathExists(corruptedThumbnailPath)).toBe(true);
+
+    const survivorThumbnailPaths = manifestBefore.photos
+      .filter((photo) => photo.s3Key !== CORRUPTED_FIXTURE.name)
+      .map((photo) => path.join(thumbnailsDir, `${photo.id}.jpg`));
+    expect(survivorThumbnailPaths).not.toHaveLength(0);
+
+    // ---- Build #4: reprocessing an EXISTING photo fails ----
+    // Overwrite the source with bytes sharp cannot decode, and bump mtime past
+    // the manifest's lastModified so decidePhotoWork schedules a reprocess
+    // (the size/etag change would also trigger it; the bump makes it explicit).
+    const corruptedSourcePath = path.join(sourceDir, CORRUPTED_FIXTURE.name);
+    await writeFile(corruptedSourcePath, Buffer.from("definitely not a JPEG"));
+    const bumpedMtime = new Date(Date.now() + 5000);
+    await utimes(corruptedSourcePath, bumpedMtime, bumpedMtime);
+
+    const fourth = await makeBuilder().buildManifest(BUILD_OPTIONS);
+
+    // Exactly the corrupted photo fails; nothing is added or reprocessed. The
+    // failed reprocess is excluded from the skip counter (only the untouched
+    // photo counts as skipped).
+    expect(fourth.failedCount).toBe(1);
+    expect(fourth.newCount).toBe(0);
+    expect(fourth.processedCount).toBe(0);
+    expect(fourth.skippedCount).toBe(FIXTURES.length - 2);
+    expect(fourth.hasUpdates).toBe(false);
+
+    // Pinned current behavior (manifest-assembler.addUnchangedExistingItems):
+    // a failed reprocess of a photo that already has manifest data KEEPS the
+    // previous (possibly stale) entry, so the photo does not vanish from the
+    // gallery because of one transient failure.
+    expect(fourth.totalPhotos).toBe(FIXTURES.length - 1);
+    const manifestAfterFourth = await readManifestFromDisk();
+    const keptStaleItem = new Map(
+      manifestAfterFourth.photos.map((photo) => [photo.s3Key, photo]),
+    ).get(CORRUPTED_FIXTURE.name);
+    expect(keptStaleItem).toEqual(corruptedItem);
+
+    // No thumbnail is orphan-collected: the kept entry protects its own.
+    expect(fourth.deletedCount).toBe(0);
+    expect(await pathExists(corruptedThumbnailPath)).toBe(true);
+
+    // ---- Build #5: the failed photo is NOT in the loaded manifest ----
+    // Drop the corrupted photo's record from the on-disk manifest, simulating
+    // the shape of the real incident: the photo exists in storage and its
+    // thumbnail exists on disk, but the manifest has no entry for it (e.g. a
+    // corrupt record skipped by lenient parsing, or a --force-manifest run).
+    // Reprocessing it as a "new" photo fails again, and this time nothing in
+    // the manifest protects its thumbnail — only the keepPhotoIds chain
+    // (builder.ts -> ArtifactWriter -> handleDeletedPhotos) does.
+    const rawManifest = JSON.parse(await readFile(manifestPath, "utf-8"));
+    rawManifest.photos = rawManifest.photos.filter(
+      (photo: { s3Key: string }) => photo.s3Key !== CORRUPTED_FIXTURE.name,
+    );
+    await writeFile(manifestPath, JSON.stringify(rawManifest, null, 2));
+
+    const fifth = await makeBuilder().buildManifest(BUILD_OPTIONS);
+
+    // The photo fails as a would-be new photo (failed tasks never increment
+    // newCount) and stays absent from the manifest.
+    expect(fifth.failedCount).toBe(1);
+    expect(fifth.newCount).toBe(0);
+    expect(fifth.processedCount).toBe(0);
+    expect(fifth.skippedCount).toBe(FIXTURES.length - 2);
+    expect(fifth.totalPhotos).toBe(FIXTURES.length - 2);
+
+    const manifestAfterFifth = await readManifestFromDisk();
+    const keysAfterFifth = new Set(
+      manifestAfterFifth.photos.map((photo) => photo.s3Key),
+    );
+    expect(keysAfterFifth.has(CORRUPTED_FIXTURE.name)).toBe(false);
+    expect(manifestAfterFifth.photos).toHaveLength(FIXTURES.length - 2);
+
+    // Containment: the source object still exists in storage, so the failed
+    // photo's pre-existing thumbnail must NOT be orphan-collected. A transient
+    // batch failure once wiped every reusable thumbnail and artifact-cache
+    // persisted the shrunken state — the keepPhotoIds chain exists to prevent
+    // exactly that. Dropping { keepPhotoIds } in builder.ts turns this red.
+    expect(fifth.deletedCount).toBe(0);
+    expect(await pathExists(corruptedThumbnailPath)).toBe(true);
+
+    // ...and no unrelated thumbnails were deleted either.
+    for (const thumbnailPath of survivorThumbnailPaths) {
+      expect(await pathExists(thumbnailPath)).toBe(true);
     }
   }, 60_000);
 });

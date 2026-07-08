@@ -113,7 +113,7 @@ export const ExifPanel: FC<{
             : "px-4 pb-4 **:select-text"
         }
       >
-        <div className={`space-y-${isMobile ? "3" : "4"}`}>
+        <div className={isMobile ? "space-y-3" : "space-y-4"}>
           <BasicExifSection
             currentPhoto={currentPhoto}
             onTagClick={onTagClick}

@@ -4,14 +4,13 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useMemo,
   useRef,
   useState,
 } from "react";
 
+import { useStableVideoSource } from "~/hooks/useStableVideoSource";
 import type { ImageLoaderManager } from "~/lib/image-loader-manager";
 import type { VideoSource } from "~/lib/image-loading-types";
-import { getVideoSourceKey } from "~/lib/image-loading-types";
 
 import type { LoadingIndicatorRef } from "./LoadingIndicator";
 import type { LivePhotoVideoHandle } from "./types";
@@ -67,50 +66,11 @@ export const LivePhotoVideo = ({
   const isConvertingVideoRef = useRef(false);
   const loadedVideoSourceKeyRef = useRef<string | null>(null);
   const playTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const videoSourceType = videoSource.type;
-  const livePhotoUrl =
-    videoSourceType === "live-photo" ? videoSource.videoUrl : undefined;
-  const motionPhotoImageUrl =
-    videoSourceType === "motion-photo" ? videoSource.imageUrl : undefined;
-  const motionPhotoOffset =
-    videoSourceType === "motion-photo" ? videoSource.offset : undefined;
-  const motionPhotoSize =
-    videoSourceType === "motion-photo" ? videoSource.size : undefined;
-  const motionPhotoPresentationTimestamp =
-    videoSourceType === "motion-photo"
-      ? videoSource.presentationTimestamp
-      : undefined;
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const videoAnimateController = useAnimationControls();
-  const stableVideoSource = useMemo<VideoSource>(() => {
-    if (videoSourceType === "motion-photo") {
-      return {
-        type: "motion-photo",
-        imageUrl: motionPhotoImageUrl!,
-        offset: motionPhotoOffset!,
-        size: motionPhotoSize,
-        presentationTimestamp: motionPhotoPresentationTimestamp,
-      };
-    }
-
-    if (videoSourceType === "live-photo") {
-      return {
-        type: "live-photo",
-        videoUrl: livePhotoUrl!,
-      };
-    }
-
-    return { type: "none" };
-  }, [
-    videoSourceType,
-    livePhotoUrl,
-    motionPhotoImageUrl,
-    motionPhotoOffset,
-    motionPhotoSize,
-    motionPhotoPresentationTimestamp,
-  ]);
-  const videoSourceKey = getVideoSourceKey(stableVideoSource);
+  const { videoSource: stableVideoSource, videoSourceKey } =
+    useStableVideoSource(videoSource);
 
   useEffect(() => {
     onPlayingChange?.(isPlayingLivePhoto);

@@ -70,8 +70,17 @@ vi.mock("~/hooks/useMobile", () => ({
   useMobile: () => true,
 }));
 
+// ErrorElement resolves labels via the module-global i18n instance;
+// key-identity t() keeps this suite about SSR safety, not translation.
+vi.mock("~/i18n", () => ({
+  getI18n: () => ({
+    t: (key: string) => key,
+  }),
+}));
+
 vi.mock("~/hooks/usePhotoViewer", () => ({
   getFilteredPhotos: () => [],
+  useIsPhotoViewerOpen: () => false,
   usePhotoViewer: () => ({
     currentIndex: 0,
     closeViewer: vi.fn(),
@@ -115,8 +124,6 @@ describe("apps/web SSR safety", () => {
   it("renders the route error element without sessionStorage access during render", async () => {
     const { ErrorElement } = await import("../components/common/ErrorElement");
 
-    expect(renderToStaticMarkup(<ErrorElement />)).toContain(
-      "Something went wrong",
-    );
+    expect(renderToStaticMarkup(<ErrorElement />)).toContain("error.title");
   });
 });

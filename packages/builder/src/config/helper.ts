@@ -1,7 +1,7 @@
-import type { BuilderConfigInput } from "../types/config";
+import type { BuilderConfigFileInput } from "./schema.js";
 
 export function defineBuilderConfig(
-  config: BuilderConfigInput | (() => BuilderConfigInput),
-): BuilderConfigInput {
+  config: BuilderConfigFileInput | (() => BuilderConfigFileInput),
+): BuilderConfigFileInput {
   return typeof config === "function" ? config() : config;
 }

@@ -2,7 +2,11 @@ import type { LocationAdminInfo, PhotoManifestItem } from "@afilmory/schema";
 import { buildGeoRegionId, photoMatchesGeoFilters } from "@afilmory/schema/geo";
 import { describe, expect, it } from "vitest";
 
-import { createGeographicRegions, getRegionDisplayName } from "../geo-regions";
+import {
+  createGeographicRegions,
+  getPhotoGeoData,
+  getRegionDisplayName,
+} from "../geo-regions";
 import { convertPhotosToMarkersFromEXIF } from "../map-utils";
 
 const createPhoto = (
@@ -266,6 +270,84 @@ describe("createGeographicRegions", () => {
     );
   });
 
+  it("orders regions by first marker appearance across levels", () => {
+    // Interleave countries/cities so insertion order differs from any
+    // alphabetical or grouped order.
+    const photos = [
+      createPhoto("tokyo-1", 35.68, 139.69, {
+        country: "Japan",
+        countryCode: "JP",
+        region: "Tokyo",
+        city: "Tokyo",
+      }),
+      createPhoto("hangzhou-1", 30, 120, {
+        country: "China",
+        countryCode: "CN",
+        region: "Zhejiang",
+        city: "Hangzhou",
+      }),
+      createPhoto("osaka-1", 34.69, 135.5, {
+        country: "Japan",
+        countryCode: "JP",
+        region: "Osaka",
+        city: "Osaka",
+      }),
+      createPhoto("shanghai-1", 31, 121, {
+        country: "China",
+        countryCode: "CN",
+        region: "Shanghai",
+        city: "Shanghai",
+      }),
+      createPhoto("hangzhou-2", 30.1, 120.1, {
+        country: "China",
+        countryCode: "CN",
+        region: "Zhejiang",
+        city: "Hangzhou",
+      }),
+      createPhoto("paris-1", 48.85, 2.35, {
+        country: "France",
+        countryCode: "FR",
+        region: "Île-de-France",
+        city: "Paris",
+      }),
+    ];
+    const markers = convertPhotosToMarkersFromEXIF(photos);
+
+    const cities = createGeographicRegions(markers, "city");
+    expect(cities.map((region) => region.label)).toEqual([
+      "Tokyo",
+      "Hangzhou",
+      "Osaka",
+      "Shanghai",
+      "Paris",
+    ]);
+
+    const countries = createGeographicRegions(markers, "country");
+    expect(countries.map((region) => region.label)).toEqual([
+      "Japan",
+      "China",
+      "France",
+    ]);
+
+    // Equivalence with the removed O(markers)-per-comparison comparator:
+    // re-sorting a scrambled copy with the old comparator must reproduce
+    // exactly the order the function now emits.
+    for (const regions of [cities, countries]) {
+      const scrambled = [...regions].reverse().sort((a, b) => {
+        const firstIndex = markers.findIndex((marker) =>
+          a.photoIds.includes(marker.photo.id),
+        );
+        const secondIndex = markers.findIndex((marker) =>
+          b.photoIds.includes(marker.photo.id),
+        );
+        return firstIndex - secondIndex;
+      });
+      expect(regions.map((region) => region.id)).toEqual(
+        scrambled.map((region) => region.id),
+      );
+    }
+  });
+
   it("keeps region ids language-independent while localizing display names", () => {
     const englishAdmin: LocationAdminInfo = {
       country: "Spain",
@@ -303,6 +385,58 @@ describe("createGeographicRegions", () => {
     expect(getRegionDisplayName(regions[0], "en")).toBe("Spain / Catalonia");
     expect(getRegionDisplayName(regions[0], "zh-CN")).toBe(
       "西班牙 / 加泰罗尼亚",
+    );
+  });
+});
+
+describe("getPhotoGeoData", () => {
+  const photos = [
+    createPhoto("a", 30, 120, {
+      country: "China",
+      countryCode: "CN",
+      region: "Zhejiang",
+      city: "Hangzhou",
+    }),
+    createPhoto("b", 31, 121, {
+      country: "China",
+      countryCode: "CN",
+      region: "Shanghai",
+      city: "Shanghai",
+    }),
+  ];
+
+  it("matches the uncached per-level computation", () => {
+    const { markers, regionsByLevel } = getPhotoGeoData(photos);
+    const expectedMarkers = convertPhotosToMarkersFromEXIF(photos);
+
+    expect(markers.map((marker) => marker.id)).toEqual(
+      expectedMarkers.map((marker) => marker.id),
+    );
+    for (const level of ["country", "region", "city", "district"] as const) {
+      expect(regionsByLevel[level].map((region) => region.id)).toEqual(
+        createGeographicRegions(expectedMarkers, level).map(
+          (region) => region.id,
+        ),
+      );
+    }
+  });
+
+  it("returns the identical cached object for the same photos array", () => {
+    const first = getPhotoGeoData(photos);
+    const second = getPhotoGeoData(photos);
+
+    expect(second).toBe(first);
+    expect(second.markers).toBe(first.markers);
+    expect(second.regionsByLevel).toBe(first.regionsByLevel);
+  });
+
+  it("recomputes when the photos array identity changes", () => {
+    const first = getPhotoGeoData(photos);
+    const second = getPhotoGeoData([...photos]);
+
+    expect(second).not.toBe(first);
+    expect(second.regionsByLevel.city.map((region) => region.id)).toEqual(
+      first.regionsByLevel.city.map((region) => region.id),
     );
   });
 });

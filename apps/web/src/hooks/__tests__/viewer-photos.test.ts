@@ -22,7 +22,6 @@ import { createAppRuntime } from "~/runtime/app-runtime";
 import { AfilmoryRuntimeProvider } from "~/runtime/app-runtime-provider";
 
 const defaultGallerySetting: GallerySetting = {
-  sortBy: "date",
   sortOrder: "desc",
   selectedTags: [],
   selectedCameras: [],
@@ -31,7 +30,6 @@ const defaultGallerySetting: GallerySetting = {
   selectedGeoRegions: [],
   selectedGeoCities: [],
   selectedGeoDistricts: [],
-  columns: "auto",
 };
 
 const createPhoto = (
@@ -131,6 +129,38 @@ describe("viewer photo resolution", () => {
     const recomputedForPhotos = filterAndSortPhotos(otherPhotos, setting);
     expect(recomputedForPhotos).not.toBe(first);
     expect(recomputedForPhotos.map((photo) => photo.id)).toEqual(["a"]);
+  });
+
+  it("sorts mixed raw-EXIF and ISO dated photos chronologically", () => {
+    // 旧实现按原始日期串 localeCompare：EXIF 的 ':' 比 ISO 的 '-' 大，
+    // 三月的 EXIF 照片会被排到六月的 ISO 照片之后。
+    const exifMarch = createPhoto({
+      id: "exif-march",
+      exif: { DateTimeOriginal: "2026:03:15 14:30:00" },
+      lastModified: "2026-01-01T00:00:00.000Z",
+    });
+    const isoFeb = createPhoto({
+      id: "iso-feb",
+      lastModified: "2026-02-01T12:00:00.000Z",
+    });
+    const isoJune = createPhoto({
+      id: "iso-june",
+      lastModified: "2026-06-01T12:00:00.000Z",
+    });
+
+    expect(
+      filterAndSortPhotos(
+        [isoFeb, isoJune, exifMarch],
+        defaultGallerySetting,
+      ).map((photo) => photo.id),
+    ).toEqual(["iso-june", "exif-march", "iso-feb"]);
+
+    expect(
+      filterAndSortPhotos([exifMarch, isoJune, isoFeb], {
+        ...defaultGallerySetting,
+        sortOrder: "asc",
+      }).map((photo) => photo.id),
+    ).toEqual(["iso-feb", "exif-march", "iso-june"]);
   });
 
   it("returns referentially equal results across getFilteredPhotos calls with stable runtime state", () => {

@@ -5,8 +5,8 @@ import { useTranslation } from "react-i18next";
 interface SliderProps {
   value: number | "auto";
   onChange: (value: number | "auto") => void;
-  // Called when user finishes interaction (pointer up). Optional and non-breaking.
-  onPointUp?: (e: PointerEvent) => void;
+  // Called when user commits a value (pointer up / keyboard step). Optional and non-breaking.
+  onPointUp?: (e: PointerEvent | React.KeyboardEvent) => void;
   min: number;
   max: number;
   step?: number;
@@ -31,6 +31,7 @@ export const Slider = ({
   const [isDragging, setIsDragging] = useState(false);
   const sliderRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
+  const handleRef = useRef<HTMLDivElement>(null);
 
   // 将值转换为位置百分比
   const getPositionFromValue = useCallback(
@@ -58,6 +59,9 @@ export const Slider = ({
       if (disabled) return;
 
       event.preventDefault();
+      // preventDefault suppresses native focus-on-click; move focus to the
+      // handle explicitly so keyboard adjustment can continue after a drag.
+      handleRef.current?.focus();
       setIsDragging(true);
 
       const updateValue = (clientX: number) => {
@@ -92,6 +96,56 @@ export const Slider = ({
       document.addEventListener("pointerup", handlePointerUp);
     },
     [disabled, getValueFromPosition, value, onChange, onPointUp],
+  );
+
+  // 键盘步进：与指针路径一致地吸附到 step 倍数，"auto" 是 min 左侧的一个离散档
+  const stepValue = useCallback(
+    (val: number | "auto", direction: 1 | -1): number | "auto" => {
+      if (val === "auto") return direction === 1 ? min : "auto";
+      const snapped = Math.round((val + direction * step) / step) * step;
+      if (snapped < min) return val <= min ? "auto" : min;
+      return Math.min(max, snapped);
+    },
+    [min, max, step],
+  );
+
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (disabled) return;
+
+      let newValue: number | "auto";
+      switch (event.key) {
+        case "ArrowRight":
+        case "ArrowUp": {
+          newValue = stepValue(value, 1);
+          break;
+        }
+        case "ArrowLeft":
+        case "ArrowDown": {
+          newValue = stepValue(value, -1);
+          break;
+        }
+        case "Home": {
+          newValue = "auto";
+          break;
+        }
+        case "End": {
+          newValue = max;
+          break;
+        }
+        default: {
+          return;
+        }
+      }
+
+      event.preventDefault();
+      if (newValue !== value) {
+        onChange(newValue);
+        // 键盘每一步都是一次完整交互，立即提交
+        onPointUp?.(event);
+      }
+    },
+    [disabled, stepValue, value, max, onChange, onPointUp],
   );
 
   const position = getPositionFromValue(value);
@@ -136,8 +190,23 @@ export const Slider = ({
 
         {/* 滑块把手 */}
         <div
+          ref={handleRef}
+          role="slider"
+          tabIndex={disabled ? -1 : 0}
+          aria-label={t("action.columns.setting")}
+          aria-valuemin={min - 1}
+          aria-valuemax={max}
+          aria-valuenow={value === "auto" ? min - 1 : value}
+          aria-valuetext={
+            value === "auto"
+              ? finalAutoLabel
+              : t("slider.columns", { count: value })
+          }
+          aria-disabled={disabled || undefined}
+          onKeyDown={handleKeyDown}
           className={clsxm(
             "absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-lg transition-all duration-150",
+            "focus-visible:ring-accent/45 focus-visible:ring-offset-background focus-visible:ring-2 focus-visible:ring-offset-2",
             isDragging ? "scale-110" : "hover:scale-105",
             value === "auto" ? "bg-accent/80" : "bg-accent",
             disabled && "cursor-not-allowed",

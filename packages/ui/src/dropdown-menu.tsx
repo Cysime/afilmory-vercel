@@ -38,7 +38,7 @@ const DropdownMenuSubTrigger = ({
   <DropdownMenuPrimitive.SubTrigger
     ref={ref}
     className={clsxm(
-      "cursor-menu focus:bg-theme-selection-active focus:text-theme-selection-foreground data-[state=open]:bg-theme-selection-active data-[state=open]:text-theme-selection-foreground flex select-none items-center rounded-[5px] px-2.5 py-1.5 outline-none",
+      "cursor-menu focus:bg-accent focus:text-accent-foreground data-[state=open]:bg-accent data-[state=open]:text-accent-foreground flex select-none items-center rounded-[5px] px-2.5 py-1.5 outline-none",
       inset && "pl-8",
       "center gap-2",
       className,

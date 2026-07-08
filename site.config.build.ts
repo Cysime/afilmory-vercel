@@ -72,6 +72,10 @@ function mergeSiteConfig(
         ...base.feed?.folo,
         ...overrides.feed?.folo,
         challenge: {
+          // Both sources may be absent; seed the required fields first
+          // (same "" fallback as envConfig above).
+          feedId: "",
+          userId: "",
           ...base.feed?.folo?.challenge,
           ...overrides.feed?.folo?.challenge,
         },

@@ -63,7 +63,7 @@ export class PluginManager {
           });
         } catch (error) {
           logger.main.error(
-            `[Builder Plugin] 初始化插件 "${plugin.name}" 失败`,
+            `[Builder Plugin] Failed to initialize plugin "${plugin.name}"`,
             error,
           );
           throw error;
@@ -113,7 +113,7 @@ export class PluginManager {
         await hook(context);
       } catch (error) {
         logger.main.error(
-          `[Builder Plugin] 插件 "${plugin.name}" 在 ${event} 钩子中抛出错误`,
+          `[Builder Plugin] Plugin "${plugin.name}" threw an error in the ${event} hook`,
           error,
         );
         throw error;

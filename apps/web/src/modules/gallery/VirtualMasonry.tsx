@@ -17,8 +17,16 @@ export interface MasonryRef {
 export interface MasonryLayoutMetrics {
   columnCount: number;
   columnGutter: number;
+  /** 渲染列宽（整数，= round(layoutColumnWidth)）：itemHeight 吃的宽度。 */
   columnWidth: number;
   containerRect: DOMRect;
+  /**
+   * 布局列宽（可能带小数）：实际布局用它算 left，把小数摊进各列
+   * （见 computeMasonryLayout 的 `left = round(column * (columnWidth + gutter))`）。
+   * 复算布局（estimatePhotoVirtualRect）必须用它定位，用 columnWidth 算高度，
+   * 才能和真实布局逐像素一致。
+   */
+  layoutColumnWidth: number;
   rowGutter: number;
 }
 
@@ -244,6 +252,7 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
           columnGutter,
           columnWidth: renderColumnWidth,
           containerRect: container.getBoundingClientRect(),
+          layoutColumnWidth: effectiveColumnWidth,
           rowGutter,
         };
       },
@@ -260,7 +269,7 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
         );
       },
     }),
-    [columnGutter, renderColumnWidth, layout, rowGutter],
+    [columnGutter, effectiveColumnWidth, renderColumnWidth, layout, rowGutter],
   );
 
   return (

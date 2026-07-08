@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { GeographicRegion, PhotoMarker } from "~/types/map";
@@ -8,8 +14,14 @@ import { Maplibre } from "../MapLibre";
 let setProjectionMock: ReturnType<typeof vi.fn>;
 let fitBoundsMock: ReturnType<typeof vi.fn>;
 let flyToMock: ReturnType<typeof vi.fn>;
-let clusterMarkersMock: ReturnType<typeof vi.fn>;
-let clusterRegionsMock: ReturnType<typeof vi.fn>;
+let createMarkerClusterIndexMock: ReturnType<typeof vi.fn>;
+let createRegionClusterIndexMock: ReturnType<typeof vi.fn>;
+let getClusterPointsMock: ReturnType<typeof vi.fn>;
+let capturedOnMove:
+  | ((evt: {
+      viewState: { longitude: number; latitude: number; zoom: number };
+    }) => void)
+  | undefined;
 
 vi.mock("react-map-gl/maplibre", async () => {
   const React = await import("react");
@@ -20,12 +32,16 @@ vi.mock("react-map-gl/maplibre", async () => {
     latitude,
     zoom,
     onLoad,
+    onMove,
     children,
   }: React.ComponentProps<"div"> & {
     longitude: number;
     latitude: number;
     zoom: number;
     onLoad?: () => void;
+    onMove?: (evt: {
+      viewState: { longitude: number; latitude: number; zoom: number };
+    }) => void;
   } & {
     ref?: React.RefObject<{
       getMap: () => {
@@ -36,6 +52,8 @@ vi.mock("react-map-gl/maplibre", async () => {
     } | null | null>;
   }) => {
     const containerRef = React.useRef<HTMLDivElement>(null);
+
+    capturedOnMove = onMove;
 
     React.useEffect(() => {
       if (ref && typeof ref === "object") {
@@ -101,8 +119,11 @@ vi.mock("../shared", () => ({
       onClick={() => onClusterClick?.(longitude, latitude)}
     />
   ),
-  clusterRegions: (...args: unknown[]) => clusterRegionsMock(...args),
-  clusterMarkers: (...args: unknown[]) => clusterMarkersMock(...args),
+  createMarkerClusterIndex: (...args: unknown[]) =>
+    createMarkerClusterIndexMock(...args),
+  createRegionClusterIndex: (...args: unknown[]) =>
+    createRegionClusterIndexMock(...args),
+  getClusterPoints: (...args: unknown[]) => getClusterPointsMock(...args),
   DEFAULT_MARKERS: [],
   DEFAULT_STYLE: { width: "100%", height: "100%" },
   DEFAULT_VIEW_STATE: { longitude: -122.4, latitude: 37.8, zoom: 14 },
@@ -174,8 +195,10 @@ describe("Maplibre", () => {
     setProjectionMock = vi.fn();
     fitBoundsMock = vi.fn();
     flyToMock = vi.fn();
-    clusterMarkersMock = vi.fn(() => []);
-    clusterRegionsMock = vi.fn(() => []);
+    createMarkerClusterIndexMock = vi.fn(() => null);
+    createRegionClusterIndexMock = vi.fn(() => null);
+    getClusterPointsMock = vi.fn(() => []);
+    capturedOnMove = undefined;
   });
 
   afterEach(() => {
@@ -273,7 +296,7 @@ describe("Maplibre", () => {
   it("zooms into a cluster when no external cluster handler is provided", () => {
     const mapRef = { current: null };
 
-    clusterMarkersMock.mockReturnValue([
+    getClusterPointsMock.mockReturnValue([
       {
         type: "Feature",
         properties: {
@@ -312,8 +335,10 @@ describe("Maplibre", () => {
     const marker = createMarker("a", 30, 120);
     const region = createRegion(marker);
     const onRegionClick = vi.fn();
+    const regionIndex = { kind: "region-index" };
 
-    clusterRegionsMock.mockReturnValue([
+    createRegionClusterIndexMock.mockReturnValue(regionIndex);
+    getClusterPointsMock.mockReturnValue([
       {
         type: "Feature",
         properties: {
@@ -339,7 +364,47 @@ describe("Maplibre", () => {
 
     fireEvent.click(screen.getByTestId("region-marker"));
 
-    expect(clusterRegionsMock).toHaveBeenCalledWith([region], 8);
+    expect(createRegionClusterIndexMock).toHaveBeenCalledWith([region]);
+    expect(getClusterPointsMock).toHaveBeenCalledWith(regionIndex, 8);
     expect(onRegionClick).toHaveBeenCalledWith(region);
+  });
+
+  it("builds the cluster index once and re-queries only when the integer zoom changes", () => {
+    const markers = [createMarker("a", 30, 120)];
+    const markerIndex = { kind: "marker-index" };
+    createMarkerClusterIndexMock.mockReturnValue(markerIndex);
+
+    render(
+      <Maplibre
+        initialViewState={{ longitude: 120, latitude: 30, zoom: 5 }}
+        autoFitBounds={false}
+        displayMode="photos"
+        markers={markers}
+      />,
+    );
+
+    expect(createMarkerClusterIndexMock).toHaveBeenCalledTimes(1);
+    expect(createMarkerClusterIndexMock).toHaveBeenCalledWith(markers);
+    expect(getClusterPointsMock).toHaveBeenCalledTimes(1);
+    expect(getClusterPointsMock).toHaveBeenLastCalledWith(markerIndex, 5);
+
+    // Fractional zoom within the same integer level: no rebuild, no re-query.
+    act(() => {
+      capturedOnMove?.({
+        viewState: { longitude: 120, latitude: 30, zoom: 5.4 },
+      });
+    });
+    expect(createMarkerClusterIndexMock).toHaveBeenCalledTimes(1);
+    expect(getClusterPointsMock).toHaveBeenCalledTimes(1);
+
+    // Crossing an integer zoom level: same index, one new query.
+    act(() => {
+      capturedOnMove?.({
+        viewState: { longitude: 120, latitude: 30, zoom: 6.2 },
+      });
+    });
+    expect(createMarkerClusterIndexMock).toHaveBeenCalledTimes(1);
+    expect(getClusterPointsMock).toHaveBeenCalledTimes(2);
+    expect(getClusterPointsMock).toHaveBeenLastCalledWith(markerIndex, 6);
   });
 });

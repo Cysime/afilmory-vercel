@@ -15,6 +15,7 @@ interface HostState {
   translateY: number;
   lodLevel: number;
   canDispatch: boolean;
+  lodCoveredByBase: boolean;
 }
 
 function createHost(overrides: Partial<HostState> = {}) {
@@ -29,6 +30,7 @@ function createHost(overrides: Partial<HostState> = {}) {
     translateY: 0,
     lodLevel: 2,
     canDispatch: true,
+    lodCoveredByBase: false,
     ...overrides,
   };
 
@@ -37,6 +39,7 @@ function createHost(overrides: Partial<HostState> = {}) {
   const requestRender = vi.fn();
   const requestTileFromWorker = vi.fn();
   const onVisibleLodReady = vi.fn();
+  const onCoveredByBase = vi.fn();
 
   const host: TileManagerHost = {
     getViewport: () => ({
@@ -50,12 +53,14 @@ function createHost(overrides: Partial<HostState> = {}) {
       translateY: state.translateY,
     }),
     getSelectedLodLevel: () => state.lodLevel,
+    isLodCoveredByBase: () => state.lodCoveredByBase,
     createTexture,
     deleteTexture,
     requestRender,
     canDispatchTiles: () => state.canDispatch,
     requestTileFromWorker,
     onVisibleLodReady,
+    onCoveredByBase,
   };
 
   return {
@@ -66,6 +71,7 @@ function createHost(overrides: Partial<HostState> = {}) {
     requestRender,
     requestTileFromWorker,
     onVisibleLodReady,
+    onCoveredByBase,
   };
 }
 
@@ -142,6 +148,72 @@ describe("TileManager", () => {
       state.canDispatch = true;
       manager.updateTileCache();
       expect(requestTileFromWorker).toHaveBeenCalled();
+    });
+  });
+
+  describe("base-coverage gate", () => {
+    it("queues nothing while the base texture already covers the selected LOD, and engages once past it", () => {
+      const { host, state, requestTileFromWorker } = createHost({
+        lodCoveredByBase: true,
+      });
+      const manager = new TileManager(host);
+
+      // fit 视图：底图分辨率 ≥ 该 LOD → 不排队、不派发、无可见集
+      manager.updateTileCache();
+      expect(requestTileFromWorker).not.toHaveBeenCalled();
+      expect(manager.currentVisibleTiles.size).toBe(0);
+      expect(manager.pendingTileRequests.size).toBe(0);
+
+      // 缩放越过底图分辨率 → 瓦片系统照常介入
+      state.lodCoveredByBase = false;
+      manager.updateTileCache();
+      expect(requestTileFromWorker).toHaveBeenCalled();
+      expect(manager.currentVisibleTiles.size).toBeGreaterThan(0);
+    });
+
+    it("drops the visible set and pending requests when zooming back into base coverage, keeping cached textures", () => {
+      const { host, state, deleteTexture, requestTileFromWorker } =
+        createHost();
+      const manager = new TileManager(host);
+      manager.updateTileCache();
+
+      const key = requestedKeys(requestTileFromWorker)[0];
+      manager.handleWorkerMessage({
+        type: "tile-created",
+        payload: { key, imageBitmap: makeBitmap(), lodLevel: 2 },
+      });
+      expect(manager.tileCache.size).toBe(1);
+      expect(manager.pendingTileRequests.size).toBeGreaterThan(0);
+
+      // 回到底图覆盖区间：可见集与未派发请求全部丢弃，糊瓦片不再可绘
+      state.lodCoveredByBase = true;
+      manager.updateTileCache();
+
+      expect(manager.currentVisibleTiles.size).toBe(0);
+      expect(manager.pendingTileRequests.size).toBe(0);
+      expect(manager.collectVisibleRenderTiles(2)).toHaveLength(0);
+      // 已缓存纹理留给容量/年龄回收（再放大时直接复用），此处不删
+      expect(deleteTexture).not.toHaveBeenCalled();
+      expect(manager.tileCache.size).toBe(1);
+    });
+
+    it("reports coverage via onCoveredByBase (not onVisibleLodReady) on the skip path so the engine can refresh quality", () => {
+      const { host, state, onCoveredByBase, onVisibleLodReady } = createHost({
+        lodCoveredByBase: true,
+      });
+      const manager = new TileManager(host);
+
+      // 底图覆盖跳过路径：清空可见集，同时通知引擎“现在只画底图”——onVisibleLodReady
+      // 在此永不触发，缺了 onCoveredByBase 引擎的质量信号就会滞留在瓦片态偏高值。
+      manager.updateTileCache();
+      expect(onCoveredByBase).toHaveBeenCalledTimes(1);
+      expect(onVisibleLodReady).not.toHaveBeenCalled();
+
+      // 缩放越过底图分辨率：走正常路径，改由 onVisibleLodReady 上报，不再触发 onCoveredByBase
+      state.lodCoveredByBase = false;
+      onCoveredByBase.mockClear();
+      manager.updateTileCache();
+      expect(onCoveredByBase).not.toHaveBeenCalled();
     });
   });
 
@@ -293,38 +365,65 @@ describe("TileManager", () => {
   });
 
   describe("debounced updates from the render loop", () => {
-    it("schedules a trailing update after 100ms of quiet and never during animation", () => {
+    it("coalesces render-loop calls into at most one update per window and never schedules during animation", () => {
       // 只伪造 setTimeout/clearTimeout，避免碰掉 beforeEach 里的 rAF spy
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       let now = 200;
       vi.spyOn(performance, "now").mockImplementation(() => now);
 
-      const { host, requestTileFromWorker } = createHost();
+      const { host } = createHost();
       const manager = new TileManager(host);
+      const updateSpy = vi.spyOn(manager, "updateTileCache");
 
       // 动画中绝不调度
       manager.maybeScheduleUpdate(true);
       expect(vi.getTimerCount()).toBe(0);
 
-      // 静止帧：超过 100ms 阈值 → 调度一次 setTimeout(0)
+      // 距上次更新已超过阈值 → 立即（下一个宏任务）更新
       manager.maybeScheduleUpdate(false);
       expect(vi.getTimerCount()).toBe(1);
+      vi.runAllTimers();
+      expect(updateSpy).toHaveBeenCalledTimes(1); // lastUpdateTime = 200
 
-      // 阈值内的后续帧不重复调度
+      // 窗口内的连续渲染帧只保有一个定时器（合并到同一次尾随更新）
       now = 250;
       manager.maybeScheduleUpdate(false);
       expect(vi.getTimerCount()).toBe(1);
-
-      vi.runAllTimers();
-      expect(requestTileFromWorker).toHaveBeenCalled();
-
-      // 距上次调度 ≤100ms → 不再调度；>100ms → 再次调度
-      now = 300;
-      manager.maybeScheduleUpdate(false);
-      expect(vi.getTimerCount()).toBe(0);
-      now = 301;
+      now = 260;
       manager.maybeScheduleUpdate(false);
       expect(vi.getTimerCount()).toBe(1);
+
+      // 尾随更新在距上次更新满 100ms 时触发，而不是被丢弃
+      now = 299;
+      vi.advanceTimersByTime(49);
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+      now = 300;
+      vi.advanceTimersByTime(1);
+      expect(updateSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("a render burst ending inside the window still gets its trailing update (fast flick)", () => {
+      // 回归：旧实现是前沿节流，窗口内结束的快速滑动会让最后一个视口
+      // 永远等不到瓦片更新（可见集停留在滑动前，留下糊带直到下次输入）。
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      let now = 1000;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+
+      const { host } = createHost();
+      const manager = new TileManager(host);
+
+      // 滑动途中的一帧：触发一次更新，lastUpdateTime = 1000
+      manager.maybeScheduleUpdate(false);
+      vi.runAllTimers();
+      const updateSpy = vi.spyOn(manager, "updateTileCache");
+
+      // 滑动的最后一帧渲染落在窗口内（+40ms），随后再无任何输入
+      now = 1040;
+      manager.maybeScheduleUpdate(false);
+
+      now = 1100;
+      vi.runAllTimers();
+      expect(updateSpy).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { stubGoogleFonts } from "./helpers";
+
 // 生产构建冒烟（webServer 见 scripts/e2e-prod-server.ts，经
 // `pnpm test:e2e:prod` 触发）：dev server 永远跑不到的产物形态——外部
 // manifest 资产 + index.html 内联 fetch 脚本、压缩/手动分块 bundle、PWA
@@ -39,15 +41,7 @@ test("production bundle serves gallery, viewer route, and service worker", async
   // console error 断言窗口内仅剩的真实外网请求，网络抖动会产生
   // ERR_CONNECTION_CLOSED / preload 警告等非确定噪声。字体 CSS 在 HTML 解析期
   // 就发起、远早于 SW 激活，route 拦截可靠；回空 CSS 后也不再请求 gstatic。
-  await page.route("https://fonts.googleapis.com/**", (route) =>
-    route.fulfill({
-      contentType: "text/css",
-      body: "/* e2e: external fonts stubbed */",
-    }),
-  );
-  await page.route("https://fonts.gstatic.com/**", (route) =>
-    route.fulfill({ contentType: "font/woff2", body: "" }),
-  );
+  await stubGoogleFonts(page);
 
   await page.goto("/");
 

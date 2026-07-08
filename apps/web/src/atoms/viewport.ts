@@ -1,39 +1,14 @@
 import { atom } from "jotai";
 
-const w = typeof window !== "undefined" ? window.innerWidth : 0;
-const h = typeof window !== "undefined" ? window.innerHeight : 0;
-const sm = w >= 640;
-const md = w >= 768;
-const lg = w >= 1024;
-const xl = w >= 1280;
-const _2xl = w >= 1536;
+// 移动/桌面分界（Tailwind lg）的唯一事实来源：useMobile、
+// EventProvider 的 dataset.viewport 都从这里取值。
+export const MOBILE_BREAKPOINT = 1024;
+
+export const isMobileWidth = (w: number) => w < MOBILE_BREAKPOINT && w !== 0;
 
 export const viewportAtom = atom({
-  /**
-   * 640px
-   */
-  sm,
-
-  /**
-   * 768px
-   */
-  md,
-
-  /**
-   * 1024px
-   */
-  lg,
-
-  /**
-   * 1280px
-   */
-  xl,
-
-  /**
-   * 1536px
-   */
-  "2xl": _2xl,
-
-  h,
-  w,
+  w: typeof window !== "undefined" ? window.innerWidth : 0,
+  h: typeof window !== "undefined" ? window.innerHeight : 0,
 });
+
+export const isMobileAtom = atom((get) => isMobileWidth(get(viewportAtom).w));

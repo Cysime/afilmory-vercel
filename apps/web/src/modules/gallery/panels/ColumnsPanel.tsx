@@ -2,20 +2,20 @@ import { useAtom } from "jotai";
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { gallerySettingAtom } from "~/atoms/app";
+import { galleryColumnsAtom } from "~/atoms/app";
 import { Slider } from "~/components/ui/slider";
 import { useMobile } from "~/hooks/useMobile";
 
 export const ColumnsPanel = () => {
   const { t } = useTranslation();
-  const [gallerySetting, setGallerySetting] = useAtom(gallerySettingAtom);
+  const [columns, setColumns] = useAtom(galleryColumnsAtom);
   const isMobile = useMobile();
   // Local preview state to avoid reflow while dragging
   const [previewColumns, setPreviewColumns] = useState<number | "auto">(
-    gallerySetting.columns,
+    columns,
   );
   // Ref to always have the latest slider value and avoid stale closures
-  const latestColumnsRef = useRef<number | "auto">(gallerySetting.columns);
+  const latestColumnsRef = useRef<number | "auto">(columns);
 
   const handleChange = (val: number | "auto") => {
     latestColumnsRef.current = val;
@@ -23,11 +23,7 @@ export const ColumnsPanel = () => {
   };
 
   const handlePointUp = () => {
-    // Use functional update to avoid stale gallerySetting object
-    setGallerySetting((prev) => ({
-      ...prev,
-      columns: latestColumnsRef.current,
-    }));
+    setColumns(latestColumnsRef.current);
   };
   // 根据设备类型提供不同的列数范围
   const columnRange = isMobile

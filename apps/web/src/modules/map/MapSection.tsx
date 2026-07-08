@@ -2,22 +2,15 @@ import { m } from "motion/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 
+import { MapBackButton, MapInfoPanel } from "~/components/ui/map";
 import {
-  MapBackButton,
-  MapErrorState,
-  MapInfoPanel,
-  MapLoadingState,
-} from "~/components/ui/map";
-import { debugLog } from "~/lib/debug-log";
-import {
-  createGeographicRegions,
   createRegionMarkers,
+  getPhotoGeoData,
   getRegionLevelForZoom,
 } from "~/lib/geo-regions";
 import {
   calculateMapBounds,
   convertExifGPSToDecimal,
-  convertPhotosToMarkersFromEXIF,
   getInitialViewStateForMarkers,
 } from "~/lib/map-utils";
 import { MapProvider } from "~/modules/map/MapProvider";
@@ -46,18 +39,12 @@ const MapSectionContent = () => {
   const displayMode: MapDisplayMode =
     searchParams.get("mode") === "photos" ? "photos" : "regions";
 
-  // Photo markers state and loading logic
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-  const [markers, setMarkers] = useState<PhotoMarker[]>([]);
-  const [regionsByLevel, setRegionsByLevel] = useState<
-    Record<GeographicRegionLevel, GeographicRegion[]>
-  >({
-    country: [],
-    region: [],
-    city: [],
-    district: [],
-  });
+  // Geo data is a pure, synchronous function of the repository's stable
+  // photos array; getPhotoGeoData memoizes by array identity, so this is a
+  // cache hit on remounts. Failures propagate to the route-level ErrorBoundary.
+  const { markers, regionsByLevel } = getPhotoGeoData(
+    photoRepository.getPhotos(),
+  );
   const [regionLevel, setRegionLevel] =
     useState<GeographicRegionLevel>("country");
 
@@ -176,39 +163,6 @@ const MapSectionContent = () => {
     setSearchParams(newSearchParams, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  // Load photo markers effect
-  useEffect(() => {
-    const loadPhotoMarkersData = async () => {
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const photos = photoRepository.getPhotos();
-        const photoMarkers = convertPhotosToMarkersFromEXIF(photos);
-
-        setMarkers(photoMarkers);
-        setRegionsByLevel({
-          country: createGeographicRegions(photoMarkers, "country"),
-          region: createGeographicRegions(photoMarkers, "region"),
-          city: createGeographicRegions(photoMarkers, "city"),
-          district: createGeographicRegions(photoMarkers, "district"),
-        });
-        debugLog(`Found ${photoMarkers.length} photos with GPS coordinates`);
-      } catch (err) {
-        const error =
-          err instanceof Error
-            ? err
-            : new Error("Failed to load photo markers");
-        setError(error);
-        console.error("Failed to load photo markers:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadPhotoMarkersData();
-  }, [photoRepository, setMarkers]);
-
   // Parse URL parameters and map photo selections into the active display mode.
   const { latitude, longitude, zoom, selectedPhotoId, selectedRegionId } =
     useMemo(() => {
@@ -299,16 +253,6 @@ const MapSectionContent = () => {
       activeMarkers.length > 0 ? activeMarkers : markers,
     );
   }, [activeMarkers, latitude, longitude, markers, zoom]);
-
-  // Show loading state
-  if (isLoading) {
-    return <MapLoadingState />;
-  }
-
-  // Show error state
-  if (error) {
-    return <MapErrorState />;
-  }
 
   return (
     <div className="absolute h-full w-full">

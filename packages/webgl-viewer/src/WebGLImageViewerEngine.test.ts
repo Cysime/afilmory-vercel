@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { WebGLInputControllerHost } from "./input-controller";
 import { WebGLInputController } from "./input-controller";
-import type { WebGLImageViewerProps } from "./interface";
+import type { DebugInfo, WebGLImageViewerProps } from "./interface";
 import { WebGLImageViewerEngine } from "./WebGLImageViewerEngine";
 
 function firePointer(
@@ -141,7 +141,7 @@ function createEngine(
     minScale: 0.1,
     maxScale: 10,
     wheel: { step: 0.2 },
-    pinch: { step: 5 },
+    pinch: {},
     doubleClick: { step: 0.7, mode: "toggle", animationTime: 200 },
     panning: {},
     limitToBounds: true,
@@ -178,6 +178,7 @@ describe("WebGLImageViewerEngine lifecycle", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
     globalThis.ResizeObserver = originalResizeObserver;
     globalThis.Worker = originalWorker;
     Object.defineProperty(URL, "createObjectURL", {
@@ -554,6 +555,294 @@ describe("WebGLImageViewerEngine lifecycle", () => {
 
     engine.destroy();
   });
+
+  it("keeps the tile subsystem idle at fit view and engages it past base resolution", () => {
+    // 只伪造 setTimeout/clearTimeout（渲染循环防抖用），rAF 吞掉即可
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
+    const canvas = document.createElement("canvas");
+    const gl = createWebGLMock();
+    vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    });
+
+    const engine = createEngine(canvas);
+    const worker = WorkerMock.instances.at(-1)!;
+    const emit = (data: unknown) =>
+      worker.onmessage?.({ data } as MessageEvent);
+    const createTileCalls = () =>
+      worker.postMessage.mock.calls.filter(
+        ([message]) => message.type === "create-tile",
+      );
+
+    // destroy 会拒绝仍挂起的 loadImage promise，测试侧需吞掉这个预期内的拒绝
+    engine.loadImage("blob:photo", 1000, 1000).catch(() => {});
+
+    // 1000×1000 图贴合 100×100 画布 → scale 0.1 → 选中 LOD 0（0.25）。
+    // 0.5x 底图（500×500）分辨率已 ≥ LOD 0 → 瓦片系统必须完全按兵不动。
+    emit({
+      type: "image-loaded",
+      payload: {
+        imageBitmap: { width: 500, height: 500, close: vi.fn() },
+        imageWidth: 1000,
+        imageHeight: 1000,
+        lodLevel: 1,
+      },
+    });
+    emit({ type: "init-done" });
+    vi.runAllTimers(); // 渲染循环的防抖更新也要跑完
+    expect(createTileCalls()).toHaveLength(0);
+
+    // 放大越过底图分辨率（0.1 → 0.6 > 0.5）→ 选中 LOD 2，瓦片开始请求
+    engine.zoomAt(50, 50, 6);
+    vi.runAllTimers();
+    const calls = createTileCalls();
+    expect(calls.length).toBeGreaterThan(0);
+    for (const [message] of calls) {
+      expect(message.payload.lodLevel).toBe(2);
+    }
+
+    engine.destroy();
+  });
+
+  it("downgrades the quality signal back to the base texture when zooming from tiles to fit", () => {
+    // 回归：底图覆盖跳过路径不再触发 onVisibleLodReady，缩回 fit 后质量会滞留在
+    // 瓦片态的偏高值——需要显式 onCoveredByBase 把 currentQuality 降回底图水平。
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
+    const onLoadingStateChange = vi.fn();
+    const canvas = document.createElement("canvas");
+    const gl = createWebGLMock();
+    vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    });
+
+    // 通过 debug 回调读取引擎自己的可见瓦片集合，避免依赖分帧派发的时序：
+    // 缩放后整段可见集可能跨多帧派发，这里直接把可见集里每片都喂成就绪。
+    let visibleTiles: string[] = [];
+    const debugRef: React.RefObject<(info: DebugInfo) => void> = {
+      current: (info: DebugInfo) => {
+        visibleTiles = info.tileSystem?.visibleKeys ?? [];
+      },
+    };
+
+    const engine = new WebGLImageViewerEngine(
+      canvas,
+      {
+        src: "blob:photo",
+        sourceBlob: null,
+        className: "",
+        width: 100,
+        height: 100,
+        initialScale: 1,
+        minScale: 0.1,
+        maxScale: 10,
+        wheel: { step: 0.2 },
+        pinch: {},
+        doubleClick: { step: 0.7, mode: "toggle", animationTime: 200 },
+        panning: {},
+        limitToBounds: true,
+        centerOnInit: true,
+        smooth: true,
+        onZoomChange: () => {},
+        onLoadingStateChange,
+        onImagePainted: () => {},
+        onError: () => {},
+        debug: false,
+      } as Required<WebGLImageViewerProps>,
+      debugRef,
+    );
+    const worker = WorkerMock.instances.at(-1)!;
+    const emit = (data: unknown) =>
+      worker.onmessage?.({ data } as MessageEvent);
+    const lastQuality = () =>
+      onLoadingStateChange.mock.calls.at(-1)?.[2] as string | undefined;
+    // emit() 只接受 unknown，结构化位图夹具无需断言成 ImageBitmap
+    const makeBitmap = () => ({ width: 512, height: 512, close: vi.fn() });
+
+    // destroy 会拒绝仍挂起的 loadImage promise，测试侧需吞掉这个预期内的拒绝
+    engine.loadImage("blob:photo", 1000, 1000).catch(() => {});
+
+    // fit：0.5x 底图（LOD 1 → low）覆盖 LOD 0，瓦片按兵不动
+    emit({
+      type: "image-loaded",
+      payload: {
+        imageBitmap: { width: 500, height: 500, close: vi.fn() },
+        imageWidth: 1000,
+        imageHeight: 1000,
+        lodLevel: 1,
+      },
+    });
+    emit({ type: "init-done" });
+    vi.runAllTimers();
+    expect(lastQuality()).toBe("low");
+
+    // 放大越过底图分辨率（0.1 → 0.6 > 0.5）→ 选中 LOD 2（scale 1 → medium）。
+    // 把整段可见集喂成就绪 → onVisibleLodReady 触发，质量升级为 medium。
+    engine.zoomAt(50, 50, 6);
+    vi.runAllTimers();
+    engine.setTileOutlineEnabled(engine.isTileOutlineEnabled()); // 触发一次 render 刷新 debug 快照
+    expect(visibleTiles.length).toBeGreaterThan(0);
+    for (const key of visibleTiles) {
+      emit({
+        type: "tile-created",
+        payload: { key, imageBitmap: makeBitmap(), lodLevel: 2 },
+      });
+    }
+    expect(lastQuality()).toBe("medium");
+
+    // 缩回 fit：底图重新覆盖选中 LOD → 质量必须降回底图的 low，而不是滞留在 medium
+    engine.zoomAt(50, 50, 1 / 6);
+    vi.runAllTimers();
+    expect(lastQuality()).toBe("low");
+
+    engine.destroy();
+  });
+
+  it("closes transferred bitmaps arriving after destroy instead of leaking them until GC", () => {
+    const canvas = document.createElement("canvas");
+    const gl = createWebGLMock();
+    vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    });
+
+    const engine = createEngine(canvas);
+    const worker = WorkerMock.instances.at(-1)!;
+    const emit = (data: unknown) =>
+      worker.onmessage?.({ data } as MessageEvent);
+
+    engine.destroy();
+
+    // terminate 后，事件循环里已排队的消息仍会送达一拍：位图必须立即关闭
+    const baseBitmap = { width: 500, height: 500, close: vi.fn() };
+    emit({
+      type: "image-loaded",
+      payload: {
+        imageBitmap: baseBitmap,
+        imageWidth: 1000,
+        imageHeight: 1000,
+        lodLevel: 1,
+      },
+    });
+    expect(baseBitmap.close).toHaveBeenCalledTimes(1);
+
+    const tileBitmap = { width: 512, height: 512, close: vi.fn() };
+    emit({
+      type: "tile-created",
+      payload: { key: "0-0-2", imageBitmap: tileBitmap, lodLevel: 2 },
+    });
+    expect(tileBitmap.close).toHaveBeenCalledTimes(1);
+
+    // 不带位图的消息照旧安全忽略
+    expect(() => emit({ type: "init-done" })).not.toThrow();
+  });
+
+  it("rejects a second loadImage with a different URL — one engine serves one image", async () => {
+    const canvas = document.createElement("canvas");
+    const gl = createWebGLMock();
+    vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    });
+
+    const engine = createEngine(canvas);
+    const worker = WorkerMock.instances.at(-1)!;
+    const emit = (data: unknown) =>
+      worker.onmessage?.({ data } as MessageEvent);
+
+    const first = engine.loadImage("blob:photo", 100, 100);
+    await expect(engine.loadImage("blob:other", 100, 100)).rejects.toThrow(
+      /renders a single image/,
+    );
+
+    // 首图加载不受影响，仍被 image-loaded 正常结算
+    emit({
+      type: "image-loaded",
+      payload: {
+        imageBitmap: { width: 50, height: 50, close: vi.fn() },
+        imageWidth: 100,
+        imageHeight: 100,
+        lodLevel: 1,
+      },
+    });
+    await expect(first).resolves.toBeUndefined();
+
+    engine.destroy();
+  });
+
+  it("supersedes a still-pending load when the same URL is re-issued (context restore path)", async () => {
+    const canvas = document.createElement("canvas");
+    const gl = createWebGLMock();
+    vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    });
+
+    const engine = createEngine(canvas);
+    const worker = WorkerMock.instances.at(-1)!;
+    const emit = (data: unknown) =>
+      worker.onmessage?.({ data } as MessageEvent);
+
+    const first = engine.loadImage("blob:photo", 100, 100);
+    const second = engine.loadImage("blob:photo", 100, 100);
+    await expect(first).rejects.toThrow(/superseded/);
+
+    emit({
+      type: "image-loaded",
+      payload: {
+        imageBitmap: { width: 50, height: 50, close: vi.fn() },
+        imageWidth: 100,
+        imageHeight: 100,
+        lodLevel: 1,
+      },
+    });
+    await expect(second).resolves.toBeUndefined();
+
+    engine.destroy();
+  });
 });
 
 describe("WebGLInputController pointer arbitration", () => {
@@ -571,7 +860,7 @@ describe("WebGLInputController pointer arbitration", () => {
   function createController(host: WebGLInputControllerHost) {
     const canvas = document.createElement("canvas");
     const config = {
-      pinch: { step: 5 },
+      pinch: {},
       panning: {},
       doubleClick: { step: 0.7, mode: "toggle", animationTime: 200 },
       wheel: { step: 0.2 },

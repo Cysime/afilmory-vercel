@@ -153,8 +153,6 @@ export default defineConfig({
         "**/types.ts",
         "**/types/**",
         "packages/builder/src/plugins/types.ts",
-        // 仅做 re-export 的桶文件，覆盖率无意义
-        "**/index.ts",
         // 配置文件
         "**/*.config.{ts,js,mjs}",
       ],

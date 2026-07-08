@@ -11,7 +11,6 @@ import {
 } from "./model";
 
 const gallerySetting: GallerySetting = {
-  sortBy: "date",
   sortOrder: "desc",
   selectedTags: [],
   selectedCameras: [],
@@ -20,7 +19,6 @@ const gallerySetting: GallerySetting = {
   selectedGeoRegions: [],
   selectedGeoCities: [],
   selectedGeoDistricts: [],
-  columns: "auto",
 };
 
 function t(key: string, options?: Record<string, unknown>): string {

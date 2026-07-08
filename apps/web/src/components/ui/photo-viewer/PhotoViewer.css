@@ -11,12 +11,6 @@
   overflow: visible;
 }
 
-/* Custom navigation button hover effects */
-.swiper-button-prev-custom,
-.swiper-button-next-custom {
-  transition: all 0.2s ease;
-}
-
 /* Ensure proper touch handling */
 .swiper {
   touch-action: pan-x;
@@ -28,13 +22,6 @@
 
 /* Mobile optimizations */
 @media (max-width: 768px) {
-  /* Improve touch targets on mobile */
-  .swiper-button-prev-custom,
-  .swiper-button-next-custom {
-    min-width: 44px;
-    min-height: 44px;
-  }
-
   /* Enable horizontal swiping on mobile */
   .swiper {
     touch-action: pan-x;
@@ -57,26 +44,5 @@
   .exif-panel-mobile {
     /* Add safe area padding for devices with notches */
     padding-bottom: env(safe-area-inset-bottom);
-  }
-
-  /* Improve thumbnail scrolling on mobile */
-  .gallery-thumbnail-container {
-    /* Add momentum scrolling for iOS */
-    -webkit-overflow-scrolling: touch;
-    /* Hide scrollbar on mobile */
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-  }
-
-  .gallery-thumbnail-container::-webkit-scrollbar {
-    display: none;
-  }
-}
-
-/* Improve accessibility */
-@media (prefers-reduced-motion: reduce) {
-  .swiper-button-prev-custom,
-  .swiper-button-next-custom {
-    transition: none;
   }
 }

@@ -84,6 +84,139 @@ describe("applyBuilderConfigInput — unknown keys", () => {
   });
 });
 
+describe("applyBuilderConfigInput — worker section moved to system.processing.worker", () => {
+  const DEPRECATION_WARNING =
+    '[config] Deprecated key "system.observability.performance.worker" — did you mean "system.processing.worker"? The legacy path still works this release.';
+
+  it("merges the canonical processing.worker path into the internal worker location", () => {
+    const config = createDefaultBuilderConfig();
+    const warnings = applyBuilderConfigInput(config, {
+      system: {
+        processing: { worker: { workerCount: 4, useClusterMode: false } },
+      },
+    });
+    expect(warnings).toEqual([]);
+    expect(config.system.observability.performance.worker).toEqual({
+      workerCount: 4,
+      useClusterMode: false,
+      timeout: 30_000,
+      workerConcurrency: 2,
+    });
+    // 内部只有一份 worker 配置：processing 下不残留副本
+    expect("worker" in config.system.processing).toBe(false);
+  });
+
+  it("honors the legacy observability.performance.worker path with a deprecation warning", () => {
+    const config = createDefaultBuilderConfig();
+    const warnings = applyBuilderConfigInput(config, {
+      system: {
+        observability: { performance: { worker: { workerCount: 3 } } },
+      },
+    });
+    expect(warnings).toEqual([DEPRECATION_WARNING]);
+    expect(config.system.observability.performance.worker.workerCount).toBe(3);
+  });
+
+  it("lets the canonical path win when both paths set the same leaf", () => {
+    const config = createDefaultBuilderConfig();
+    const warnings = applyBuilderConfigInput(config, {
+      system: {
+        processing: { worker: { workerCount: 8 } },
+        observability: {
+          performance: { worker: { workerCount: 3, timeout: 5000 } },
+        },
+      },
+    });
+    expect(warnings).toEqual([DEPRECATION_WARNING]);
+    const { worker } = config.system.observability.performance;
+    expect(worker.workerCount).toBe(8);
+    // 只在旧路径给出的叶子照常生效
+    expect(worker.timeout).toBe(5000);
+  });
+
+  it("validates canonical worker leaves with the new path in the error message", () => {
+    expect(() =>
+      applyBuilderConfigInput(
+        createDefaultBuilderConfig(),
+        asInput({
+          system: { processing: { worker: { workerCount: Number.NaN } } },
+        }),
+      ),
+    ).toThrow(
+      '[config] Invalid value for "system.processing.worker.workerCount": expected a finite number, got NaN',
+    );
+  });
+
+  it("throws when processing.worker is not an object", () => {
+    expect(() =>
+      applyBuilderConfigInput(
+        createDefaultBuilderConfig(),
+        asInput({ system: { processing: { worker: "fast" } } }),
+      ),
+    ).toThrow(
+      '[config] Invalid value for "system.processing.worker": expected an object, got "fast"',
+    );
+  });
+
+  it('suggests "worker" for typos under processing', () => {
+    const warnings = applyBuilderConfigInput(
+      createDefaultBuilderConfig(),
+      asInput({ system: { processing: { workr: { workerCount: 4 } } } }),
+    );
+    expect(warnings).toEqual([
+      '[config] Unknown key "system.processing.workr.workerCount" — did you mean "worker"?',
+    ]);
+  });
+
+  it("warns on unknown keys inside the canonical worker section", () => {
+    const warnings = applyBuilderConfigInput(
+      createDefaultBuilderConfig(),
+      asInput({ system: { processing: { worker: { timout: 5000 } } } }),
+    );
+    expect(warnings).toEqual([
+      '[config] Unknown key "system.processing.worker.timout" — did you mean "timeout"?',
+    ]);
+  });
+
+  it("keeps warning about non-worker keys left under the legacy performance section", () => {
+    const warnings = applyBuilderConfigInput(
+      createDefaultBuilderConfig(),
+      asInput({
+        system: {
+          observability: {
+            performance: { worker: { workerCount: 2 }, fps: true },
+          },
+        },
+      }),
+    );
+    expect(warnings).toEqual([
+      DEPRECATION_WARNING,
+      '[config] Unknown key "system.observability.performance.fps"',
+    ]);
+  });
+
+  it("treats processing.worker: null as unset and does not mutate the caller's input", () => {
+    const config = createDefaultBuilderConfig();
+    const input = asInput({
+      system: {
+        processing: { worker: null },
+        observability: { performance: { worker: { workerCount: 5 } } },
+      },
+    });
+    const warnings = applyBuilderConfigInput(config, input);
+    expect(warnings).toEqual([DEPRECATION_WARNING]);
+    // null 叶子不覆盖；旧路径的值照常生效
+    expect(config.system.observability.performance.worker.workerCount).toBe(5);
+    // shim 不得改写调用方的输入对象
+    expect(input).toEqual({
+      system: {
+        processing: { worker: null },
+        observability: { performance: { worker: { workerCount: 5 } } },
+      },
+    });
+  });
+});
+
 describe("applyBuilderConfigInput — shape validation", () => {
   it("throws when a numeric tunable is not a number", () => {
     expect(() =>

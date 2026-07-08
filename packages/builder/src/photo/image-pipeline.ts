@@ -11,10 +11,10 @@ import {
 } from "../image/processor.js";
 import { SOURCE_SHARP_OPTIONS } from "../image/sharp-options.js";
 import { needsUpdate } from "../manifest/manager.js";
+import type { ThumbnailPluginData } from "../plugins/thumbnail-storage/shared.js";
 import { THUMBNAIL_PLUGIN_DATA_KEY } from "../plugins/thumbnail-storage/shared.js";
 import type { BuilderOptions } from "../types/options.js";
 import type { PhotoManifestItem, ProcessPhotoResult } from "../types/photo.js";
-import { shouldProcessPhoto } from "./cache-manager.js";
 import {
   processExifData,
   processThumbnailAndThumbHash,
@@ -25,6 +25,7 @@ import { detectGainMap } from "./gainmap-detector.js";
 import { extractPhotoInfo } from "./info-extractor.js";
 import { processLivePhoto } from "./live-photo-handler.js";
 import { detectMotionPhoto } from "./motion-photo-detector.js";
+import { shouldProcessPhoto } from "./work-decision.js";
 
 export interface ProcessedImageData {
   sharpInstance: sharp.Sharp;
@@ -45,7 +46,7 @@ async function preprocessImage(
     // 获取图片数据
     const rawImageBuffer = await storageManager.getFile(photoKey);
     if (!rawImageBuffer) {
-      loggers.image.error(`无法获取图片数据：${photoKey}`);
+      loggers.image.error(`Failed to fetch image data: ${photoKey}`);
       return null;
     }
 
@@ -54,7 +55,7 @@ async function preprocessImage(
     try {
       imageBuffer = await preprocessImageBuffer(rawImageBuffer, photoKey);
     } catch (error) {
-      loggers.image.error(`预处理图片失败：${photoKey}`, error);
+      loggers.image.error(`Failed to preprocess image: ${photoKey}`, error);
       return null;
     }
 
@@ -63,7 +64,7 @@ async function preprocessImage(
       processedBuffer: imageBuffer,
     };
   } catch (error) {
-    loggers.image.error(`图片预处理失败：${photoKey}`, error);
+    loggers.image.error(`Image preprocessing failed: ${photoKey}`, error);
     return null;
   }
 }
@@ -91,7 +92,7 @@ async function processImageWithSharp(
         // Update the image buffer to reflect the new JPEG data from the Sharp instance.
         processedBuffer = await sharpInstance.toBuffer();
       } catch (error) {
-        loggers.image.error(`转换 BMP 失败：${photoKey}`, error);
+        loggers.image.error(`Failed to convert BMP: ${photoKey}`, error);
         return null;
       }
     }
@@ -99,7 +100,7 @@ async function processImageWithSharp(
     // 获取图片元数据（复用 Sharp 实例）
     const metadata = await getImageMetadataWithSharp(sharpInstance);
     if (!metadata) {
-      loggers.image.error(`获取图片元数据失败：${photoKey}`);
+      loggers.image.error(`Failed to read image metadata: ${photoKey}`);
       return null;
     }
 
@@ -109,7 +110,7 @@ async function processImageWithSharp(
       metadata,
     };
   } catch (error) {
-    loggers.image.error(`Sharp 处理失败：${photoKey}`, error);
+    loggers.image.error(`Sharp processing failed: ${photoKey}`, error);
     return null;
   }
 }
@@ -157,7 +158,9 @@ async function executePhotoProcessingPipeline(
     // 缩略图生成失败：将该照片视为处理失败并跳过（会计入 failedCount），
     // 而不是带着空 thumbnailUrl 继续构建一个“成功但损坏”的 manifest 项。
     if (!thumbnailResult) {
-      loggers.image.error(`❌ 缩略图生成失败，跳过照片：${photoKey}`);
+      loggers.image.error(
+        `❌ Thumbnail generation failed, skipping photo: ${photoKey}`,
+      );
       return null;
     }
 
@@ -199,7 +202,7 @@ async function executePhotoProcessingPipeline(
 
     // 检测冲突：不允许同时存在 Motion Photo 和 Live Photo
     if (motionPhotoMetadata?.isMotionPhoto && livePhotoResult.isLivePhoto) {
-      const errorMsg = `❌ 检测到同时存在 Motion Photo (嵌入视频) 和 Live Photo (独立视频文件)：${photoKey}。这是不允许的，请只保留一种格式。`;
+      const errorMsg = `❌ Detected both a Motion Photo (embedded video) and a Live Photo (separate video file): ${photoKey}. This is not allowed, keep only one format.`;
       loggers.image.error(errorMsg);
       throw new Error(errorMsg);
     }
@@ -253,8 +256,8 @@ async function executePhotoProcessingPipeline(
           : livePhotoResult.isLivePhoto
             ? {
                 type: "live-photo",
-                videoUrl: livePhotoResult.livePhotoVideoUrl!,
-                s3Key: livePhotoResult.livePhotoVideoS3Key!,
+                videoUrl: livePhotoResult.livePhotoVideoUrl,
+                s3Key: livePhotoResult.livePhotoVideoS3Key,
               }
             : undefined,
       // HDR 相关字段
@@ -264,10 +267,10 @@ async function executePhotoProcessingPipeline(
         hasGainMap,
     };
 
-    loggers.image.success(`✅ 处理完成：${photoKey}`);
+    loggers.image.success(`✅ Processing complete: ${photoKey}`);
     return photoItem;
   } catch (error) {
-    loggers.image.error(`❌ 处理管道失败：${photoKey}`, error);
+    loggers.image.error(`❌ Processing pipeline failed: ${photoKey}`, error);
     return null;
   }
 }
@@ -302,7 +305,7 @@ export async function processPhotoWithPipeline(
   );
 
   if (!shouldProcess) {
-    loggers.image.info(`⏭️ 跳过处理 (${reason}): ${photoKey}`);
+    loggers.image.info(`⏭️ Skipping (${reason}): ${photoKey}`);
     const result = {
       item: existingItem ?? null,
       type: "skipped" as const,
@@ -319,9 +322,9 @@ export async function processPhotoWithPipeline(
   // 记录处理原因
   const isNewPhoto = !existingItem;
   if (isNewPhoto) {
-    loggers.image.info(`🆕 新照片：${photoKey}`);
+    loggers.image.info(`🆕 New photo: ${photoKey}`);
   } else {
-    loggers.image.info(`🔄 更新照片 (${reason})：${photoKey}`);
+    loggers.image.info(`🔄 Updating photo (${reason}): ${photoKey}`);
   }
 
   let processedItem: PhotoManifestItem | null = null;
@@ -338,7 +341,7 @@ export async function processPhotoWithPipeline(
       context,
       error,
     });
-    loggers.image.error(`❌ 处理过程中发生异常：${photoKey}`, error);
+    loggers.image.error(`❌ Exception during processing: ${photoKey}`, error);
     processedItem = null;
     resultType = "failed";
   }
@@ -354,6 +357,18 @@ export async function processPhotoWithPipeline(
     context,
     result,
   });
+
+  // afterPhotoProcess 是缩略图 buffer 的最后消费者（thumbnail-storage 在钩子里
+  // 上传）。钩子返回后立刻断开引用，让每张几十上百 KB 的 JPEG 即刻可回收：
+  // 否则主进程会为整个构建期攒下全部缩略图，cluster 模式还要把 buffer 走一遍
+  // IPC v8 序列化。就地置 null（而非换新对象），持有旧条目引用的一方也随之释放；
+  // 两种模式对 beforeAddManifestItem 呈现同样的无 buffer 载荷。
+  const thumbnailData = context.pluginData[THUMBNAIL_PLUGIN_DATA_KEY] as
+    | ThumbnailPluginData
+    | undefined;
+  if (thumbnailData) {
+    thumbnailData.buffer = null;
+  }
 
   return result;
 }

@@ -12,7 +12,7 @@ export function extractPhotoInfo(
   const log = getPhotoProcessingLoggers().image;
   const { normalizeStorageKey } = getPhotoExecutionContext();
 
-  log.info(`提取照片信息：${key}`);
+  log.info(`Extracting photo info: ${key}`);
 
   const sanitizedKey = key.replaceAll("\\", "/");
   const relativeKey = normalizeStorageKey(sanitizedKey);
@@ -41,7 +41,7 @@ export function extractPhotoInfo(
     tags = pathParts.map((part) => part.trim());
 
     if (tags.length > 0) {
-      log.info(`从路径提取标签：[${tags.join(", ")}]`);
+      log.info(`Extracted tags from path: [${tags.join(", ")}]`);
     }
   }
 
@@ -52,7 +52,7 @@ export function extractPhotoInfo(
     const candidate = new Date(exifData.DateTimeOriginal);
     if (Number.isNaN(candidate.getTime())) {
       log?.warn(
-        `无效的 EXIF DateTimeOriginal，回退到文件名/默认：${String(
+        `Invalid EXIF DateTimeOriginal, falling back to filename/default: ${String(
           exifData.DateTimeOriginal,
         )}`,
       );
@@ -63,17 +63,17 @@ export function extractPhotoInfo(
 
   if (resolvedDate) {
     dateTaken = resolvedDate.toISOString();
-    log.info("使用 EXIF 拍摄时间");
+    log.info("Using EXIF capture time");
   } else {
     // 如果 EXIF 中没有有效日期，尝试从文件名解析
     const dateMatch = fileName.match(/(\d{4}-\d{2}-\d{2})/);
     if (dateMatch) {
       const fileDate = new Date(dateMatch[1]);
       if (Number.isNaN(fileDate.getTime())) {
-        log?.warn(`文件名中的日期无效：${dateMatch[1]}`);
+        log?.warn(`Invalid date in filename: ${dateMatch[1]}`);
       } else {
         dateTaken = fileDate.toISOString();
-        log.info(`从文件名提取拍摄时间：${dateMatch[1]}`);
+        log.info(`Extracted capture time from filename: ${dateMatch[1]}`);
       }
     }
   }
@@ -82,7 +82,7 @@ export function extractPhotoInfo(
   const viewsMatch = fileName.match(/(\d+)views?/i);
   if (viewsMatch) {
     views = Number.parseInt(viewsMatch[1]);
-    log.info(`从文件名提取浏览次数：${views}`);
+    log.info(`Extracted view count from filename: ${views}`);
   }
 
   // 从文件名中提取标题（移除日期和浏览次数）
@@ -97,7 +97,7 @@ export function extractPhotoInfo(
     title = path.posix.basename(keyForParsing, extname);
   }
 
-  log.info(`照片信息提取完成："${title}"`);
+  log.info(`Photo info extraction complete: "${title}"`);
 
   return {
     title,

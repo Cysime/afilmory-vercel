@@ -2,11 +2,13 @@ import type { StorageManager } from "../storage/index.js";
 import type { StorageObject } from "../storage/interfaces.js";
 import { getPhotoProcessingLoggers } from "./logger-adapter.js";
 
-export interface LivePhotoResult {
-  isLivePhoto: boolean;
-  livePhotoVideoUrl?: string;
-  livePhotoVideoS3Key?: string;
-}
+export type LivePhotoResult =
+  | { isLivePhoto: false }
+  | {
+      isLivePhoto: true;
+      livePhotoVideoUrl: string;
+      livePhotoVideoS3Key: string;
+    };
 
 /**
  * 检测并处理 Live Photo
@@ -35,7 +37,7 @@ export async function processLivePhoto(
 
   const livePhotoVideoUrl = await storageManager.generatePublicUrl(videoKey);
 
-  loggers.image.info(`📱 检测到 Live Photo：${photoKey} -> ${videoKey}`);
+  loggers.image.info(`📱 Detected Live Photo: ${photoKey} -> ${videoKey}`);
 
   return {
     isLivePhoto: true,

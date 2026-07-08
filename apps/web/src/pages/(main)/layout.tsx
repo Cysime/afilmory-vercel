@@ -2,23 +2,17 @@ import { ScrollArea, ScrollElementContext } from "@afilmory/ui";
 import { Outlet } from "react-router";
 
 import { siteConfig } from "~/config";
-import { useGalleryUrlSync } from "~/hooks/useGalleryUrlSync";
 import { useMobile } from "~/hooks/useMobile";
-import {
-  usePhotos,
-  usePhotoViewer,
-  usePhotoViewerBodyScrollLock,
-} from "~/hooks/usePhotoViewer";
+import { useIsPhotoViewerOpen, usePhotos } from "~/hooks/usePhotoViewer";
 import { MasonryRoot } from "~/modules/gallery/MasonryRoot";
+import { GalleryStateSync } from "~/providers/gallery-state-sync";
 import { PhotosProvider } from "~/providers/photos-provider";
 
 export const Component = () => {
-  usePhotoViewerBodyScrollLock();
-  // URL <-> 图库状态双向同步（详见 useGalleryUrlSync）
-  useGalleryUrlSync();
-
   const isMobile = useMobile();
-  const { isOpen: isPhotoViewerOpen } = usePhotoViewer();
+  // 只订阅开/关：滑动换图与 URL 同步都收敛在 GalleryStateSync（null 子组件）里，
+  // 这里不再消费 router hooks / usePhotoViewer 的其余原子，避免整树重渲染。
+  const isPhotoViewerOpen = useIsPhotoViewerOpen();
   const galleryHiddenClassName = isPhotoViewerOpen
     ? "pointer-events-none invisible"
     : undefined;
@@ -29,6 +23,7 @@ export const Component = () => {
 
   return (
     <>
+      <GalleryStateSync />
       <PhotosProvider photos={photos}>
         {siteConfig.accentColor && (
           <style>{`

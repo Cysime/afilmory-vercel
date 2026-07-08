@@ -26,7 +26,7 @@ export class DiffPlanner {
     const collisionKeys = session.getPhotoIdCollisionKeys();
     if (collisionKeys.size > 0) {
       logger.main.warn(
-        `检测到 ${collisionKeys.size} 张跨目录同名照片，将为这些照片 ID 添加路径摘要后缀以避免冲突`,
+        `Detected ${collisionKeys.size} photos with the same name across directories; adding a path digest suffix to their IDs to avoid collisions`,
       );
     }
 
@@ -47,7 +47,7 @@ export class DiffPlanner {
     });
 
     logger.main.info(
-      `存储中找到 ${imageObjects.length} 张照片，实际需要处理 ${tasksToProcess.length} 张`,
+      `Found ${imageObjects.length} photos in storage; ${tasksToProcess.length} need processing`,
     );
 
     return {
@@ -100,7 +100,9 @@ export class DiffPlanner {
     const sorted = [...tasks].sort((a, b) => (b.size ?? 0) - (a.size ?? 0));
 
     if (beforeFirst !== sorted[0]?.key) {
-      logger.main.info("已按文件大小降序重排处理队列");
+      logger.main.info(
+        "Reordered the processing queue by file size (largest first)",
+      );
     }
 
     return sorted;

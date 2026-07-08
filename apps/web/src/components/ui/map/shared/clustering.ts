@@ -130,10 +130,32 @@ const createClusterPoint = (
   };
 };
 
-const clusterPoints = (features: PointFeature[], zoom: number) => {
-  if (features.length === 0) return [];
+// Supercluster is built to be loaded once and queried per zoom: index
+// construction is O(n log n) while a query is cheap. Callers should build the
+// index when the underlying markers/regions change and re-query on zoom.
+export type ClusterIndex = Supercluster<
+  PointProperties,
+  ClusterProperties
+> | null;
 
-  const index = createIndex(features);
+export function createMarkerClusterIndex(markers: PhotoMarker[]): ClusterIndex {
+  return markers.length > 0 ? createIndex(markers.map(createPhotoPoint)) : null;
+}
+
+export function createRegionClusterIndex(
+  regions: GeographicRegion[],
+): ClusterIndex {
+  return regions.length > 0
+    ? createIndex(regions.map(createRegionPoint))
+    : null;
+}
+
+export function getClusterPoints(
+  index: ClusterIndex,
+  zoom: number,
+): ClusterPoint[] {
+  if (!index) return [];
+
   const clusterZoom = Math.max(
     0,
     Math.min(CLUSTER_MAX_ZOOM + 1, Math.floor(zoom)),
@@ -146,18 +168,4 @@ const clusterPoints = (features: PointFeature[], zoom: number) => {
 
     return createSinglePoint(feature);
   });
-};
-
-export function clusterMarkers(
-  markers: PhotoMarker[],
-  zoom: number,
-): ClusterPoint[] {
-  return clusterPoints(markers.map(createPhotoPoint), zoom);
-}
-
-export function clusterRegions(
-  regions: GeographicRegion[],
-  zoom: number,
-): ClusterPoint[] {
-  return clusterPoints(regions.map(createRegionPoint), zoom);
 }

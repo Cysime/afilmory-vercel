@@ -16,9 +16,3 @@ export interface ProcessPhotoResult {
   type: "processed" | "skipped" | "new" | "failed";
   pluginData?: Record<string, unknown>;
 }
-
-export interface ThumbnailResult {
-  thumbnailUrl: string | null;
-  thumbnailBuffer: Buffer | null;
-  thumbHash: Uint8Array | null;
-}

@@ -23,12 +23,13 @@ import {
 } from "./map-view-state";
 import {
   ClusterMarker,
-  clusterMarkers,
-  clusterRegions,
+  createMarkerClusterIndex,
+  createRegionClusterIndex,
   DEFAULT_MARKERS,
   DEFAULT_STYLE,
   DEFAULT_VIEW_STATE,
   GeoJsonLayer,
+  getClusterPoints,
   MapControls,
   PhotoMarkerPin,
   RegionMarkerPin,
@@ -189,13 +190,20 @@ export const Maplibre = ({
     setCurrentZoom(initialViewState.zoom);
   }, [initialViewState, autoFitBounds, syncViewStateOnInitialViewStateChange]);
 
-  // Clustered markers
-  const clusteredMarkers = useMemo(
+  // Clustered markers: build the Supercluster index only when the data
+  // changes, and re-query only when the integer zoom level changes — onMove
+  // updates currentZoom fractionally on every frame during a pinch/scroll.
+  const clusterIndex = useMemo(
     () =>
       displayMode === "regions"
-        ? clusterRegions(regions, currentZoom)
-        : clusterMarkers(markers, currentZoom),
-    [displayMode, regions, markers, currentZoom],
+        ? createRegionClusterIndex(regions)
+        : createMarkerClusterIndex(markers),
+    [displayMode, regions, markers],
+  );
+  const flooredZoom = Math.floor(currentZoom);
+  const clusteredMarkers = useMemo(
+    () => getClusterPoints(clusterIndex, flooredZoom),
+    [clusterIndex, flooredZoom],
   );
 
   useEffect(() => {

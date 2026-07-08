@@ -3,9 +3,9 @@ import path from "node:path";
 
 import sharp from "sharp";
 
+import type { ThumbnailResult } from "../photo/data-processors.js";
 import { getPhotoExecutionContext } from "../photo/execution-context.js";
 import { getPhotoProcessingLoggers } from "../photo/logger-adapter.js";
-import type { ThumbnailResult } from "../types/photo.js";
 import { writeFileAtomic } from "../utils/atomic-write.js";
 import { SOURCE_SHARP_OPTIONS } from "./sharp-options.js";
 import { generateThumbHash } from "./thumbhash.js";
@@ -69,15 +69,6 @@ export function getThumbnailPublicUrl(photoId: string): string {
   return `/thumbnails/${encodeURIComponent(`${photoId}.jpg`)}`;
 }
 
-// 创建失败结果
-function createFailureResult(): ThumbnailResult {
-  return {
-    thumbnailUrl: null,
-    thumbnailBuffer: null,
-    thumbHash: null,
-  };
-}
-
 // 创建成功结果
 function createSuccessResult(
   thumbnailUrl: string,
@@ -120,7 +111,7 @@ async function processExistingThumbnail(
   const { thumbnailPath, thumbnailUrl } = getThumbnailPaths(photoId);
 
   const thumbnailLog = getPhotoProcessingLoggers().thumbnail;
-  thumbnailLog.info(`复用现有缩略图：${photoId}`);
+  thumbnailLog.info(`Reusing existing thumbnail: ${photoId}`);
 
   try {
     const existingBuffer = await fs.readFile(thumbnailPath);
@@ -128,20 +119,23 @@ async function processExistingThumbnail(
 
     return createSuccessResult(thumbnailUrl, existingBuffer, thumbHash);
   } catch (error) {
-    thumbnailLog?.warn(`读取现有缩略图失败，重新生成：${photoId}`, error);
+    thumbnailLog?.warn(
+      `Failed to read existing thumbnail, regenerating: ${photoId}`,
+      error,
+    );
     return null;
   }
 }
 
-// 生成新的缩略图
+// 生成新的缩略图（失败返回 null）
 async function generateNewThumbnail(
   imageBuffer: Buffer,
   photoId: string,
-): Promise<ThumbnailResult> {
+): Promise<ThumbnailResult | null> {
   const { thumbnailPath, thumbnailUrl } = getThumbnailPaths(photoId);
 
   const log = getPhotoProcessingLoggers().thumbnail;
-  log.info(`生成缩略图：${photoId}`);
+  log.info(`Generating thumbnail: ${photoId}`);
   const startTime = Date.now();
 
   try {
@@ -164,24 +158,25 @@ async function generateNewThumbnail(
     // 记录生成信息
     const duration = Date.now() - startTime;
     const sizeKB = Math.round(thumbnailBuffer.length / 1024);
-    log.success(`生成完成：${photoId} (${sizeKB}KB, ${duration}ms)`);
+    log.success(`Generated: ${photoId} (${sizeKB}KB, ${duration}ms)`);
 
     // 基于生成的缩略图生成 thumbhash
     const thumbHash = await generateThumbHash(thumbnailBuffer);
 
     return createSuccessResult(thumbnailUrl, thumbnailBuffer, thumbHash);
   } catch (error) {
-    log.error(`生成失败：${photoId}`, error);
-    return createFailureResult();
+    log.error(`Generation failed: ${photoId}`, error);
+    return null;
   }
 }
 
-// 生成缩略图和 thumbhash（复用 Sharp 实例）
+// 生成缩略图和 thumbhash（复用 Sharp 实例）。失败返回 null——
+// 这是唯一的失败编码，调用方据此把整张照片标记为失败并跳过。
 export async function generateThumbnailAndThumbHash(
   imageBuffer: Buffer,
   photoId: string,
   forceRegenerate = false,
-): Promise<ThumbnailResult> {
+): Promise<ThumbnailResult | null> {
   const thumbnailLog = getPhotoProcessingLoggers().thumbnail;
 
   try {
@@ -206,7 +201,7 @@ export async function generateThumbnailAndThumbHash(
     // 生成新的缩略图
     return await generateNewThumbnail(imageBuffer, photoId);
   } catch (error) {
-    thumbnailLog.error(`处理失败：${photoId}`, error);
-    return createFailureResult();
+    thumbnailLog.error(`Processing failed: ${photoId}`, error);
+    return null;
   }
 }

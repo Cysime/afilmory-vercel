@@ -21,10 +21,9 @@ export interface ProcessingStats {
   failedCount: number;
 }
 
+// processorOptions/mode/concurrency 不在返回值里：它们已经通过
+// beforeProcessTasks 插件事件与 progressListener.onStart 载荷对外发布。
 export interface PhotoTaskProcessingResult {
-  processorOptions: PhotoProcessorOptions;
-  mode: "cluster" | "worker";
-  concurrency: number;
   results: ProcessPhotoResult[];
   stats: ProcessingStats;
 }
@@ -94,7 +93,7 @@ export class PhotoTaskProcessor {
     emitProgress();
 
     session.services.logger.main.info(
-      `开始${shouldUseCluster ? "多进程" : "并发"}处理任务，${shouldUseCluster ? "进程" : "Worker"}数：${concurrency}${shouldUseCluster ? `，每进程并发：${session.config.system.observability.performance.worker.workerConcurrency}` : ""}`,
+      `Starting ${shouldUseCluster ? "multi-process" : "concurrent"} task processing, ${shouldUseCluster ? "processes" : "workers"}: ${concurrency}${shouldUseCluster ? `, concurrency per process: ${session.config.system.observability.performance.worker.workerConcurrency}` : ""}`,
     );
 
     const results = shouldUseCluster
@@ -124,9 +123,6 @@ export class PhotoTaskProcessor {
     });
 
     return {
-      processorOptions,
-      mode,
-      concurrency,
       results,
       stats,
     };
@@ -150,6 +146,9 @@ export class PhotoTaskProcessor {
     ) => void,
     concurrency: number,
   ): Promise<ProcessPhotoResult[]> {
+    // 进度回调是函数，进 IPC 会让 worker.send() 抛 DataCloneError；
+    // 进度已由主进程的 onTaskCompleted 汇聚，传给 worker 前剥离。
+    const { progressListener, ...builderOptions } = session.options;
     const clusterPool = new ClusterPool<ProcessPhotoResult>({
       concurrency,
       totalTasks: tasksToProcess.length,
@@ -164,7 +163,7 @@ export class PhotoTaskProcessor {
         builderConfig: createSerializableBuilderConfigForWorker(
           session.getConfig(),
         ),
-        builderOptions: session.options,
+        builderOptions,
         photoIdCollisionKeys: Array.from(session.getPhotoIdCollisionKeys()),
       },
       onTaskCompleted,

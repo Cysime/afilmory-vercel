@@ -65,6 +65,8 @@ describe("Masonry (pure-computed virtual masonry)", () => {
 
     const metrics = capturedRef?.current?.getLayoutMetrics();
     expect(metrics?.columnWidth).toBe(100);
+    // 布局列宽（estimatePhotoVirtualRect 复算 left 用）：容器宽未知时回退目标列宽。
+    expect(metrics?.layoutColumnWidth).toBe(100);
     expect(metrics?.columnCount).toBe(1);
     expect(metrics?.rowGutter).toBe(6);
   });

@@ -7,6 +7,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import type { BuildProgressListener } from "./builder/builder.js";
+import { shouldWriteThumbnailEncodingMarker } from "./builder/builder.js";
 import { AfilmoryBuilder } from "./builder/index.js";
 import { loadBuilderConfig } from "./config/index.js";
 import { ExifService } from "./image/exif.js";
@@ -42,27 +43,27 @@ async function main() {
   // 第一条命令往往就是 --help，不能让它因缺失 storage 配置而崩栈。
   if (args.has("--help") || args.has("-h")) {
     logger.main.info(`
-照片库构建工具 (S3 静态站点构建)
+Photo gallery builder (S3 static site build)
 
-用法：tsx packages/builder/src/cli.ts [选项]
+Usage: tsx packages/builder/src/cli.ts [options]
 
-选项：
-  --force              强制重新处理所有照片
-  --force-manifest     强制重新生成 manifest
-  --force-thumbnails   强制重新生成缩略图
-  --config             显示当前配置信息
-  --help, -h          显示帮助信息
-  --no-ui             使用传统日志输出（禁用 TUI）
+Options:
+  --force              Force reprocessing of all photos
+  --force-manifest     Force regeneration of the manifest
+  --force-thumbnails   Force regeneration of thumbnails
+  --config             Show the current configuration
+  --help, -h          Show this help
+  --no-ui             Use plain log output (disable the TUI)
 
-示例：
-  tsx packages/builder/src/cli.ts                           # 增量更新
-  tsx packages/builder/src/cli.ts --force                   # 全量更新
-  tsx packages/builder/src/cli.ts --force-thumbnails        # 强制重新生成缩略图
-  tsx packages/builder/src/cli.ts --config                  # 显示配置信息
+Examples:
+  tsx packages/builder/src/cli.ts                           # incremental update
+  tsx packages/builder/src/cli.ts --force                   # full rebuild
+  tsx packages/builder/src/cli.ts --force-thumbnails        # force-regenerate thumbnails
+  tsx packages/builder/src/cli.ts --config                  # show configuration
 
-配置：
-  在 builder.config.ts 中设置 performance.worker.useClusterMode = true
-  可启用多进程集群模式，发挥多核心优势。
+Configuration:
+  Set system.processing.worker.useClusterMode = true in builder.config.ts
+  to enable cluster mode and take advantage of multiple CPU cores.
 `);
     return;
   }
@@ -86,36 +87,38 @@ async function main() {
       // loadBuilderConfig 在缺失 storage 时已抛错，此分支仅为类型收窄。
       throw new Error("unreachable: storage missing after loadBuilderConfig");
     }
-    logger.main.info("🔧 当前配置：");
-    logger.main.info(`   存储提供商：${storage.provider}`);
+    logger.main.info("🔧 Current config:");
+    logger.main.info(`   Storage provider: ${storage.provider}`);
 
     switch (storage.provider) {
       case "s3": {
-        logger.main.info(`   存储桶：${storage.bucket}`);
-        logger.main.info(`   区域：${storage.region || "未设置"}`);
-        logger.main.info(`   端点：${storage.endpoint || "默认"}`);
-        logger.main.info(`   自定义域名：${storage.customDomain || "未设置"}`);
-        logger.main.info(`   前缀：${storage.prefix || "无"}`);
+        logger.main.info(`   Bucket: ${storage.bucket}`);
+        logger.main.info(`   Region: ${storage.region || "not set"}`);
+        logger.main.info(`   Endpoint: ${storage.endpoint || "default"}`);
+        logger.main.info(
+          `   Custom domain: ${storage.customDomain || "not set"}`,
+        );
+        logger.main.info(`   Prefix: ${storage.prefix || "none"}`);
         break;
       }
     }
     logger.main.info(
-      `   默认并发数：${config.system.processing.defaultConcurrency}`,
+      `   Default concurrency: ${config.system.processing.defaultConcurrency}`,
     );
     logger.main.info(
-      `   Live Photo 检测：${config.system.processing.enableLivePhotoDetection ? "启用" : "禁用"}`,
+      `   Live Photo detection: ${config.system.processing.enableLivePhotoDetection ? "enabled" : "disabled"}`,
     );
     logger.main.info(
-      `   照片后缀摘要长度：${config.system.processing.digestSuffixLength}`,
+      `   Photo suffix digest length: ${config.system.processing.digestSuffixLength}`,
     );
     logger.main.info(
-      `   Worker 数：${config.system.observability.performance.worker.workerCount}`,
+      `   Worker count: ${config.system.observability.performance.worker.workerCount}`,
     );
     logger.main.info(
-      `   Worker 超时：${config.system.observability.performance.worker.timeout}ms`,
+      `   Worker timeout: ${config.system.observability.performance.worker.timeout}ms`,
     );
     logger.main.info(
-      `   集群模式：${config.system.observability.performance.worker.useClusterMode ? "启用" : "禁用"}`,
+      `   Cluster mode: ${config.system.observability.performance.worker.useClusterMode ? "enabled" : "disabled"}`,
     );
     logger.main.info("");
     cliBuilder.dispose();
@@ -133,20 +136,20 @@ async function main() {
   ) {
     isForceThumbnails = true;
     logger.main.info(
-      `🧾 缩略图编码参数标记不匹配（当前：${THUMBNAIL_ENCODING_SIGNATURE}），本次强制重新生成全部缩略图`,
+      `🧾 Thumbnail encoding signature marker mismatch (current: ${THUMBNAIL_ENCODING_SIGNATURE}); force-regenerating all thumbnails this run`,
     );
   }
 
   // 确定运行模式
-  let runMode = "增量更新";
+  let runMode = "incremental update";
   if (isForceMode) {
-    runMode = "全量更新";
+    runMode = "full rebuild";
   } else if (isForceManifest && isForceThumbnails) {
-    runMode = "强制刷新 manifest 和缩略图";
+    runMode = "force refresh manifest and thumbnails";
   } else if (isForceManifest) {
-    runMode = "强制刷新 manifest";
+    runMode = "force refresh manifest";
   } else if (isForceThumbnails) {
-    runMode = "强制刷新缩略图";
+    runMode = "force refresh thumbnails";
   }
 
   const config = cliBuilder.getConfig();
@@ -156,8 +159,8 @@ async function main() {
     concurrencyLimit ?? config.system.processing.defaultConcurrency;
   const processingMode = config.system.observability.performance.worker
     .useClusterMode
-    ? "多进程集群"
-    : "单进程并发池";
+    ? "multi-process cluster"
+    : "single-process concurrency pool";
   const processingModeKey = config.system.observability.performance.worker
     .useClusterMode
     ? "cluster"
@@ -182,10 +185,9 @@ async function main() {
     });
   }
 
-  logger.main.info(`🚀 运行模式：${runMode}`);
-  logger.main.info(`⚡ 最大并发数：${finalConcurrency}`);
-  logger.main.info(`🔧 处理模式：${processingMode}`);
-  logger.main.info(`🏗️ 使用构建器：AfilmoryBuilder (适配器模式)`);
+  logger.main.info(`🚀 Run mode: ${runMode}`);
+  logger.main.info(`⚡ Max concurrency: ${finalConcurrency}`);
+  logger.main.info(`🔧 Processing mode: ${processingMode}`);
 
   environmentCheck();
 
@@ -202,14 +204,18 @@ async function main() {
 
     buildResult = result;
     // 构建成功即落盘签名标记（会随 artifact-cache 同步）；中途异常不写。
-    // 强制重生成的运行中若有照片失败也不写：磁盘上还残留旧参数的缩略图，
-    // 带上新标记会让下次增量构建把它们当作已达标，旧参数产物永远无法收敛。
+    // 零照片构建与强制重生成中有照片失败的运行也不写，
+    // 原因见 shouldWriteThumbnailEncodingMarker 的注释。
     const wasThumbnailForce = isForceMode || isForceThumbnails;
-    if (!wasThumbnailForce || result.failedCount === 0) {
+    if (shouldWriteThumbnailEncodingMarker(result, wasThumbnailForce)) {
       await writeThumbnailEncodingMarker(thumbnailsDir);
-    } else {
+    } else if (wasThumbnailForce && result.failedCount > 0) {
       logger.main.warn(
-        "⚠️ 本次强制重生成存在失败照片，保留旧编码标记；下次构建将继续强制重生成，直到全部成功。",
+        "⚠️ Some photos failed during this force-regeneration; keeping the previous encoding marker. The next build will keep force-regenerating until all succeed.",
+      );
+    } else {
+      logger.main.info(
+        "Skipping the thumbnail encoding marker: this build evaluated zero photos.",
       );
     }
     tui?.markSuccess(result);
@@ -230,11 +236,11 @@ async function main() {
   let exitCode = 0;
   if (buildResult && buildResult.failedCount > 0) {
     logger.main.warn(
-      `⚠️ 有 ${buildResult.failedCount} 张照片处理失败，已从 manifest 中跳过（未写入空字段）。请检查上方失败日志。`,
+      `⚠️ ${buildResult.failedCount} photo(s) failed to process. New photos that failed are omitted from the manifest; photos that failed while being reprocessed keep their previous manifest entry (which may now be stale). Check the failure logs above.`,
     );
     if (process.env.BUILDER_FAIL_ON_PHOTO_ERROR === "true") {
       logger.main.error(
-        "BUILDER_FAIL_ON_PHOTO_ERROR=true，构建以非零状态码退出。",
+        "BUILDER_FAIL_ON_PHOTO_ERROR=true; exiting the build with a non-zero status code.",
       );
       exitCode = 1;
     }
@@ -247,18 +253,17 @@ async function main() {
 
 // 运行主函数
 main().catch((error) => {
-  logger.main.error("构建失败：", error);
+  logger.main.error("Build failed:", error);
   throw error;
 });
 
 function environmentCheck() {
   try {
     execSync("perl -v", { stdio: "ignore" });
-
-    logger.main.info("Perl 已安装");
-  } catch (err) {
-    console.error(err);
-    logger.main.error("Perl 未安装，请安装 Perl 并重新运行");
+  } catch {
+    logger.main.error(
+      "exiftool requires Perl. Install it (e.g. `brew install perl` / `apt install perl`) and re-run.",
+    );
     // eslint-disable-next-line unicorn/no-process-exit
     process.exit(1);
   }

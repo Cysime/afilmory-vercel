@@ -68,6 +68,15 @@ How the dev story fits together:
 
 The manifest `source` field records local runs faithfully as `{ provider: "local", basePath, baseUrl }` — `@afilmory/schema`'s `ManifestSource` models `s3`/`local`/`unknown`, and its normalizer preserves the `local` variant on reload.
 
+## Operational environment variables
+
+These environment variables tune a build run without editing `builder.config.ts`. All are optional.
+
+- `BUILDER_WORKER_COUNT` — number of builder workers (positive integer). Defaults to CPU cores x 2. Lower it when local bandwidth is limited: with each worker downloading 2 files concurrently, the default can push large S3 downloads past their timeout.
+- `BUILDER_USE_CLUSTER_MODE` — `true` (default) runs the multi-process cluster pool; set it to `false` to fall back to a single-process concurrency pool when the current Node environment cannot clone plugin hooks into workers.
+- `BUILDER_FAIL_ON_PHOTO_ERROR` — `false` by default, so the build still publishes the remaining photos when some fail. Set it to `true` for strict mode: any photo failure exits the build with a non-zero status code.
+- `THUMBNAIL_STORAGE_CLEANUP` — controls remote thumbnail orphan cleanup. Defaults to a dry-run that only reports orphaned thumbnails; set it to `true` to actually delete them from remote storage.
+
 ## CLI Usage
 
 From the repository root:

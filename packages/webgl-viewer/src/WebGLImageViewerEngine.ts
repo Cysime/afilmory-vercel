@@ -128,6 +128,7 @@ export class WebGLImageViewerEngine {
         translateY: this.translateY,
       }),
       getSelectedLodLevel: () => this.selectOptimalLOD(),
+      isLodCoveredByBase: (lodLevel) => this.isLodCoveredByBase(lodLevel),
       createTexture: (source) => this.createWebGLTexture(source),
       deleteTexture: (texture) => this.gl.deleteTexture(texture),
       requestRender: () => this.render(),
@@ -140,6 +141,10 @@ export class WebGLImageViewerEngine {
         this.workerBridge?.createTile(request);
       },
       onVisibleLodReady: (lodLevel) => this.handleVisibleLodReady(lodLevel),
+      // 回到底图覆盖区间：质量应反映常驻底图（textureManager.currentLOD），否则
+      // 从放大态缩回 fit 时 currentQuality 会滞留在瓦片态的偏高值。
+      onCoveredByBase: () =>
+        this.handleVisibleLodReady(this.textureManager.currentLOD),
     });
 
     this.boundResizeCanvas = () => this.resizeCanvas();
@@ -257,9 +262,17 @@ export class WebGLImageViewerEngine {
   }
 
   private handleWorkerMessage(e: MessageEvent<TextureWorkerMessage>) {
-    if (this.isDestroyed) return;
-
     const message = e.data;
+
+    if (this.isDestroyed) {
+      // destroy() 已 terminate worker，但已入队的消息这一拍仍会送达。转移来的
+      // ImageBitmap（0.5x 底图可达 ~45MB）必须立即 close，不能等 GC——与
+      // texture.worker.js 里写明的 iOS 内存纪律同一条。
+      if (message.type === "image-loaded" || message.type === "tile-created") {
+        message.payload.imageBitmap.close();
+      }
+      return;
+    }
 
     // 瓦片相关消息（tile-created / tile-error）由瓦片子系统消化
     if (this.tileManager.handleWorkerMessage(message)) {
@@ -330,6 +343,13 @@ export class WebGLImageViewerEngine {
     }
   }
 
+  /**
+   * 一个引擎实例只服务一张图：换图由 React 包装层整引擎重建（per-src
+   * useEffect），因此对不同 URL 的再次调用直接拒绝——引擎的 imageWidth/
+   * imageHeight 与瓦片键（`x-y-lod`，不含图像身份）都以首图为准，复用会把
+   * 旧图的几何与瓦片渲染进新图。同一 URL 允许重复调用：上下文恢复路径会对
+   * originalImageSrc 重新发起加载，此时仍挂起的旧 promise 以 superseded 拒绝。
+   */
   async loadImage(
     url: string,
     preknownWidth?: number,
@@ -338,6 +358,11 @@ export class WebGLImageViewerEngine {
   ) {
     if (this.isDestroyed) {
       throw new Error("WebGL image viewer has been destroyed");
+    }
+    if (this.originalImageSrc && this.originalImageSrc !== url) {
+      throw new Error(
+        "WebGLImageViewerEngine renders a single image; create a new engine to load a different URL",
+      );
     }
 
     this.hasNotifiedImagePainted = false;
@@ -406,6 +431,19 @@ export class WebGLImageViewerEngine {
 
     // 如果没有找到，返回最高质量的 LOD
     return SIMPLE_LOD_LEVELS.length - 1;
+  }
+
+  /**
+   * 底图常驻渲染；当某 LOD 的输出分辨率不超过底图实际分辨率（可能被
+   * MAX_TEXTURE_SIZE 钳制过）时，瓦片只是把底图内容重新解码一遍——GPU 内存
+   * 约翻倍、worker 全图切片白做，更低的 LOD 甚至以更糊的瓦片盖住更清晰的
+   * 底图。fit 视图（每张照片的默认状态）恰好落在这一区间，排队与绘制都要
+   * 整段跳过，瓦片系统只在缩放越过底图分辨率后才介入。
+   */
+  private isLodCoveredByBase(lodLevel: number): boolean {
+    if (!this.baseTextureSize || this.imageWidth <= 0) return false;
+    const effectiveBaseScale = this.baseTextureSize.width / this.imageWidth;
+    return SIMPLE_LOD_LEVELS[lodLevel].scale <= effectiveBaseScale;
   }
 
   private startAnimation(
@@ -585,17 +623,20 @@ export class WebGLImageViewerEngine {
       );
     }
 
-    // 渲染可见的瓦片
+    // 渲染可见的瓦片（底图已覆盖该 LOD 分辨率时整段跳过——防抖更新到来前
+    // 可见集里可能还留着这种瓦片，画上去只会用更糊的内容盖住底图）
     const lodLevel = this.selectOptimalLOD();
     const outlinedTileMatrices: Float32Array[] = [];
 
-    for (const {
-      texture,
-      matrix,
-    } of this.tileManager.collectVisibleRenderTiles(lodLevel)) {
-      this.renderer.drawTexturedQuad(texture, matrix);
-      if (this.tileOutlineEnabled) {
-        outlinedTileMatrices.push(matrix);
+    if (!this.isLodCoveredByBase(lodLevel)) {
+      for (const {
+        texture,
+        matrix,
+      } of this.tileManager.collectVisibleRenderTiles(lodLevel)) {
+        this.renderer.drawTexturedQuad(texture, matrix);
+        if (this.tileOutlineEnabled) {
+          outlinedTileMatrices.push(matrix);
+        }
       }
     }
 

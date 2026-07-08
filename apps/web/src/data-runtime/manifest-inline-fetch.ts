@@ -56,4 +56,9 @@ export function startManifestInlineFetch(manifestUrl: string): void {
       })
       .finally(() => win.clearTimeout(timeoutId));
   })();
+  // 无操作 fork：让浏览器把这次 rejection 视为已处理——第一个真正的处理器
+  // 要等 main.tsx 的 bootstrap await 到暂存的 promise 才会挂上，manifest
+  // 请求失败会在那之前先触发 unhandledrejection。消费方 await 的仍是上面
+  // 暂存的原 promise，照常观察到 rejection。
+  manifest.promise.catch(() => {});
 }

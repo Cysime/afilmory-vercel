@@ -8,33 +8,14 @@ export const clsxm = (...args: ClassValue[]) => {
   return twMerge(clsx(args));
 };
 
-// Tremor Raw focusInput [v0.0.1]
-
-export const focusInput = [
-  // base
-  "focus:ring-2",
-  // ring color
-  "focus:ring-blue-200 focus:dark:ring-blue-700/30",
-  // border color
-  "focus:border-blue-500 focus:dark:border-blue-700",
-];
-
-// Tremor Raw focusRing [v0.0.1]
+// Shared focus ring, in the app-wide accent idiom. Box-shadow ring
+// utilities on purpose: the app resets `outline` on :focus-visible
+// globally, so outline-based rings never paint. The offset color matches
+// the (dark) background token, as elsewhere in the app.
 
 export const focusRing = [
   // base
-  "outline outline-offset-2 outline-0 focus-visible:outline-2",
-  // outline color
-  "outline-blue-500 dark:outline-blue-500",
-];
-
-// Tremor Raw hasErrorInput [v0.0.1]
-
-export const hasErrorInput = [
-  // base
-  "ring-2",
-  // border color
-  "border-red-500 dark:border-red-700",
-  // ring color
-  "ring-red-200 dark:ring-red-700/30",
+  "focus-visible:ring-2 focus-visible:ring-offset-2",
+  // ring + offset color
+  "focus-visible:ring-accent/45 focus-visible:ring-offset-background",
 ];
