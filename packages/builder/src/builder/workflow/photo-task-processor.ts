@@ -150,6 +150,9 @@ export class PhotoTaskProcessor {
     ) => void,
     concurrency: number,
   ): Promise<ProcessPhotoResult[]> {
+    // 进度回调是函数，进 IPC 会让 worker.send() 抛 DataCloneError；
+    // 进度已由主进程的 onTaskCompleted 汇聚，传给 worker 前剥离。
+    const { progressListener, ...builderOptions } = session.options;
     const clusterPool = new ClusterPool<ProcessPhotoResult>({
       concurrency,
       totalTasks: tasksToProcess.length,
@@ -164,7 +167,7 @@ export class PhotoTaskProcessor {
         builderConfig: createSerializableBuilderConfigForWorker(
           session.getConfig(),
         ),
-        builderOptions: session.options,
+        builderOptions,
         photoIdCollisionKeys: Array.from(session.getPhotoIdCollisionKeys()),
       },
       onTaskCompleted,

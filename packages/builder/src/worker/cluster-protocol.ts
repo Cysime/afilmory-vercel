@@ -8,7 +8,8 @@ export interface ClusterWorkerSharedData {
   livePhotoMap: Map<string, StorageObject>;
   imageObjects: StorageObject[];
   builderConfig: BuilderConfig;
-  builderOptions: BuilderOptions;
+  // 进度回调是函数，无法通过 IPC 结构化克隆；进度只在主进程经 onTaskCompleted 汇聚。
+  builderOptions: Omit<BuilderOptions, "progressListener">;
   photoIdCollisionKeys?: string[];
 }
 

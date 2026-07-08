@@ -399,10 +399,12 @@ describe("PhotoTaskProcessor", () => {
     });
   });
 
-  it("passes a serializable built-in plugin descriptor to cluster workers", async () => {
+  it("passes serializable shared data to cluster workers, stripping the progress listener", async () => {
     const session = createSession({
       concurrencyLimit: 2,
       isForceMode: true,
+      // TTY 运行时 CLI 会注入函数回调；必须在进入 IPC 共享数据前被剥离。
+      progressListener: { onProgress: vi.fn() },
     });
     session.config.system.observability.performance.worker.useClusterMode = true;
     session.config.plugins = [
@@ -437,6 +439,7 @@ describe("PhotoTaskProcessor", () => {
         }),
       },
     ]);
+    expect(sharedData?.builderOptions).not.toHaveProperty("progressListener");
     expect(() => serialize(sharedData)).not.toThrow();
   });
 
