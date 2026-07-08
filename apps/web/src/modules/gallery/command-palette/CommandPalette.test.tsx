@@ -12,6 +12,7 @@ Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
 });
 
 let isMobile = false;
+let allTags: string[] = [];
 
 vi.mock("@afilmory/ui", () => ({
   clsxm: (...values: unknown[]) => values.filter(Boolean).join(" "),
@@ -55,7 +56,7 @@ vi.mock("~/hooks/usePhotoViewer", () => ({
 vi.mock("~/runtime/app-runtime", () => ({
   useAfilmoryRuntime: () => ({}),
   usePhotoRepository: () => ({
-    getAllTags: () => [],
+    getAllTags: () => allTags,
     getAllCameras: () => [],
     getAllLenses: () => [],
     getPhotos: () => [],
@@ -86,6 +87,7 @@ describe("CommandPalette", () => {
 
   beforeEach(() => {
     isMobile = false;
+    allTags = [];
     store = createStore();
   });
 
@@ -165,5 +167,68 @@ describe("CommandPalette", () => {
 
     expect(document.activeElement).toBe(trigger);
     trigger.remove();
+  });
+
+  it("expands the combobox onto the results listbox only while results are shown", () => {
+    allTags = ["alpha", "beta"];
+    const { getByRole, queryByRole } = renderPalette({
+      isOpen: true,
+      onClose: vi.fn(),
+    });
+
+    const input = getByRole("combobox");
+    expect(input.getAttribute("aria-expanded")).toBe("false");
+    expect(input.getAttribute("aria-controls")).toBeNull();
+    expect(input.getAttribute("aria-activedescendant")).toBeNull();
+    expect(queryByRole("listbox")).toBeNull();
+
+    fireEvent.change(input, { target: { value: "tag" } });
+
+    const listbox = getByRole("listbox");
+    expect(listbox.id).not.toBe("");
+    expect(input.getAttribute("aria-expanded")).toBe("true");
+    expect(input.getAttribute("aria-controls")).toBe(listbox.id);
+  });
+
+  it("moves aria-activedescendant and aria-selected with arrow-key navigation", () => {
+    allTags = ["alpha", "beta"];
+    const { getByRole, getAllByRole } = renderPalette({
+      isOpen: true,
+      onClose: vi.fn(),
+    });
+
+    const input = getByRole("combobox");
+    fireEvent.change(input, { target: { value: "tag" } });
+
+    const [first, second] = getAllByRole("option");
+    expect(getAllByRole("option")).toHaveLength(2);
+    expect(first.id).not.toBe("");
+    expect(input.getAttribute("aria-activedescendant")).toBe(first.id);
+    expect(first.getAttribute("aria-selected")).toBe("true");
+    expect(second.getAttribute("aria-selected")).toBe("false");
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+
+    expect(input.getAttribute("aria-activedescendant")).toBe(second.id);
+    expect(first.getAttribute("aria-selected")).toBe("false");
+    expect(second.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("announces the result summary through a polite live region", () => {
+    allTags = ["alpha"];
+    const { getByRole, getByText } = renderPalette({
+      isOpen: true,
+      onClose: vi.fn(),
+    });
+
+    expect(
+      getByText("action.search.showing-filters").getAttribute("aria-live"),
+    ).toBe("polite");
+
+    fireEvent.change(getByRole("combobox"), { target: { value: "tag" } });
+
+    expect(
+      getByText("action.search.command-count").getAttribute("aria-live"),
+    ).toBe("polite");
   });
 });
