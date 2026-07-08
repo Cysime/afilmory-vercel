@@ -62,6 +62,7 @@ export const env = createEnv({
 
     // Builder 性能配置（可选）
     BUILDER_USE_CLUSTER_MODE: z.enum(["true", "false"]).optional(),
+    BUILDER_WORKER_COUNT: z.coerce.number().int().positive().optional(),
   },
   runtimeEnv: process.env,
   isServer: typeof window === "undefined",
