@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { PassThrough, Readable } from "node:stream";
 
 import type {
   DeleteObjectCommand,
@@ -9,7 +10,7 @@ import type {
   PutObjectCommand,
   PutObjectCommandOutput,
 } from "@aws-sdk/client-s3";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   S3ClientLike,
@@ -24,9 +25,16 @@ type MockS3Command =
   | ListObjectsV2Command
   | PutObjectCommand;
 
+// The AWS SDK types a streamed Body as SdkStream (mixin methods the provider
+// never touches); the mock seam widens it to any Node readable so tests can
+// exercise the streaming branch without casting.
+type MockGetObjectOutput = Omit<S3GetObjectOutput, "Body"> & {
+  Body?: Buffer | NodeJS.ReadableStream;
+};
+
 type MockS3Response =
   | DeleteObjectCommandOutput
-  | S3GetObjectOutput
+  | MockGetObjectOutput
   | ListObjectsV2CommandOutput
   | PutObjectCommandOutput;
 
@@ -63,8 +71,8 @@ class MockS3Client implements S3ClientLike {
 }
 
 function createGetObjectResponse(
-  response: Omit<S3GetObjectOutput, "$metadata">,
-): S3GetObjectOutput {
+  response: Omit<MockGetObjectOutput, "$metadata">,
+): MockGetObjectOutput {
   return { $metadata: {}, ...response };
 }
 
@@ -86,6 +94,10 @@ describe("S3StorageProvider.getFile", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("clears the total timeout when the response body is already a Buffer", async () => {
@@ -119,6 +131,111 @@ describe("S3StorageProvider.getFile", () => {
 
     await expect(provider.getFile("image.jpg")).resolves.toBeNull();
     expect(clearTimeoutSpy).toHaveBeenCalled();
+  });
+
+  it("accumulates streamed body chunks into a single Buffer", async () => {
+    const send = vi.fn<MockS3Send>().mockResolvedValue(
+      createGetObjectResponse({
+        Body: Readable.from([Buffer.from("chunk-1:"), Buffer.from("chunk-2")]),
+        ContentLength: 15,
+      }),
+    );
+    const provider = new S3StorageProvider(config, {
+      s3Client: new MockS3Client(send),
+    });
+
+    await expect(provider.getFile("image.jpg")).resolves.toEqual(
+      Buffer.from("chunk-1:chunk-2"),
+    );
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries once after a transient send failure and returns the retried body", async () => {
+    vi.useFakeTimers();
+    const send = vi
+      .fn<MockS3Send>()
+      .mockRejectedValueOnce(new Error("socket hang up"))
+      .mockResolvedValueOnce(
+        createGetObjectResponse({ Body: Buffer.from("recovered") }),
+      );
+    const provider = new S3StorageProvider(config, {
+      s3Client: new MockS3Client(send),
+    });
+
+    const result = provider.getFile("image.jpg");
+
+    // The first attempt fails immediately; the retry must wait out the
+    // backoff sleep instead of firing synchronously.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // backoffDelay(1) is at most 300ms + 30% jitter; 5s comfortably covers it.
+    await vi.advanceTimersByTimeAsync(5000);
+    await expect(result).resolves.toEqual(Buffer.from("recovered"));
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("resolves null instead of rejecting once every attempt has failed", async () => {
+    vi.useFakeTimers();
+    const send = vi
+      .fn<MockS3Send>()
+      .mockRejectedValue(new Error("connection refused"));
+    const provider = new S3StorageProvider(
+      { ...config, maxAttempts: 3 },
+      { s3Client: new MockS3Client(send) },
+    );
+
+    // The build's fault tolerance rests on this: a permanently failing
+    // download becomes a "failed" photo, it must never crash the build.
+    const result = provider.getFile("image.jpg");
+    await vi.advanceTimersByTimeAsync(60_000);
+    await expect(result).resolves.toBeNull();
+    expect(send).toHaveBeenCalledTimes(3);
+    // Every attempt cleared its own total/idle timers on the way out.
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("aborts a stalled stream via the idle timeout and retries with a clean slate", async () => {
+    vi.useFakeTimers();
+    const stalledStream = new PassThrough();
+    const signals: (AbortSignal | undefined)[] = [];
+    const send = vi.fn<MockS3Send>(async (_command, options) => {
+      signals.push(options?.abortSignal);
+      if (signals.length === 1) {
+        // Mirror the real SDK: aborting the request errors the body stream.
+        options?.abortSignal?.addEventListener("abort", () => {
+          stalledStream.destroy(new Error("request aborted"));
+        });
+        return createGetObjectResponse({
+          Body: stalledStream,
+          ContentLength: 1024,
+        });
+      }
+      return createGetObjectResponse({ Body: Buffer.from("recovered") });
+    });
+    const provider = new S3StorageProvider(
+      { ...config, idleTimeoutMs: 1000, maxAttempts: 2 },
+      { s3Client: new MockS3Client(send) },
+    );
+
+    const result = provider.getFile("image.jpg");
+    // Let the first attempt attach its stream listeners and arm the idle timer.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // One chunk arrives, re-arming the idle timer... then the stream stalls.
+    stalledStream.write(Buffer.from("partial"));
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(signals[0]?.aborted).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await expect(result).resolves.toEqual(Buffer.from("recovered"));
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(signals[0]?.aborted).toBe(true);
+    // The retry must not inherit the aborted state or a stray idle timer.
+    expect(signals[1]?.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("paginates through truncated list responses for listAllFiles", async () => {
