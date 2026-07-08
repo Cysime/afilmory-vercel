@@ -242,5 +242,3 @@ export default function thumbnailStoragePlugin(
 }
 
 export type { ThumbnailStoragePluginOptions };
-
-export { THUMBNAIL_PLUGIN_SYMBOL } from "./shared.js";
