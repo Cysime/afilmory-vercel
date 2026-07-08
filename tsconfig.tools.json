@@ -5,9 +5,10 @@
   //
   // lib 含 DOM 是因为 env.ts 的 isomorphic `typeof window` 探测和
   // test/setup 的 jsdom Element shim；其余均为 Node + Vite 工具代码。
+  // DOM.Iterable 则是 e2e spec 在 page.evaluate 里展开 NodeList 所需。
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ESNext", "DOM"],
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "types": ["node"]
   },
   "include": [
@@ -23,6 +24,9 @@
     "scripts/**/*.ts",
     "test/**/*.ts",
     "apps/web/vite.config.ts",
-    "apps/web/plugins/**/*.ts"
+    "apps/web/plugins/**/*.ts",
+    // Playwright specs + shared stubs: apps/web's own tsconfig only includes
+    // ./src and ./scripts, and Playwright transpiles without checking.
+    "apps/web/e2e/**/*.ts"
   ]
 }
