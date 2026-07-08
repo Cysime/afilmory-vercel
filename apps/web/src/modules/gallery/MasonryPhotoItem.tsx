@@ -1,6 +1,5 @@
 import clsx from "clsx";
 import { useStore } from "jotai";
-import { m } from "motion/react";
 import {
   Fragment,
   memo,
@@ -198,7 +197,9 @@ export const MasonryPhotoItem = memo(
     }
 
     return (
-      <m.div
+      // 纯 div：入场动画由 MasonryRoot 的包裹层负责，这里不用任何 motion 能力。
+      // m.div 会给每个虚拟格子实例化 visualElement/投影树（热路径的纯浪费）。
+      <div
         role="button"
         tabIndex={0}
         aria-label={ariaLabel}
@@ -383,7 +384,7 @@ export const MasonryPhotoItem = memo(
             </div>
           </div>
         )}
-      </m.div>
+      </div>
     );
   },
 );

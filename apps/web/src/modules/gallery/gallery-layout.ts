@@ -310,8 +310,10 @@ export function selectVisibleMasonryCells({
  *
  * 实现上直接调用 computeMasonryLayout 复算同一份布局：items 结构与 MasonryRoot
  * 一致（桌面端 header 哨兵占 index 0，占位高度用测得的 headerHeight；空高度的
- * header 与真实布局一样不占位——真实布局里它尚未 measure 时照片也按无 header 排），
- * 照片高度同样由 computeMasonryItemHeight 得出。于是「估算与真实布局逐像素一致」
+ * header 与真实布局一样不占位——真实布局里它尚未 measure 时照片也按无 header 排）。
+ * 宽度必须复刻真实布局的**双宽度**组合：left 用小数 layoutColumnWidth（真实布局
+ * 把小数摊进各列，用取整宽复算会在右侧列漂移数 px），高度用整数 columnWidth
+ * （真实布局的 getHeight 吃的就是取整宽）。于是「估算与真实布局逐像素一致」
  * 是构造性成立的，不再靠手抄放置循环维持。每次打开/关闭 viewer 才跑一次，
  * O(n)（n 为照片数，百量级）可忽略。
  */
@@ -328,9 +330,15 @@ export function estimatePhotoVirtualRect({
   photoIndex: number;
   photos: PhotoManifest[];
 }) {
-  const { columnCount, columnGutter, columnWidth, containerRect, rowGutter } =
-    metrics;
-  if (columnCount <= 0 || columnWidth <= 0) {
+  const {
+    columnCount,
+    columnGutter,
+    columnWidth,
+    containerRect,
+    layoutColumnWidth,
+    rowGutter,
+  } = metrics;
+  if (columnCount <= 0 || columnWidth <= 0 || layoutColumnWidth <= 0) {
     return null;
   }
   if (photoIndex < 0 || photoIndex >= photos.length) {
@@ -350,7 +358,7 @@ export function estimatePhotoVirtualRect({
   const { cells } = computeMasonryLayout({
     items,
     columnCount,
-    columnWidth,
+    columnWidth: layoutColumnWidth,
     columnGutter,
     rowGutter,
     getItemHeight: (item) =>

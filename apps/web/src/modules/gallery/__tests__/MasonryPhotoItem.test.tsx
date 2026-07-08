@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { createStore, Provider } from "jotai";
-import type { HTMLAttributes, PropsWithChildren } from "react";
+import type { PropsWithChildren } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { gallerySettingAtom } from "~/atoms/app";
@@ -52,17 +52,6 @@ vi.mock("@afilmory/ui", () => ({
   Thumbhash: ({ className }: { className?: string }) => (
     <div className={className} />
   ),
-}));
-
-vi.mock("motion/react", () => ({
-  m: {
-    div: ({
-      children,
-      ...props
-    }: PropsWithChildren<HTMLAttributes<HTMLDivElement>>) => (
-      <div {...props}>{children}</div>
-    ),
-  },
 }));
 
 vi.mock("react-i18next", () => ({

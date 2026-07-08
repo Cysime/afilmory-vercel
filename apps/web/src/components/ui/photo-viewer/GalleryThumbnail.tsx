@@ -9,20 +9,11 @@ import { useMobile } from "~/hooks/useMobile";
 import { nextFrame } from "~/lib/dom";
 import type { PhotoManifest } from "~/types/photo";
 
-const thumbnailSize = {
-  mobile: 48,
-  desktop: 64,
-};
-
-const thumbnailGapSize = {
-  mobile: 8,
-  desktop: 12,
-};
-
-const thumbnailPaddingSize = {
-  mobile: 12,
-  desktop: 16,
-};
+import {
+  thumbnailGapSize,
+  thumbnailPaddingSize,
+  thumbnailSize,
+} from "./gallery-thumbnail-metrics";
 
 export const GalleryThumbnail: FC<{
   currentIndex: number;

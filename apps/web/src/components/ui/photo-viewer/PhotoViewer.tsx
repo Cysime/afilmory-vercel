@@ -5,7 +5,14 @@ import "swiper/css/navigation";
 
 import { Spring, Thumbhash } from "@afilmory/ui";
 import { AnimatePresence, m } from "motion/react";
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import type { Swiper as SwiperType } from "swiper";
 
@@ -17,8 +24,7 @@ import type { PhotoManifest } from "~/types/photo";
 
 import { PhotoViewerTransitionPreview } from "./animations/PhotoViewerTransitionPreview";
 import { usePhotoViewerTransitions } from "./animations/usePhotoViewerTransitions";
-import { ExifPanel } from "./ExifPanel";
-import { GalleryThumbnail } from "./GalleryThumbnail";
+import { getGalleryThumbnailStripHeight } from "./gallery-thumbnail-metrics";
 import type { LoadingIndicatorRef } from "./LoadingIndicator";
 import {
   usePhotoViewerBlobSource,
@@ -30,6 +36,18 @@ import { PhotoViewerMediaCarousel } from "./PhotoViewerMediaCarousel";
 import { PhotoViewerToolbar } from "./PhotoViewerToolbar";
 import type { DismissSeed, DismissTransform } from "./useDismissGesture";
 import { useDismissGesture } from "./useDismissGesture";
+
+// 真实的代码分割：ExifPanel 拖着 ~660 行的 ExifPanelSections + formatExifData，
+// GalleryThumbnail 也不在打开查看器的关键路径上——都按需加载，主 chunk 只留壳。
+// （barrel index.ts 也刻意不再静态 re-export 这两个模块，否则会被拉回主 chunk。）
+const ExifPanel = lazy(() =>
+  import("./ExifPanel").then((module) => ({ default: module.ExifPanel })),
+);
+const GalleryThumbnail = lazy(() =>
+  import("./GalleryThumbnail").then((module) => ({
+    default: module.GalleryThumbnail,
+  })),
+);
 
 interface PhotoViewerProps {
   photos: PhotoManifest[];
@@ -291,7 +309,19 @@ export const PhotoViewer = ({
                 />
 
                 <m.div className="shrink-0" style={{ opacity: chromeOpacity }}>
-                  <Suspense>
+                  <Suspense
+                    fallback={
+                      // 占住缩略图条的高度（结构镜像其 border-t + 内容 + pb-safe），
+                      // chunk 到达时媒体区不跳、入场 FLIP 目标矩形不失真。
+                      <div className="pb-safe border-t border-transparent">
+                        <div
+                          style={{
+                            height: getGalleryThumbnailStripHeight(isMobile),
+                          }}
+                        />
+                      </div>
+                    }
+                  >
                     <GalleryThumbnail
                       currentIndex={currentIndex}
                       photos={photos}
@@ -304,7 +334,11 @@ export const PhotoViewer = ({
 
               {/* ExifPanel - 在桌面端始终显示，在移动端根据状态显示 */}
 
-              <Suspense>
+              <Suspense
+                // 桌面端 fallback 占住侧栏宽度（面板本体是 w-80 shrink-0），chunk
+                // 到达时取景框不重排；移动端面板是按需弹出的覆盖层，无需占位。
+                fallback={isMobile ? null : <div className="w-80 shrink-0" />}
+              >
                 <AnimatePresenceOnlyMobile>
                   {(!isMobile || showExifPanel) && (
                     <ExifPanel
