@@ -143,7 +143,7 @@ describe("ImageConversionPipeline", () => {
     );
   });
 
-  it("admits a queued task when the concurrency limit is raised", async () => {
+  it("immediately admits queued tasks up to the new limit when the concurrency limit is raised", async () => {
     const pipeline = new ImageConversionPipeline({ maxConcurrent: 1 });
     const tracker = createGatedTaskTracker();
 
@@ -158,19 +158,11 @@ describe("ImageConversionPipeline", () => {
     pipeline.setMaxConcurrent(3);
     await tick();
 
-    // KNOWN LIMITATION (pinned, not endorsed): drainQueue admits a single task
-    // per call, so raising the limit from 1 to 3 starts only one queued task —
-    // the other waits for a slot to free instead of filling the new capacity.
-    // If this starts failing with activeCount === 3, the limitation was fixed;
-    // update these two assertions rather than reverting the fix.
-    expect(pipeline.getActiveCount()).toBe(2);
-    expect(pipeline.getPendingCount()).toBe(1);
-
-    tracker.gates[0].resolve("first");
-    await tick();
-    expect(pipeline.getActiveCount()).toBe(2);
+    expect(tracker.activeCount()).toBe(3);
+    expect(pipeline.getActiveCount()).toBe(3);
     expect(pipeline.getPendingCount()).toBe(0);
 
+    tracker.gates[0].resolve("first");
     tracker.gates[1].resolve("second");
     tracker.gates[2].resolve("third");
     await expect(Promise.all([first, second, third])).resolves.toEqual([
@@ -178,5 +170,7 @@ describe("ImageConversionPipeline", () => {
       "second",
       "third",
     ]);
+    expect(tracker.maxActiveCount()).toBe(3);
+    expect(pipeline.getActiveCount()).toBe(0);
   });
 });

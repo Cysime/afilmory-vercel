@@ -63,28 +63,26 @@ export class ImageConversionPipeline {
   }
 
   private drainQueue(): void {
-    if (this.activeCount >= this.maxConcurrent) {
-      return;
-    }
-
-    const nextTask = this.queue.shift();
-    if (!nextTask) {
-      return;
-    }
-
-    this.activeCount += 1;
-
-    // Run task asynchronously without blocking
-    (async () => {
-      try {
-        const result = await nextTask.execute();
-        nextTask.resolve(result);
-      } catch (error) {
-        nextTask.reject(error);
-      } finally {
-        this.activeCount = Math.max(0, this.activeCount - 1);
-        this.drainQueue();
+    while (this.activeCount < this.maxConcurrent) {
+      const nextTask = this.queue.shift();
+      if (!nextTask) {
+        return;
       }
-    })();
+
+      this.activeCount += 1;
+
+      // Run task asynchronously without blocking
+      (async () => {
+        try {
+          const result = await nextTask.execute();
+          nextTask.resolve(result);
+        } catch (error) {
+          nextTask.reject(error);
+        } finally {
+          this.activeCount = Math.max(0, this.activeCount - 1);
+          this.drainQueue();
+        }
+      })();
+    }
   }
 }
