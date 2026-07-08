@@ -154,58 +154,13 @@ const PLURAL_SUFFIX_RE = /_(?:zero|one|two|few|many|other)$/;
 
 // ---------------------------------------------------------------------------
 // Pinned baseline of pre-existing orphans found when this test was introduced
-// (2026-07-08). They ship as dead weight in all six locale bundles. This list
-// is shrink-only: never add to it — delete entries (and the keys from
-// locales/app/*.json) as they get cleaned up.
+// (2026-07-08). The original 51 entries have all been deleted from
+// locales/app/*.json, so the baseline is now empty. This list is shrink-only:
+// never add to it — a newly orphaned key must be deleted from all six locale
+// files (or, if it is built dynamically at runtime, its static prefix
+// documented in TEMPLATE_KEY_PREFIXES above).
 // ---------------------------------------------------------------------------
-const KNOWN_ORPHANS = new Set([
-  "action.camera.clear",
-  "action.camera.empty",
-  "action.camera.not-found",
-  "action.camera.search",
-  "action.lens.clear",
-  "action.lens.empty",
-  "action.lens.not-found",
-  "action.lens.search",
-  "action.search.filter.no-results",
-  "action.search.filter.placeholder",
-  "action.search.hint",
-  "action.search.preset.all",
-  "action.search.results",
-  "action.search.title",
-  "action.tag.clear",
-  "action.tag.empty",
-  "action.tag.not-found",
-  "action.tag.search",
-  "action.view.github",
-  "action.view.layout",
-  "exif.auto.white.balance.grb",
-  "exif.blue.adjustment",
-  "exif.custom.rendered.normal",
-  "exif.custom.rendered.special",
-  "exif.custom.rendered.type",
-  "exif.digital.zoom",
-  "exif.gps.location.name",
-  "exif.gps.view.map",
-  "exif.red.adjustment",
-  "exif.resolution.unit.cm",
-  "exif.resolution.unit.inches",
-  "exif.resolution.unit.none",
-  "exif.standard.white.balance.grb",
-  "exif.unknown",
-  "explore.clear.selection",
-  "explore.cluster.locations_one",
-  "explore.cluster.locations_other",
-  "explore.range.separator",
-  "gallery.photos_one",
-  "gallery.photos_other",
-  "photo.conversion.webcodecs",
-  "photo.live.converting.detail",
-  "photo.live.converting.video",
-  "photo.reaction.success",
-  "video.format.mov.not.supported",
-  "video.format.mov.supported",
-]);
+const KNOWN_ORPHANS = new Set<string>([]);
 
 const enKeys = new Set(Object.keys(en));
 const scan = scanSources();
