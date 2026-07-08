@@ -7,6 +7,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import type { BuildProgressListener } from "./builder/builder.js";
+import { shouldWriteThumbnailEncodingMarker } from "./builder/builder.js";
 import { AfilmoryBuilder } from "./builder/index.js";
 import { loadBuilderConfig } from "./config/index.js";
 import { ExifService } from "./image/exif.js";
@@ -202,14 +203,18 @@ async function main() {
 
     buildResult = result;
     // 构建成功即落盘签名标记（会随 artifact-cache 同步）；中途异常不写。
-    // 强制重生成的运行中若有照片失败也不写：磁盘上还残留旧参数的缩略图，
-    // 带上新标记会让下次增量构建把它们当作已达标，旧参数产物永远无法收敛。
+    // 零照片构建与强制重生成中有照片失败的运行也不写，
+    // 原因见 shouldWriteThumbnailEncodingMarker 的注释。
     const wasThumbnailForce = isForceMode || isForceThumbnails;
-    if (!wasThumbnailForce || result.failedCount === 0) {
+    if (shouldWriteThumbnailEncodingMarker(result, wasThumbnailForce)) {
       await writeThumbnailEncodingMarker(thumbnailsDir);
-    } else {
+    } else if (wasThumbnailForce && result.failedCount > 0) {
       logger.main.warn(
         "⚠️ 本次强制重生成存在失败照片，保留旧编码标记；下次构建将继续强制重生成，直到全部成功。",
+      );
+    } else {
+      logger.main.info(
+        "Skipping the thumbnail encoding marker: this build evaluated zero photos.",
       );
     }
     tui?.markSuccess(result);

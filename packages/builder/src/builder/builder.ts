@@ -34,6 +34,24 @@ export type {
   BuildProgressStartPayload,
 } from "../types/options.js";
 
+/**
+ * 构建成功后 CLI 是否应当落盘缩略图编码签名标记（.encoding）。
+ * 纯函数放在这里而不是 cli.ts：cli.ts 顶层即执行 main()，无法被测试导入。
+ *
+ * - 零照片构建从未评估过任何缩略图：瞬时空列举（存储抖动/前缀误配）撞上
+ *   编码参数变更时 failedCount 恰好为 0，此时盖新标记会让旧参数缩略图被
+ *   下次增量构建当作已达标，永远不再重生成。
+ * - 强制重生成的运行中若有照片失败也不写：磁盘上还残留旧参数的缩略图，
+ *   带上新标记会让下次增量构建把它们当作已达标，旧参数产物永远无法收敛。
+ */
+export function shouldWriteThumbnailEncodingMarker(
+  result: Pick<BuilderResult, "totalPhotos" | "failedCount">,
+  wasThumbnailForce: boolean,
+): boolean {
+  if (result.totalPhotos === 0) return false;
+  return !wasThumbnailForce || result.failedCount === 0;
+}
+
 export interface AfilmoryBuilderRuntime {
   exifService?: ExifService;
   ownsExifService?: boolean;
@@ -160,8 +178,18 @@ export class AfilmoryBuilder {
       const sourceScan = await new SourceScanner().scan(session);
       const { imageObjects, livePhotoMap } = sourceScan;
 
-      if (imageObjects.length === 0) {
-        logger.main.error("❌ 没有找到需要处理的照片");
+      // 列举成功但得到 0 张照片：默认视作疑似误配或瞬时故障（前缀写错、存储
+      // 抖动返回空列表），保留现有 manifest 与缩略图原样早退——否则一次空列举
+      // 就会清空全部产物并被 artifact-cache 持久化。只有 --force 才把「空图库」
+      // 当作用户意图，继续走正常管道：写出空 manifest 并清理孤儿缩略图。
+      if (imageObjects.length === 0 && !options.isForceMode) {
+        if (existingManifestItems.length > 0) {
+          logger.main.warn(
+            `⚠️ Storage returned zero photos but the existing manifest has ${existingManifestItems.length}; keeping it untouched. Pass --force to publish an empty gallery, or check your storage prefix.`,
+          );
+        } else {
+          logger.main.error("❌ 没有找到需要处理的照片");
+        }
         const result: BuilderResult = {
           hasUpdates: false,
           newCount: 0,
@@ -179,6 +207,12 @@ export class AfilmoryBuilder {
         });
 
         return result;
+      }
+
+      if (imageObjects.length === 0) {
+        logger.main.warn(
+          "⚠️ Storage returned zero photos and --force is set: publishing an empty gallery and clearing thumbnails.",
+        );
       }
 
       const diffPlan = await new DiffPlanner().plan(
