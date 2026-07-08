@@ -78,11 +78,11 @@
 ## 🖥️ 截图
 
 <p align="center">
-  <img src="docs/assets/screenshot_0.webp" alt="screenshot_0" width="100%" />
+  <img src="docs/assets/screenshot-gallery.webp" alt="相册瀑布流视图" width="100%" />
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshot_1.webp" alt="screenshot_1" width="100%" />
+  <img src="docs/assets/screenshot-viewer.webp" alt="照片查看器与 EXIF 面板" width="100%" />
 </p>
 
 ---
@@ -138,6 +138,14 @@
 | `S3_PREFIX`        | 照片路径前缀         | 空                                   | `photos/`                              |
 | `S3_CUSTOM_DOMAIN` | 自定义 CDN 域名      | 空                                   | `https://cdn.example.com`              |
 | `S3_EXCLUDE_REGEX` | 排除文件的正则表达式 | 空                                   | `.*\.txt$`                             |
+
+> ⚠️ **全分辨率查看器的 CORS（跨域）要求。** WebGL 查看器通过 `fetch`/XHR 获取
+> 原图字节，因此当两者不同源时（例如 `cdn.example.com` 与
+> `gallery.example.com`），提供原图的域名（`S3_CUSTOM_DOMAIN` 或 S3 端点）
+> **必须返回允许站点来源（`SITE_URL`）的 `Access-Control-Allow-Origin`
+> 响应头**。缩略图是同源资源（`/thumbnails`），不需要 CORS，因此缺少 CORS
+> 响应头的典型症状是：缩略图加载正常，但打开照片时卡在 "Failed to load
+> image"。本地对只允许生产域名的 CDN 运行 `vite preview` 时同样会遇到此问题。
 
 ### 可选 CI 元数据缓存
 
@@ -247,10 +255,6 @@ pnpm dev
 # TypeScript 源码消费，部署构建不需要预先构建包的 dist/。
 pnpm build
 
-# 仅供发布 npm 包使用：为 @afilmory/builder 和 @afilmory/webgl-viewer
-# 构建 dist/，部署与 CI 构建链均不依赖它。
-pnpm build:packages
-
 # 只刷新 manifest 和缩略图。
 pnpm build:manifest
 
@@ -263,6 +267,8 @@ pnpm preview
 # 重新生成 favicon 资源到 apps/web/public。
 pnpm generate:favicon
 ```
+
+所有 `@afilmory/*` 包均为 workspace 内部包——直接从 TypeScript 源码消费，不发布到 npm。
 
 运行 `pnpm preview` 后打开 http://localhost:4173。
 

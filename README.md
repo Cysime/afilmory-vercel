@@ -78,11 +78,11 @@ Huge thanks to [Innei](https://innei.in) and the Afilmory team for creating this
 ## 🖥️ Screenshots
 
 <p align="center">
-  <img src="docs/assets/screenshot_0.webp" alt="screenshot_0" width="100%" />
+  <img src="docs/assets/screenshot-gallery.webp" alt="Gallery masonry view" width="100%" />
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshot_1.webp" alt="screenshot_1" width="100%" />
+  <img src="docs/assets/screenshot-viewer.webp" alt="Photo viewer with EXIF panel" width="100%" />
 </p>
 
 ---
@@ -265,10 +265,6 @@ pnpm dev
 # consumed from TypeScript source, so deployments never build package dist/.
 pnpm build
 
-# Publish-only: builds dist/ for @afilmory/builder and @afilmory/webgl-viewer
-# before `npm publish`. Not part of the deploy or CI build chain.
-pnpm build:packages
-
 # Refresh manifest and thumbnails only.
 pnpm build:manifest
 
@@ -281,6 +277,9 @@ pnpm preview
 # Regenerate favicon assets into apps/web/public.
 pnpm generate:favicon
 ```
+
+All `@afilmory/*` packages are workspace-internal — they are consumed directly
+from TypeScript source and are not published to npm.
 
 Open http://localhost:4173 after `pnpm preview`.
 

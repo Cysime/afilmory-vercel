@@ -6,9 +6,10 @@ as Vitest *projects* from the root `vitest.config.ts`.
 ## Running tests
 
 ```bash
-pnpm test            # all projects in one vitest run
-pnpm test:coverage   # same, with v8 coverage -> ./coverage
-pnpm test:e2e        # Playwright e2e (spawns a Vite dev server)
+pnpm test              # all projects in one vitest run
+pnpm test:coverage     # same, with v8 coverage -> ./coverage
+pnpm test:e2e:install  # one-time: download the chromium browser Playwright needs
+pnpm test:e2e          # Playwright e2e (spawns a Vite dev server)
 ```
 
 Run a single project or file:
@@ -59,15 +60,25 @@ The CI job copies it into `generated/` before running. Build-time thumbnail asse
 (also gitignored) are stubbed inside the spec, so the suite needs no generated
 images.
 
-Regenerate the fixture from a real local manifest (e.g. after the schema changes):
+A separate prod-smoke mode (`pnpm test:e2e:prod`) runs a real production build
+(external manifest asset, PWA service worker) behind `vite preview` and executes
+only the `prod-smoke` project. Run the two modes as separate invocations — CI
+does — so dev-server runs never pay for a production build.
+
+The fixture is **fully synthetic**: invented `SYNTH00…` photos, a fictional
+`Lumina LX-7` camera, and mid-ocean GPS coordinates in made-up countries. It
+must **never** be regenerated from a real photo library — an earlier fixture
+trimmed from real manifest data leaked personal GPS coordinates and filenames
+into the repo. Regenerate it (e.g. after a manifest schema change) with:
 
 ```bash
-pnpm exec tsx scripts/build-e2e-manifest-fixture.ts
+pnpm fixture:e2e
 ```
 
-The script trims a real `generated/photos-manifest.json` down to ~18 photos that
-still satisfy every assertion (the searched-for photo, the `SONY ILCE-7C` camera,
-and multi-country GPS data) and validates the result with `assertManifest`.
+This runs `scripts/create-synthetic-e2e-fixture.ts`, which invents the manifest
+data, renders deterministic gradient thumbnails through the real builder
+pipeline (so `thumbHash` values are genuine), and writes everything under
+`apps/web/e2e/fixtures/`.
 
 ## CI
 
@@ -76,6 +87,7 @@ and multi-country GPS data) and validates the result with `assertManifest`.
 - **Lint**, **Type-check**, **Dependency audit**
 - **Test + coverage** — `pnpm test:coverage`, uploads coverage, writes a summary
 - **Build** — `SKIP_MANIFEST_BUILD=true pnpm build` against an empty manifest fixture
-- **E2E (Playwright)** — chromium against the committed fixture manifest
+- **E2E (Playwright)** — dev-server specs, then a prod-smoke run, both against
+  the committed fixture manifest
 
 Shared install/setup lives in the composite action `.github/actions/setup`.
