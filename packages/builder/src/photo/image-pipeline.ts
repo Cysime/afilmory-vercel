@@ -11,6 +11,7 @@ import {
 } from "../image/processor.js";
 import { SOURCE_SHARP_OPTIONS } from "../image/sharp-options.js";
 import { needsUpdate } from "../manifest/manager.js";
+import type { ThumbnailPluginData } from "../plugins/thumbnail-storage/shared.js";
 import { THUMBNAIL_PLUGIN_DATA_KEY } from "../plugins/thumbnail-storage/shared.js";
 import type { BuilderOptions } from "../types/options.js";
 import type { PhotoManifestItem, ProcessPhotoResult } from "../types/photo.js";
@@ -354,6 +355,18 @@ export async function processPhotoWithPipeline(
     context,
     result,
   });
+
+  // afterPhotoProcess 是缩略图 buffer 的最后消费者（thumbnail-storage 在钩子里
+  // 上传）。钩子返回后立刻断开引用，让每张几十上百 KB 的 JPEG 即刻可回收：
+  // 否则主进程会为整个构建期攒下全部缩略图，cluster 模式还要把 buffer 走一遍
+  // IPC v8 序列化。就地置 null（而非换新对象），持有旧条目引用的一方也随之释放；
+  // 两种模式对 beforeAddManifestItem 呈现同样的无 buffer 载荷。
+  const thumbnailData = context.pluginData[THUMBNAIL_PLUGIN_DATA_KEY] as
+    | ThumbnailPluginData
+    | undefined;
+  if (thumbnailData) {
+    thumbnailData.buffer = null;
+  }
 
   return result;
 }
