@@ -17,14 +17,12 @@ import type {
 export const defaultWheelConfig: WheelConfig = {
   step: 0.1,
   wheelDisabled: false,
-  touchPadDisabled: false,
 };
 
 /**
  * 默认手势缩放配置
  */
 export const defaultPinchConfig: PinchConfig = {
-  step: 0.5,
   disabled: false,
 };
 

@@ -3,10 +3,8 @@ import type { LoadingState } from "./enum";
 export interface WheelConfig {
   step: number;
   wheelDisabled?: boolean;
-  touchPadDisabled?: boolean;
 }
 export interface PinchConfig {
-  step: number;
   disabled?: boolean;
 }
 export interface DoubleClickConfig {

@@ -159,7 +159,7 @@ const DebugInfoComponent = ({
     `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 
   // 新增：瓦片系统调试信息类型辅助
-  function renderTileSystem(tileSystem?: any) {
+  function renderTileSystem(tileSystem?: DebugInfo["tileSystem"]) {
     if (!tileSystem) return null;
     return (
       <CollapsibleSection title="Tile System" defaultExpanded={false}>

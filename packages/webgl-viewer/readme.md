@@ -86,12 +86,10 @@ The component also accepts normal `div` attributes, except `className` is applie
 type WheelConfig = {
   step: number; // default 0.1
   wheelDisabled?: boolean;
-  touchPadDisabled?: boolean;
 };
 
 type PinchConfig = {
-  step: number; // default 0.5
-  disabled?: boolean;
+  disabled?: boolean; // pinch zoom follows the raw two-finger distance ratio
 };
 
 type DoubleClickConfig = {
@@ -120,6 +118,8 @@ onError?: (error: unknown) => void;
 ```
 
 `onImagePainted` fires after the engine paints the high-resolution image. The web app uses it to coordinate progressive image transitions.
+
+Callbacks are read through a ref, so passing a new function identity (for example an inline arrow, as in the Quick Start) never recreates the engine. The engine — and with it the full-resolution image fetch, decode and GPU upload — is only recreated when `src`, `sourceBlob`, `width`/`height`, scale limits, interaction config values, or `debug` actually change; `className` changes only restyle the canvas.
 
 ## Ref API
 

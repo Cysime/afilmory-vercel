@@ -80,6 +80,59 @@ describe("WebGLImageViewer", () => {
     expect(engineMocks.loadImage).not.toHaveBeenCalled();
   });
 
+  it("keeps the engine alive across callback/config identity changes and forwards to the latest callback", () => {
+    const firstOnZoomChange = vi.fn();
+    const { rerender } = render(
+      <WebGLImageViewer
+        src="blob:photo"
+        width={100}
+        height={80}
+        onZoomChange={firstOnZoomChange}
+      />,
+    );
+
+    expect(WebGLImageViewerEngine).toHaveBeenCalledTimes(1);
+
+    // 内联回调 + 内联同值配置对象：只有引用变化，不应重建引擎（重建 = 全图重取重解码）
+    const secondOnZoomChange = vi.fn();
+    rerender(
+      <WebGLImageViewer
+        src="blob:photo"
+        width={100}
+        height={80}
+        onZoomChange={secondOnZoomChange}
+        wheel={{ step: 0.1 }}
+        className="zoomed"
+      />,
+    );
+
+    expect(WebGLImageViewerEngine).toHaveBeenCalledTimes(1);
+    expect(engineMocks.destroy).not.toHaveBeenCalled();
+
+    // 引擎在构造时捕获的回调必须始终指向最新的 prop
+    const config = vi.mocked(WebGLImageViewerEngine).mock.calls[0][1];
+    config.onZoomChange(2, 0.5);
+    expect(firstOnZoomChange).not.toHaveBeenCalled();
+    expect(secondOnZoomChange).toHaveBeenCalledWith(2, 0.5);
+  });
+
+  it("destroys and recreates the engine when src changes", () => {
+    const { rerender } = render(
+      <WebGLImageViewer src="blob:a" width={100} height={80} />,
+    );
+
+    rerender(<WebGLImageViewer src="blob:b" width={100} height={80} />);
+
+    expect(engineMocks.destroy).toHaveBeenCalledTimes(1);
+    expect(WebGLImageViewerEngine).toHaveBeenCalledTimes(2);
+    expect(engineMocks.loadImage).toHaveBeenLastCalledWith(
+      "blob:b",
+      100,
+      80,
+      null,
+    );
+  });
+
   it("reports image loading failures through the error callback", async () => {
     const onError = vi.fn();
     const loadError = new Error("WebGL image load failed");
