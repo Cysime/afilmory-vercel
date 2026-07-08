@@ -9,16 +9,6 @@ body {
 }
 
 @media screen and (min-width: 1024px) {
-  ::-webkit-scrollbar-thumb {
-    background-color: transparent;
-    border: 3px solid theme(colors.gray.300);
-    @apply rounded-xl;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    border-color: theme(colors.zinc.500/0.8);
-  }
-
   ::-webkit-scrollbar {
     width: 6px !important;
     height: 6px !important;
@@ -26,11 +16,14 @@ body {
   }
 
   ::-webkit-scrollbar-thumb {
+    background-color: transparent;
     border: 3px solid theme(colors.zinc.500);
+    @apply rounded-xl;
   }
 
   ::-webkit-scrollbar-thumb:hover {
     background: theme(colors.zinc.500/0.5);
+    border-color: theme(colors.zinc.500/0.8);
   }
 
   ::-webkit-scrollbar-corner {

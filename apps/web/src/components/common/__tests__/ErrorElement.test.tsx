@@ -38,6 +38,13 @@ vi.mock("react-router", () => ({
   useRouteError: () => routeError.current,
 }));
 
+// Key-identity t(): assertions on raw keys prove every label flows through i18n.
+vi.mock("~/i18n", () => ({
+  getI18n: () => ({
+    t: (key: string) => key,
+  }),
+}));
+
 vi.mock("~/lib/stale-runtime-recovery", () => recovery);
 
 describe("ErrorElement", () => {
@@ -71,7 +78,7 @@ describe("ErrorElement", () => {
       );
     });
     await waitFor(() => {
-      expect(screen.queryByText("Something went wrong")).toBeNull();
+      expect(screen.queryByText("error.title")).toBeNull();
     });
   });
 
@@ -84,7 +91,7 @@ describe("ErrorElement", () => {
     await waitFor(() => {
       expect(recovery.clearStaleRuntimeReloadAttempt).toHaveBeenCalledTimes(1);
     });
-    expect(screen.getByText("Something went wrong")).not.toBeNull();
+    expect(screen.getByText("error.title")).not.toBeNull();
   });
 
   it("uses stale runtime cleanup for the reload button", () => {
@@ -93,8 +100,26 @@ describe("ErrorElement", () => {
     recovery.recoverStaleRuntime.mockResolvedValue({ reloadRequested: true });
 
     render(<ErrorElement />);
-    fireEvent.click(screen.getByRole("button", { name: "Reload Application" }));
+    fireEvent.click(screen.getByRole("button", { name: "error.reload" }));
 
     expect(recovery.recoverStaleRuntime).toHaveBeenCalledWith({ force: true });
+  });
+
+  it("resolves every visible label through i18n", () => {
+    routeError.current = new Error("404 Not Found");
+    recovery.isStaleRuntimeError.mockReturnValue(false);
+
+    render(<ErrorElement />);
+
+    expect(screen.getByRole("heading", { name: "error.title" })).not.toBeNull();
+    expect(screen.getByText("error.temporary.description")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "error.reload" })).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "error.go.back" }),
+    ).not.toBeNull();
+    expect(screen.getByText("error.feedback")).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "error.submit.issue" }),
+    ).not.toBeNull();
   });
 });
