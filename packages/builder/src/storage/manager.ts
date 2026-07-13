@@ -1,5 +1,6 @@
 import type {
   StorageConfig,
+  StorageListing,
   StorageObject,
   StorageProvider,
   StorageUploadOptions,
@@ -41,8 +42,8 @@ export class StorageManager {
    * @param logger 可选的日志记录器
    * @returns 文件的 Buffer 数据，如果不存在则返回 null
    */
-  async getFile(key: string): Promise<Buffer | null> {
-    return this.provider.getFile(key);
+  async getFile(key: string, signal?: AbortSignal): Promise<Buffer | null> {
+    return this.provider.getFile(key, signal);
   }
 
   /**
@@ -59,8 +60,16 @@ export class StorageManager {
    * @returns 所有文件对象数组
    */
   async listAllFiles(): Promise<StorageObject[]> {
-    const objects = await this.provider.listAllFiles();
-    return this.applyExcludes(objects);
+    const listing = await this.listAllFilesDetailed();
+    return listing.objects;
+  }
+
+  async listAllFilesDetailed(): Promise<StorageListing> {
+    const listing = await this.provider.listAllFilesDetailed();
+    return {
+      ...listing,
+      objects: this.applyExcludes(listing.objects),
+    };
   }
 
   /**
@@ -123,6 +132,10 @@ export class StorageManager {
    */
   getProvider(): StorageProvider {
     return this.provider;
+  }
+
+  async dispose(): Promise<void> {
+    await this.provider.dispose();
   }
 
   private createProvider(config: StorageConfig): StorageProvider {

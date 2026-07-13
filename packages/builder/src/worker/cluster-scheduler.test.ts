@@ -48,4 +48,16 @@ describe("cluster-scheduler", () => {
     expect(batch.remainingQueue).toEqual([{ taskIndex: 2 }, { taskIndex: 3 }]);
     expect(queue).toEqual(createInitialTaskQueue(4));
   });
+
+  it("rejects invalid concurrency values before scheduler arithmetic", () => {
+    expect(() =>
+      calculateWorkersToStart({
+        concurrency: 1,
+        totalTasks: 2,
+        workerConcurrency: 0,
+      }),
+    ).toThrow(/workerConcurrency must be a positive integer/);
+    expect(() => createInitialTaskQueue(-1)).toThrow(/totalTasks/);
+    expect(() => getAvailableWorkerSlots(0, 1.5)).toThrow(/workerConcurrency/);
+  });
 });

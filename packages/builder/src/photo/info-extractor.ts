@@ -8,6 +8,7 @@ import { getPhotoProcessingLoggers } from "./logger-adapter.js";
 export function extractPhotoInfo(
   key: string,
   exifData?: PickedExif | null,
+  fallbackDate?: Date | string,
 ): PhotoInfo {
   const log = getPhotoProcessingLoggers().image;
   const { normalizeStorageKey } = getPhotoExecutionContext();
@@ -22,7 +23,11 @@ export function extractPhotoInfo(
 
   // 尝试从文件名解析信息，格式示例："2024-01-15_城市夜景_1250views"
   let title = fileName;
-  let dateTaken = new Date().toISOString();
+  const fallbackCandidate = fallbackDate ? new Date(fallbackDate) : null;
+  let dateTaken =
+    fallbackCandidate && !Number.isNaN(fallbackCandidate.getTime())
+      ? fallbackCandidate.toISOString()
+      : "1970-01-01T00:00:00.000Z";
   let views = 0;
   let tags: string[] = [];
 

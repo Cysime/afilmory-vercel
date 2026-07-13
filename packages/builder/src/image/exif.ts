@@ -1,4 +1,4 @@
-import { mkdir, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -50,12 +50,17 @@ export async function extractExifData(
   const log = getPhotoProcessingLoggers().exif;
 
   // os.tmpdir() 而非硬编码 /tmp：Windows 没有 /tmp，macOS 沙箱下 /tmp 也可能不可写。
-  const tempDir = path.join(os.tmpdir(), "afilmory-exif");
-  await mkdir(tempDir, { recursive: true });
+  // A private per-call directory prevents other local users from observing or
+  // replacing source photos while ExifTool reads them. Explicit modes keep the
+  // guarantee even under an unusually permissive process umask.
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "afilmory-exif-"));
+  await chmod(tempDir, 0o700);
   const tempImagePath = path.join(tempDir, `${crypto.randomUUID()}.jpg`);
 
   try {
-    await writeFile(tempImagePath, originalBuffer || imageBuffer);
+    await writeFile(tempImagePath, originalBuffer || imageBuffer, {
+      mode: 0o600,
+    });
 
     log.info(`Extracting EXIF data, file path: ${tempImagePath}`);
     const exifData = await exifService.read(tempImagePath);
@@ -78,7 +83,7 @@ export async function extractExifData(
     log.error("Failed to extract EXIF data:", error);
     return null;
   } finally {
-    await unlink(tempImagePath).catch(noop);
+    await rm(tempDir, { recursive: true, force: true }).catch(noop);
   }
 }
 

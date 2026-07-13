@@ -92,6 +92,8 @@ describe("resolveGeocodingOptions", () => {
       nominatimUserAgent: undefined,
       cachePath: undefined,
       cachePrecision: 4,
+      requestTimeoutMs: 10_000,
+      negativeCacheTtlMs: 86_400_000,
       locales: ["en", "zh-CN"],
     });
   });
@@ -193,6 +195,8 @@ describe("createResolvedGeocodingSettings", () => {
       nominatimUserAgent: "afilmory/1.0",
       cachePath: "/tmp/geo.json",
       cachePrecision: 6,
+      requestTimeoutMs: 10_000,
+      negativeCacheTtlMs: 86_400_000,
       locales: ["en", "fr"],
     });
     expect("enable" in settings).toBe(false);

@@ -93,10 +93,15 @@ export class ManifestAssembler {
     const cameraMap = new Map<string, CameraInfo>();
 
     for (const photo of manifest) {
-      if (!photo.exif?.Make || !photo.exif?.Model) continue;
+      const rawMake = photo.exif?.Make;
+      const rawModel = photo.exif?.Model;
+      if (typeof rawMake !== "string" || typeof rawModel !== "string") {
+        continue;
+      }
 
-      const make = photo.exif.Make.trim();
-      const model = photo.exif.Model.trim();
+      const make = rawMake.trim();
+      const model = rawModel.trim();
+      if (!make || !model) continue;
       const displayName = `${make} ${model}`;
 
       if (!cameraMap.has(displayName)) {
@@ -117,10 +122,15 @@ export class ManifestAssembler {
     const lensMap = new Map<string, LensInfo>();
 
     for (const photo of manifest) {
-      if (!photo.exif?.LensModel) continue;
+      const rawLensModel = photo.exif?.LensModel;
+      if (typeof rawLensModel !== "string") continue;
 
-      const lensModel = photo.exif.LensModel.trim();
-      const lensMake = photo.exif.LensMake?.trim();
+      const lensModel = rawLensModel.trim();
+      const lensMake =
+        typeof photo.exif?.LensMake === "string"
+          ? photo.exif.LensMake.trim()
+          : undefined;
+      if (!lensModel) continue;
       const displayName = lensMake ? `${lensMake} ${lensModel}` : lensModel;
 
       if (!lensMap.has(displayName)) {

@@ -33,23 +33,10 @@ describe("Semaphore", () => {
     release2();
   });
 
-  it("treats a permit count below 1 as exactly 1", async () => {
-    const sem = new Semaphore(0); // clamped up to 1 permit
-    const release = await sem.acquire();
-
-    let second = false;
-    const pending = sem.acquire().then((release2) => {
-      second = true;
-      return release2;
-    });
-
-    await Promise.resolve();
-    expect(second).toBe(false); // second acquire parked behind the lone permit
-
-    release();
-    const release2 = await pending; // deterministic wait for the hand-off
-    expect(second).toBe(true);
-    release2();
+  it("rejects invalid permit counts instead of silently changing scheduling", () => {
+    expect(() => new Semaphore(0)).toThrow(/positive integer/);
+    expect(() => new Semaphore(-1)).toThrow(/positive integer/);
+    expect(() => new Semaphore(1.5)).toThrow(/positive integer/);
   });
 
   it("run() bounds concurrency and returns each fn's result in order", async () => {
@@ -87,5 +74,19 @@ describe("Semaphore", () => {
     const release = await sem.acquire();
     expect(typeof release).toBe("function");
     release();
+  });
+
+  it("removes an aborted waiter without consuming a permit", async () => {
+    const sem = new Semaphore(1);
+    const release = await sem.acquire();
+    const controller = new AbortController();
+    const pending = sem.acquire(controller.signal);
+
+    controller.abort(new Error("cancelled"));
+    await expect(pending).rejects.toThrow("cancelled");
+    release();
+
+    const nextRelease = await sem.acquire();
+    nextRelease();
   });
 });

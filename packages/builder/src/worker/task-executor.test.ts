@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDefaultBuilderConfig } from "../config/defaults.js";
 import type { BuilderServices } from "../core/contracts/services.js";
@@ -98,6 +98,7 @@ function createRuntime(
 }
 
 describe("worker task executor", () => {
+  afterEach(() => vi.useRealTimers());
   it("narrows builder options to processor force flags", () => {
     const progressListener = { onComplete: vi.fn() };
     expect(
@@ -203,5 +204,25 @@ describe("worker task executor", () => {
       error: "Invalid taskIndex: 99",
     });
     expect(processPhoto).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a structured error when a worker task exceeds its watchdog", async () => {
+    vi.useFakeTimers();
+    const runtime = createRuntime({ taskTimeoutMs: 25 });
+    const processPhoto = vi.fn<WorkerProcessPhoto>(
+      async () => await new Promise<ProcessPhotoResult>(() => {}),
+    );
+    const responsePromise = executeWorkerTask(
+      { type: "task", taskId: "hung", taskIndex: 0, workerId: 7 },
+      runtime,
+      processPhoto,
+    );
+
+    await vi.advanceTimersByTimeAsync(25);
+    await expect(responsePromise).resolves.toMatchObject({
+      error: "Cluster worker 7 task 1 timed out after 25ms",
+      taskId: "hung",
+      type: "error",
+    });
   });
 });

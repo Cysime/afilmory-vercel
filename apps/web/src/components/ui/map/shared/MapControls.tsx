@@ -1,4 +1,4 @@
-import { m } from "motion/react";
+import { m, useReducedMotion } from "motion/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMap } from "react-map-gl/maplibre";
@@ -16,24 +16,35 @@ export const MapControls = ({ onGeolocate }: MapControlsProps) => {
   const { current: map } = useMap();
   const { t } = useTranslation();
   const [isLocating, setIsLocating] = useState(false);
+  const shouldReduceMotion = useReducedMotion() === true;
 
   const handleZoomIn = () => {
     if (map) {
       const currentZoom = map.getZoom();
-      map.easeTo({ zoom: currentZoom + 1, duration: 300 });
+      map.easeTo({
+        zoom: currentZoom + 1,
+        duration: shouldReduceMotion ? 0 : 300,
+      });
     }
   };
 
   const handleZoomOut = () => {
     if (map) {
       const currentZoom = map.getZoom();
-      map.easeTo({ zoom: currentZoom - 1, duration: 300 });
+      map.easeTo({
+        zoom: currentZoom - 1,
+        duration: shouldReduceMotion ? 0 : 300,
+      });
     }
   };
 
   const handleCompass = () => {
     if (map) {
-      map.easeTo({ bearing: 0, pitch: 0, duration: 500 });
+      map.easeTo({
+        bearing: 0,
+        pitch: 0,
+        duration: shouldReduceMotion ? 0 : 500,
+      });
     }
   };
 
@@ -54,7 +65,7 @@ export const MapControls = ({ onGeolocate }: MapControlsProps) => {
           map.flyTo({
             center: [longitude, latitude],
             zoom: 14,
-            duration: 1000,
+            duration: shouldReduceMotion ? 0 : 1000,
           });
         }
         onGeolocate?.(longitude, latitude);
@@ -75,9 +86,11 @@ export const MapControls = ({ onGeolocate }: MapControlsProps) => {
   return (
     <m.div
       className="absolute bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-[calc(env(safe-area-inset-left)+1rem)] z-40 flex flex-col gap-3"
-      initial={{ opacity: 0, x: -20 }}
+      initial={shouldReduceMotion ? false : { opacity: 0, x: -20 }}
       animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.4, delay: 0.2 }}
+      transition={
+        shouldReduceMotion ? { duration: 0 } : { duration: 0.4, delay: 0.2 }
+      }
     >
       {/* Control Group Container */}
       <div className={`${controlShellClassName} flex flex-col`}>
@@ -89,7 +102,10 @@ export const MapControls = ({ onGeolocate }: MapControlsProps) => {
           aria-label={t("explore.controls.zoom.in")}
           title={t("explore.controls.zoom.in")}
         >
-          <i className="i-mingcute-add-line text-text size-5 transition-transform group-hover:scale-110 group-active:scale-95" />
+          <i
+            className="i-mingcute-add-line text-text size-5 transition-transform group-hover:scale-110 group-active:scale-95"
+            aria-hidden="true"
+          />
         </button>
 
         {/* Divider */}
@@ -103,7 +119,10 @@ export const MapControls = ({ onGeolocate }: MapControlsProps) => {
           aria-label={t("explore.controls.zoom.out")}
           title={t("explore.controls.zoom.out")}
         >
-          <i className="i-mingcute-minimize-line text-text size-5 transition-transform group-hover:scale-110 group-active:scale-95" />
+          <i
+            className="i-mingcute-minimize-line text-text size-5 transition-transform group-hover:scale-110 group-active:scale-95"
+            aria-hidden="true"
+          />
         </button>
       </div>
 
@@ -116,7 +135,10 @@ export const MapControls = ({ onGeolocate }: MapControlsProps) => {
           aria-label={t("explore.controls.compass")}
           title={t("explore.controls.compass")}
         >
-          <i className="i-mingcute-navigation-line text-text size-5 transition-transform group-hover:scale-110 group-active:scale-95" />
+          <i
+            className="i-mingcute-navigation-line text-text size-5 transition-transform group-hover:scale-110 group-active:scale-95"
+            aria-hidden="true"
+          />
         </button>
       </div>
 
@@ -135,6 +157,7 @@ export const MapControls = ({ onGeolocate }: MapControlsProps) => {
             className={`i-mingcute-location-fill text-text size-5 transition-transform group-hover:scale-110 group-active:scale-95 ${
               isLocating ? "animate-pulse" : ""
             }`}
+            aria-hidden="true"
           />
         </button>
       </div>

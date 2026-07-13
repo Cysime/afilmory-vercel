@@ -10,15 +10,16 @@ import {
 function createValidPhoto(
   overrides: Partial<PhotoManifestItem> = {},
 ): PhotoManifestItem {
+  const id = overrides.id ?? "photo";
   return {
-    id: "photo",
+    id,
     originalUrl: "https://example.com/photo.jpg",
     thumbnailUrl: "/thumbnails/photo.jpg",
     thumbHash: null,
     width: 4000,
     height: 3000,
     aspectRatio: 4 / 3,
-    s3Key: "photos/photo.jpg",
+    s3Key: `photos/${id}.jpg`,
     lastModified: "2026-06-06T00:00:00.000Z",
     size: 1234,
     etag: "etag",
@@ -122,7 +123,9 @@ describe("strict/lenient agreement", () => {
     expect(lenient.manifest.photos.map((photo) => photo.id)).toEqual(["soft"]);
     expect(strict.success).toBe(false);
     expect(strict).toMatchObject({
-      issues: expect.arrayContaining(["photos[0].width must be a number"]),
+      issues: expect.arrayContaining([
+        "photos[0].width must be a positive integer",
+      ]),
     });
   });
 });

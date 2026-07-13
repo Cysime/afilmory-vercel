@@ -22,6 +22,7 @@ export type BuildSessionStorageManager = Pick<
   | "generatePublicUrl"
   | "getFile"
   | "listAllFiles"
+  | "listAllFilesDetailed"
   | "listImages"
   | "uploadFile"
 >;

@@ -33,7 +33,10 @@ export const MapBackButton = () => {
       aria-label={t("explore.back.to.gallery")}
       title={t("explore.back.to.gallery")}
     >
-      <i className="i-mingcute-arrow-left-line text-base text-white" />
+      <i
+        className="i-mingcute-arrow-left-line text-base text-white"
+        aria-hidden="true"
+      />
     </GlassButton>
   );
 };

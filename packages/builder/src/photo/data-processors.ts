@@ -11,7 +11,7 @@ import { extractExifData } from "../image/exif.js";
 import { calculateHistogramAndAnalyzeTone } from "../image/histogram.js";
 import {
   generateThumbnailAndThumbHash,
-  getThumbnailPublicUrl,
+  resolveExistingThumbnail,
   thumbnailExists,
 } from "../image/thumbnail.js";
 import type {
@@ -55,18 +55,22 @@ export async function processThumbnailAndThumbHash(
     !options.isForceMode &&
     !options.isForceThumbnails &&
     existingItem?.thumbHash &&
-    (await thumbnailExists(photoId, thumbnailsDir))
+    (await thumbnailExists(photoId, thumbnailsDir, existingItem.thumbnailUrl))
   ) {
     try {
-      const thumbnailPath = path.join(thumbnailsDir, `${photoId}.jpg`);
-      const thumbnailBuffer = await fs.readFile(thumbnailPath);
-      const thumbnailUrl = getThumbnailPublicUrl(photoId);
+      const existingThumbnail = await resolveExistingThumbnail(
+        photoId,
+        thumbnailsDir,
+        existingItem.thumbnailUrl,
+      );
+      if (!existingThumbnail) throw new Error("Thumbnail disappeared");
+      const thumbnailBuffer = await fs.readFile(existingThumbnail.path);
 
       loggers.thumbhash.info(`Reusing existing thumbhash: ${photoId}`);
       loggers.thumbnail.info(`Reusing existing thumbnail: ${photoId}`);
 
       return {
-        thumbnailUrl,
+        thumbnailUrl: existingThumbnail.url,
         thumbnailBuffer,
         thumbHash: hexToUint8Array(existingItem.thumbHash),
       };
@@ -86,6 +90,7 @@ export async function processThumbnailAndThumbHash(
     imageBuffer,
     photoId,
     contentChanged || options.isForceMode || options.isForceThumbnails,
+    existingItem?.thumbnailUrl,
   );
 
   // 生成失败（null）时原样传导：让上层把该照片标记为失败并跳过，

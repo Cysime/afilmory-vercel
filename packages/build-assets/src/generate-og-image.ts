@@ -1,7 +1,13 @@
 /* eslint-disable no-console */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import sharp from "sharp";
@@ -13,6 +19,65 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // packages/build-assets/src -> 仓库根需要上跳三层（原先在根 scripts/ 时是一层）
 const monorepoRoot = resolve(__dirname, "../../..");
 const webPublicDir = join(monorepoRoot, "apps/web/public");
+
+/** Resolve the build-only public asset root and fail early on bad overrides. */
+export function resolvePublicAssetDirectory(
+  override = process.env.AFILMORY_PUBLIC_ASSET_DIR,
+): string {
+  const requestedDirectory = resolve(override ?? webPublicDir);
+  let realDirectory: string;
+  try {
+    realDirectory = realpathSync(requestedDirectory);
+  } catch (error) {
+    throw new Error(
+      `[og-image] AFILMORY_PUBLIC_ASSET_DIR must point to an existing directory: ${requestedDirectory}`,
+      { cause: error },
+    );
+  }
+  if (!statSync(realDirectory).isDirectory()) {
+    throw new Error(
+      `[og-image] AFILMORY_PUBLIC_ASSET_DIR must point to a directory: ${requestedDirectory}`,
+    );
+  }
+  return realDirectory;
+}
+
+/** Resolve a root-relative public asset without allowing traversal/symlinks. */
+export function resolvePublicAssetPath(
+  assetUrl: string,
+  publicDirectory = webPublicDir,
+): string | null {
+  if (!assetUrl.startsWith("/") || assetUrl.startsWith("//")) return null;
+
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(assetUrl.split(/[?#]/, 1)[0] ?? "");
+  } catch {
+    return null;
+  }
+  if (decodedPath.includes("\0") || decodedPath.includes("\\")) return null;
+
+  try {
+    const realPublicDirectory = realpathSync(publicDirectory);
+    const candidatePath = resolve(realPublicDirectory, `.${decodedPath}`);
+    const candidateRelativePath = relative(realPublicDirectory, candidatePath);
+    if (
+      candidateRelativePath.startsWith("..") ||
+      isAbsolute(candidateRelativePath)
+    ) {
+      return null;
+    }
+
+    const realCandidatePath = realpathSync(candidatePath);
+    const realRelativePath = relative(realPublicDirectory, realCandidatePath);
+    if (realRelativePath.startsWith("..") || isAbsolute(realRelativePath)) {
+      return null;
+    }
+    return statSync(realCandidatePath).isFile() ? realCandidatePath : null;
+  } catch {
+    return null;
+  }
+}
 
 // 获取最新的照片
 async function getLatestPhotos(count = 4) {
@@ -33,12 +98,19 @@ async function getLatestPhotos(count = 4) {
 }
 
 // 下载并处理照片缩略图
-async function downloadAndProcessThumbnail(thumbnailUrl: string, size = 150) {
+async function downloadAndProcessThumbnail(
+  thumbnailUrl: string,
+  size: number,
+  publicAssetDirectory: string,
+) {
   try {
     // 如果是本地路径，直接读取
     if (thumbnailUrl.startsWith("/")) {
-      const localPath = join(webPublicDir, thumbnailUrl.slice(1));
-      if (existsSync(localPath)) {
+      const localPath = resolvePublicAssetPath(
+        thumbnailUrl,
+        publicAssetDirectory,
+      );
+      if (localPath) {
         return await sharp(localPath)
           .resize(size, size, { fit: "cover" })
           .png()
@@ -178,6 +250,7 @@ export async function generateOGImage(options: OGImageOptions) {
     let finalImage: sharp.Sharp;
 
     if (includePhotos) {
+      const publicAssetDirectory = resolvePublicAssetDirectory();
       // 获取最新照片
       const latestPhotos = await getLatestPhotos(photoCount);
       console.info(`📸 Found ${latestPhotos.length} latest photos`);
@@ -227,7 +300,7 @@ export async function generateOGImage(options: OGImageOptions) {
       const wrappedDescription = wrapSVGText(description, width - 120, {
         fontSize: 24,
       });
-      const footerText = `Latest Photos • Generated on ${new Date().toLocaleDateString()}`;
+      const footerText = "Latest Photos";
 
       const titleSVG = renderSVGText(wrappedTitle, 60, 72, {
         fontSize: 48,
@@ -282,6 +355,7 @@ export async function generateOGImage(options: OGImageOptions) {
         const thumbnailBuffer = await downloadAndProcessThumbnail(
           photo.thumbnailUrl,
           photoSize,
+          publicAssetDirectory,
         );
 
         if (thumbnailBuffer) {
@@ -320,7 +394,7 @@ export async function generateOGImage(options: OGImageOptions) {
       const simpleWrappedDescription = wrapSVGText(description, width - 120, {
         fontSize: 32,
       });
-      const simpleFooterText = `Generated on ${new Date().toLocaleDateString()}`;
+      const simpleFooterText = "Photo Gallery";
 
       const simpleTitleSVG = renderSVGText(simpleWrappedTitle, 60, 152, {
         fontSize: 72,

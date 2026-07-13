@@ -146,10 +146,11 @@ export const LoadingIndicator = ({
       : null;
 
   return (
-    // 状态更新已由 MIN_VISIBLE_DURATION_MS 节流，polite 播报不会刷屏。
+    // 加载进度使用 polite；错误态切换为 alert，避免读屏器错过最终失败。
     <div
-      role="status"
-      aria-live="polite"
+      role={loadingState.isError ? "alert" : "status"}
+      aria-live={loadingState.isError ? "assertive" : "polite"}
+      aria-atomic="true"
       className="pointer-events-none absolute right-4 bottom-4 z-10 rounded-xl border border-white/10 bg-black/80 px-3 py-2 backdrop-blur"
     >
       <div className="flex items-center gap-3 text-white">
@@ -163,12 +164,9 @@ export const LoadingIndicator = ({
         <div className="flex min-w-0 flex-col gap-0.5">
           {loadingState.isError ? (
             // 错误状态
-            <>
-              <p className="text-xs font-medium text-red-400">
-                {loadingState.errorMessage || t("photo.error.loading")}
-              </p>
-              <p className="text-xs text-white/70">{t("loading.default")}</p>
-            </>
+            <p className="text-xs font-medium text-red-400">
+              {loadingState.errorMessage || t("photo.error.loading")}
+            </p>
           ) : loadingState.isConverting ? (
             // 视频转换状态
             <>

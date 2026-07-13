@@ -7,7 +7,11 @@ import {
 } from "../stale-runtime-recovery";
 
 type ServiceWorkerRegistrationMock = {
+  active: { scriptURL: string } | null;
+  installing: null;
+  scope: string;
   unregister: ReturnType<typeof vi.fn>;
+  waiting: null;
 };
 
 describe("stale-runtime-recovery", () => {
@@ -37,8 +41,8 @@ describe("stale-runtime-recovery", () => {
   });
 
   it("unregisters service workers, deletes runtime caches, and reloads with a cache bust", async () => {
-    const registrationA = createRegistration(true);
-    const registrationB = createRegistration(false);
+    const registrationA = createRegistration(true, "/sw.js");
+    const registrationB = createRegistration(true, "/other-app/sw.js");
     const reload = vi.fn();
     const cacheDelete = vi.fn(async () => true);
 
@@ -78,7 +82,7 @@ describe("stale-runtime-recovery", () => {
     });
 
     expect(registrationA.unregister).toHaveBeenCalledTimes(1);
-    expect(registrationB.unregister).toHaveBeenCalledTimes(1);
+    expect(registrationB.unregister).not.toHaveBeenCalled();
     expect(cacheDelete).not.toHaveBeenCalledWith("unrelated-cache");
     expect(reload).toHaveBeenCalledWith(
       "http://localhost:3000/photos/A7C03142?mode=photos&__afilmory_refresh=1234",
@@ -86,7 +90,7 @@ describe("stale-runtime-recovery", () => {
   });
 
   it("avoids an automatic reload loop after the first stale runtime recovery attempt", async () => {
-    const registration = createRegistration(true);
+    const registration = createRegistration(true, "/sw.js");
     const reload = vi.fn();
 
     stubServiceWorkerState([registration]);
@@ -131,9 +135,14 @@ describe("stale-runtime-recovery", () => {
 
 function createRegistration(
   unregisterResult: boolean,
+  scriptPath: string,
 ): ServiceWorkerRegistrationMock {
   return {
+    active: { scriptURL: new URL(scriptPath, window.location.href).toString() },
+    installing: null,
+    scope: new URL("/", window.location.href).toString(),
     unregister: vi.fn(async () => unregisterResult),
+    waiting: null,
   };
 }
 

@@ -51,7 +51,7 @@ export const PhotoViewerToolbar = ({
             )}
             onClick={onToggleExifPanel}
           >
-            <i className="i-mingcute-information-line" />
+            <i className="i-mingcute-information-line" aria-hidden="true" />
           </button>
         )}
       </div>
@@ -67,19 +67,20 @@ export const PhotoViewerToolbar = ({
               aria-label={t("photo.share.title")}
               title={t("photo.share.title")}
             >
-              <i className="i-mingcute-share-2-line" />
+              <i className="i-mingcute-share-2-line" aria-hidden="true" />
             </button>
           }
         />
 
         <button
           type="button"
+          data-photo-viewer-close
           aria-label={t("common.close")}
           title={t("common.close")}
           className={viewerToolbarButtonClassName}
           onClick={onClose}
         >
-          <i className="i-mingcute-close-line" />
+          <i className="i-mingcute-close-line" aria-hidden="true" />
         </button>
       </div>
     </m.div>

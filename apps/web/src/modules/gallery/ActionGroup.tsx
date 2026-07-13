@@ -8,6 +8,7 @@ import {
   gallerySettingAtom,
   isCommandPaletteOpenAtom,
 } from "~/atoms/app";
+import { siteConfig } from "~/config";
 
 import { ResponsiveActionButton } from "./components/ActionButton";
 import { ViewPanel } from "./panels/ViewPanel";
@@ -46,7 +47,10 @@ export const ActionGroup = () => {
         aria-label={t("action.search.unified.title")}
         title={t("action.search.unified.title")}
       >
-        <i className="i-mingcute-search-line text-text-secondary text-base" />
+        <i
+          className="i-mingcute-search-line text-text-secondary text-base"
+          aria-hidden="true"
+        />
         {filterCount > 0 && (
           <span className="bg-accent absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full text-xs font-medium text-white shadow-sm">
             {filterCount}
@@ -54,17 +58,21 @@ export const ActionGroup = () => {
         )}
       </Button>
 
-      {/* 地图探索按钮 */}
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => navigate("/explore")}
-        className="bg-material-medium border-fill-tertiary hover:bg-fill-secondary focus-visible:ring-accent/45 focus-visible:ring-offset-background h-11 w-11 rounded-full border shadow-sm backdrop-blur-xl transition-[background-color,border-color,box-shadow,color,transform] duration-200 hover:shadow-md focus-visible:ring-2 focus-visible:ring-offset-2"
-        aria-label={t("action.map.explore")}
-        title={t("action.map.explore")}
-      >
-        <i className="i-mingcute-map-pin-line text-text-secondary text-base" />
-      </Button>
+      {siteConfig.map && siteConfig.map.length > 0 ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate("/explore")}
+          className="bg-material-medium border-fill-tertiary hover:bg-fill-secondary focus-visible:ring-accent/45 focus-visible:ring-offset-background h-11 w-11 rounded-full border shadow-sm backdrop-blur-xl transition-[background-color,border-color,box-shadow,color,transform] duration-200 hover:shadow-md focus-visible:ring-2 focus-visible:ring-offset-2"
+          aria-label={t("action.map.explore")}
+          title={t("action.map.explore")}
+        >
+          <i
+            aria-hidden="true"
+            className="i-mingcute-map-pin-line text-text-secondary text-base"
+          />
+        </Button>
+      ) : null}
 
       {/* 视图设置按钮（合并排序和列数） */}
       <ResponsiveActionButton

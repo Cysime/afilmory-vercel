@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { PhotoManifestItem, PickedExif } from "../types/photo.js";
 import { createGeocodingCacheState } from "./geocoding-cache.js";
@@ -39,11 +39,16 @@ const gpsExif: PickedExif = {
 
 const settings: ResolvedGeocodingSettings = {
   cachePrecision: 4,
+  negativeCacheTtlMs: 60_000,
+  requestTimeoutMs: 10_000,
   locales: ["en", "zh-CN"],
   provider: "nominatim",
 };
 
 describe("geocoding location resolver", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
   it("resolves missing localized locations through providers and cache", async () => {
     const item = createPhoto();
     const state = createGeocodingCacheState();
@@ -76,7 +81,8 @@ describe("geocoding location resolver", () => {
       }),
     });
 
-    expect(result).toEqual({ attempted: true, updated: true });
+    expect(result).toMatchObject({ attempted: true, updated: true });
+    expect(result.cacheDelta?.key).toBe("nominatim||4|41.4031|2.1740");
     expect(calls).toEqual(["en", "zh-CN"]);
     expect(item.location).toMatchObject({
       adminKey: {
@@ -100,5 +106,59 @@ describe("geocoding location resolver", () => {
       },
     });
     expect(state.cache.size).toBe(1);
+  });
+
+  it("does not cache transient provider failures as not-found", async () => {
+    const item = createPhoto();
+    const state = createGeocodingCacheState();
+    const provider = {
+      reverseGeocode: vi.fn(async () => {
+        throw new Error("temporary network failure");
+      }),
+    };
+
+    const result = await resolveLocationForItem({
+      item,
+      exif: gpsExif,
+      state,
+      settings: { ...settings, locales: ["en"] },
+      shouldOverwriteExisting: false,
+      logger,
+      getProvider: () => provider,
+    });
+
+    expect(result).toMatchObject({ attempted: true, updated: false });
+    expect([...state.cache.values()][0]?.locales).toEqual({});
+    expect(state.cacheDirty).toBe(false);
+  });
+
+  it("expires confirmed not-found entries and retries them", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    const item = createPhoto();
+    const state = createGeocodingCacheState();
+    const provider = { reverseGeocode: vi.fn(async () => null) };
+    const negativeSettings = {
+      ...settings,
+      locales: ["en"],
+      negativeCacheTtlMs: 100,
+    };
+    const input = {
+      item,
+      exif: gpsExif,
+      state,
+      settings: negativeSettings,
+      shouldOverwriteExisting: false,
+      logger,
+      getProvider: () => provider,
+    };
+
+    await resolveLocationForItem(input);
+    await resolveLocationForItem(input);
+    expect(provider.reverseGeocode).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.101Z"));
+    await resolveLocationForItem(input);
+    expect(provider.reverseGeocode).toHaveBeenCalledTimes(2);
   });
 });

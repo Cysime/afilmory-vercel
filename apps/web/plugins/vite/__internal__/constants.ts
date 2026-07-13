@@ -1,10 +1,10 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const dirname = path.dirname(new URL(import.meta.url).pathname);
-export const MANIFEST_PATH = path.resolve(
-  dirname,
-  "../../../../../generated/photos-manifest.json",
-);
+import { resolveBuildManifestPath } from "@afilmory/build-assets";
+
+const dirname = path.dirname(fileURLToPath(import.meta.url));
+export const MANIFEST_PATH = resolveBuildManifestPath();
 
 const MONOREPO_ROOT_PATH = path.resolve(dirname, "../../../../..");
 

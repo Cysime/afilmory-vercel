@@ -1,42 +1,26 @@
 import { Button } from "@afilmory/ui";
-import { useLocation, useNavigate } from "react-router";
+import { useTranslation } from "react-i18next";
+import { Link, useLocation } from "react-router";
 
 export const NotFound = () => {
   const location = useLocation();
-  const navigate = useNavigate();
-
-  const handleBackToHome = () => {
-    try {
-      // 尝试使用 React Router 导航
-      navigate("/", { replace: true });
-      // 如果导航失败，使用 window.location 作为后备方案
-      setTimeout(() => {
-        if (window.location.pathname !== "/") {
-          window.location.href = "/";
-        }
-      }, 100);
-    } catch (error) {
-      console.error(
-        "[NotFound] Navigation failed, using window.location:",
-        error,
-      );
-      window.location.href = "/";
-    }
-  };
+  const { t } = useTranslation();
 
   return (
-    <div className="prose center dark:prose-invert m-auto size-full flex-col">
+    <div className="prose dark:prose-invert mx-auto flex min-h-svh max-w-2xl flex-col px-6 text-center">
       <main className="flex grow flex-col items-center justify-center">
-        <p className="font-semibold">
-          You have come to a desert of knowledge where there is nothing.
-        </p>
-        <p>
-          Current path: <code>{location.pathname}</code>
+        <h1 className="text-balance">{t("error.not-found.title")}</h1>
+        <p className="text-pretty">{t("error.not-found.description")}</p>
+        <p className="max-w-full">
+          {t("error.not-found.path")}:{" "}
+          <code className="break-all">{location.pathname}</code>
         </p>
 
         <p>
-          <Button className="h-11 px-4" onClick={handleBackToHome}>
-            Back to Home
+          <Button asChild className="h-11 px-4">
+            <Link to="/" replace>
+              {t("common.home")}
+            </Link>
           </Button>
         </p>
       </main>

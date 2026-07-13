@@ -110,6 +110,8 @@ export const ClusterPhotoGrid = ({
                   photoMarker.photo.originalUrl
                 }
                 alt={photoMarker.photo.title || photoMarker.photo.id}
+                width={photoMarker.photo.width}
+                height={photoMarker.photo.height}
                 thumbHash={photoMarker.photo.thumbHash}
                 containerClassName="h-full w-full"
                 imageClassName="h-full w-full object-cover transition-transform duration-300 group-hover:scale-110"
@@ -170,14 +172,20 @@ export const ClusterPhotoGrid = ({
       {primaryPhoto && (
         <div className="border-border space-y-2 border-t pt-3">
           <div className="text-text-secondary flex items-center gap-2 text-xs">
-            <i className="i-mingcute-location-line text-sm" />
+            <i
+              className="i-mingcute-location-line text-sm"
+              aria-hidden="true"
+            />
             <span className="font-mono">{locationLabel}</span>
           </div>
 
           {/* 拍摄时间范围 */}
           {dateRangeLabel && (
             <div className="text-text-secondary flex items-center gap-2 text-xs">
-              <i className="i-mingcute-calendar-line text-sm" />
+              <i
+                className="i-mingcute-calendar-line text-sm"
+                aria-hidden="true"
+              />
               <span>{dateRangeLabel}</span>
             </div>
           )}

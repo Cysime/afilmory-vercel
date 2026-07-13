@@ -39,7 +39,7 @@ export const SortPanel = () => {
             type="button"
             aria-pressed={active}
             className={clsxm(
-              "focus-visible:ring-accent/45 group flex h-12 w-full items-center gap-3 rounded-xl border px-3 text-left transition-all duration-200 focus-visible:ring-2 focus-visible:ring-inset",
+              "focus-visible:ring-accent/45 group flex h-12 w-full items-center gap-3 rounded-xl border px-3 text-left transition-[background-color,border-color,box-shadow,color,transform] duration-200 focus-visible:ring-2 focus-visible:ring-inset",
               active
                 ? "border-accent/35 bg-accent/10 text-accent"
                 : "border-fill-tertiary bg-fill-vibrant-quinary text-text hover:bg-fill-secondary",
@@ -54,13 +54,16 @@ export const SortPanel = () => {
                   : "bg-material-thin text-text-secondary group-hover:text-text",
               )}
             >
-              <i className={option.icon} />
+              <i className={option.icon} aria-hidden="true" />
             </span>
             <span className="min-w-0 flex-1 truncate font-medium">
               {option.label}
             </span>
             {active && (
-              <i className="i-mingcute-check-line shrink-0 text-base" />
+              <i
+                className="i-mingcute-check-line shrink-0 text-base"
+                aria-hidden="true"
+              />
             )}
           </button>
         );

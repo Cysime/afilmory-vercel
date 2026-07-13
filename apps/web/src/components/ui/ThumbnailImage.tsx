@@ -18,6 +18,8 @@ export interface ThumbnailImageProps {
   photoId: string;
   src: string;
   alt: string;
+  width?: number;
+  height?: number;
   thumbHash?: string | null;
   containerClassName?: string;
   imageClassName?: string;
@@ -40,6 +42,8 @@ export const ThumbnailImage = ({
   photoId,
   src,
   alt,
+  width,
+  height,
   thumbHash,
   containerClassName,
   imageClassName,
@@ -173,6 +177,8 @@ export const ThumbnailImage = ({
           ref={setImageRef}
           src={src}
           alt={alt}
+          width={width}
+          height={height}
           loading={loading}
           fetchPriority={fetchPriority}
           decoding={decoding}

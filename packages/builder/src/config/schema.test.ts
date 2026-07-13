@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import geocodingPlugin from "../plugins/geocoding.js";
 import type { BuilderConfigInput } from "../types/config.js";
 import { createDefaultBuilderConfig } from "./defaults.js";
 import { applyBuilderConfigInput, redactConfigSecrets } from "./schema.js";
@@ -99,7 +100,7 @@ describe("applyBuilderConfigInput — worker section moved to system.processing.
     expect(config.system.observability.performance.worker).toEqual({
       workerCount: 4,
       useClusterMode: false,
-      timeout: 30_000,
+      timeout: 300_000,
       workerConcurrency: 2,
     });
     // 内部只有一份 worker 配置：processing 下不残留副本
@@ -246,6 +247,100 @@ describe("applyBuilderConfigInput — shape validation", () => {
     );
   });
 
+  it.each([
+    ["workerCount", 0],
+    ["workerConcurrency", -1],
+    ["timeout", 0],
+    ["workerCount", 1.5],
+  ])("rejects invalid worker %s=%s", (key, value) => {
+    expect(() =>
+      applyBuilderConfigInput(
+        createDefaultBuilderConfig(),
+        asInput({
+          system: { processing: { worker: { [key]: value } } },
+        }),
+      ),
+    ).toThrow(`system.processing.worker.${key}`);
+  });
+
+  it.each([
+    ["maxFileLimit", 0],
+    ["maxSockets", 0],
+    ["maxAttempts", 0],
+    ["downloadConcurrency", 0],
+  ])("rejects invalid S3 %s=%s", (key, value) => {
+    expect(() =>
+      applyBuilderConfigInput(
+        createDefaultBuilderConfig(),
+        asInput({ storage: { provider: "s3", [key]: value } }),
+      ),
+    ).toThrow(`storage.${key}`);
+  });
+
+  it("allows the default credential chain but rejects partial explicit credentials", () => {
+    expect(() =>
+      applyBuilderConfigInput(
+        createDefaultBuilderConfig(),
+        asInput({ storage: { provider: "s3", bucket: "photos" } }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      applyBuilderConfigInput(
+        createDefaultBuilderConfig(),
+        asInput({
+          storage: {
+            provider: "s3",
+            bucket: "photos",
+            accessKeyId: "key-only",
+          },
+        }),
+      ),
+    ).toThrow(/must either both be provided or both be omitted/);
+  });
+
+  it.each([
+    ["endpoint", "https://user:secret@s3.example.com"],
+    ["endpoint", "https://s3.example.com?token=secret"],
+    ["customDomain", "https://cdn.example.com/#private"],
+  ])("rejects unsafe public S3 %s URLs", (key, value) => {
+    expect(() =>
+      applyBuilderConfigInput(
+        createDefaultBuilderConfig(),
+        asInput({
+          storage: { provider: "s3", bucket: "photos", [key]: value },
+        }),
+      ),
+    ).toThrow(`storage.${key}`);
+  });
+
+  it("requires the aggregate download memory budget to cover one allowed file", () => {
+    expect(() =>
+      applyBuilderConfigInput(
+        createDefaultBuilderConfig(),
+        asInput({
+          storage: {
+            provider: "s3",
+            bucket: "photos",
+            maxDownloadBytes: 20,
+            downloadMemoryBudgetBytes: 10,
+          },
+        }),
+      ),
+    ).toThrow(/downloadMemoryBudgetBytes/);
+    expect(() =>
+      applyBuilderConfigInput(
+        createDefaultBuilderConfig(),
+        asInput({
+          storage: {
+            provider: "s3",
+            bucket: "photos",
+            maxDownloadBytes: 3 * 1024 * 1024 * 1024,
+          },
+        }),
+      ),
+    ).toThrow(/downloadMemoryBudgetBytes/);
+  });
+
   it("throws when an output path is not a string", () => {
     expect(() =>
       applyBuilderConfigInput(
@@ -277,6 +372,15 @@ describe("applyBuilderConfigInput — shape validation", () => {
     ).toThrow(
       '[config] Invalid value for "storage.basePath": provider "local" requires a non-empty string basePath, got a value of type undefined',
     );
+  });
+
+  it("throws when an S3 provider is missing its bucket", () => {
+    expect(() =>
+      applyBuilderConfigInput(
+        createDefaultBuilderConfig(),
+        asInput({ storage: { provider: "s3" } }),
+      ),
+    ).toThrow(/provider "s3" requires a non-empty string bucket/);
   });
 
   it("throws on an invalid logging level", () => {
@@ -383,5 +487,55 @@ describe("redactConfigSecrets", () => {
       provider: "local",
       basePath: "/photos",
     });
+  });
+
+  it("deeply redacts provider tokens embedded in plugin descriptors", () => {
+    const config = createDefaultBuilderConfig();
+    config.plugins = [
+      {
+        plugin: "geocoding",
+        options: { mapboxToken: "pk.secret", nested: { apiToken: "also" } },
+      },
+    ];
+
+    const sanitized = redactConfigSecrets(config);
+    expect(sanitized.plugins).toEqual([
+      {
+        plugin: "geocoding",
+        options: { mapboxToken: "***", nested: { apiToken: "***" } },
+      },
+    ]);
+    expect(config.plugins).toEqual([
+      {
+        plugin: "geocoding",
+        options: {
+          mapboxToken: "pk.secret",
+          nested: { apiToken: "also" },
+        },
+      },
+    ]);
+  });
+
+  it("redacts tokens from initialized built-in plugin references", () => {
+    const config = createDefaultBuilderConfig();
+    config.plugins = [
+      geocodingPlugin({ enable: true, mapboxToken: "pk.production" }),
+    ];
+
+    const sanitized = redactConfigSecrets(config);
+    expect(
+      (
+        sanitized.plugins[0] as {
+          serializablePluginReference?: { options?: { mapboxToken?: string } };
+        }
+      ).serializablePluginReference?.options?.mapboxToken,
+    ).toBe("***");
+    expect(
+      (
+        config.plugins[0] as {
+          serializablePluginReference?: { options?: { mapboxToken?: string } };
+        }
+      ).serializablePluginReference?.options?.mapboxToken,
+    ).toBe("pk.production");
   });
 });

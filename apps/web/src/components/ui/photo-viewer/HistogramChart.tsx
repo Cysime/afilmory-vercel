@@ -18,6 +18,12 @@ interface HistogramData {
   luminance: number[];
 }
 
+interface CanvasSize {
+  dpr: number;
+  height: number;
+  width: number;
+}
+
 const calculateHistogram = (imageData: ImageData): CompressedHistogramData => {
   const histogram: HistogramData = {
     red: Array.from({ length: 256 }).fill(0) as number[],
@@ -57,22 +63,18 @@ const calculateHistogram = (imageData: ImageData): CompressedHistogramData => {
 const drawHistogram = (
   canvas: HTMLCanvasElement,
   histogram: CompressedHistogramData,
+  { width, height, dpr }: CanvasSize,
 ) => {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
-  // 获取 Canvas 的实际显示尺寸
-  const rect = canvas.getBoundingClientRect();
-  const { width } = rect;
-  const { height } = rect;
-  const dpr = window.devicePixelRatio || 1;
-
-  // 设置高分辨率
-  canvas.width = width * dpr;
-  canvas.height = height * dpr;
-  ctx.scale(dpr, dpr);
-  canvas.style.width = `${width}px`;
-  canvas.style.height = `${height}px`;
+  const pixelWidth = Math.max(1, Math.round(width * dpr));
+  const pixelHeight = Math.max(1, Math.round(height * dpr));
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   // 清空画布
   ctx.clearRect(0, 0, width, height);
@@ -123,38 +125,33 @@ const drawHistogram = (
   const drawBars = (data: number[], color: string, alpha = 1) => {
     const barWidth = chartWidth / data.length;
 
+    let topColor: string;
+    let bottomColor: string;
+    if (color.startsWith("rgba")) {
+      topColor = color.replace(/[\d.]+\)$/, `${alpha})`);
+      bottomColor = color.replace(/[\d.]+\)$/, `${alpha * 0.1})`);
+    } else if (color.startsWith("rgb")) {
+      topColor = color.replace("rgb", "rgba").replace(")", `, ${alpha})`);
+      bottomColor = color
+        .replace("rgb", "rgba")
+        .replace(")", `, ${alpha * 0.1})`);
+    } else {
+      topColor = color;
+      bottomColor = color;
+    }
+
+    // One gradient per channel is materially cheaper than 128 gradients per
+    // channel on every animation frame.
+    const gradient = ctx.createLinearGradient(0, 0, 0, height);
+    gradient.addColorStop(0, topColor);
+    gradient.addColorStop(1, bottomColor);
+    ctx.fillStyle = gradient;
+
     for (const [i, datum] of data.entries()) {
       const barHeight = (datum / maxVal) * chartHeight;
       const x = padding + i * barWidth;
       const y = height - padding - barHeight;
 
-      // 创建渐变
-      const gradient = ctx.createLinearGradient(0, y, 0, height - padding);
-
-      // 正确处理颜色字符串转换
-      let topColor: string;
-      let bottomColor: string;
-
-      if (color.startsWith("rgba")) {
-        // 如果已经是 rgba 格式，替换最后的透明度值
-        topColor = color.replace(/[\d.]+\)$/, `${alpha})`);
-        bottomColor = color.replace(/[\d.]+\)$/, `${alpha * 0.1})`);
-      } else if (color.startsWith("rgb")) {
-        // 如果是 rgb 格式，转换为 rgba
-        topColor = color.replace("rgb", "rgba").replace(")", `, ${alpha})`);
-        bottomColor = color
-          .replace("rgb", "rgba")
-          .replace(")", `, ${alpha * 0.1})`);
-      } else {
-        // 其他格式直接使用
-        topColor = color;
-        bottomColor = color;
-      }
-
-      gradient.addColorStop(0, topColor);
-      gradient.addColorStop(1, bottomColor);
-
-      ctx.fillStyle = gradient;
       ctx.fillRect(x, y, barWidth * 0.8, barHeight);
     }
   };
@@ -199,6 +196,7 @@ export const HistogramChart: FC<{
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [canvasSize, setCanvasSize] = useState<CanvasSize | null>(null);
   const { t } = useTranslation();
 
   useEffect(() => {
@@ -224,6 +222,7 @@ export const HistogramChart: FC<{
       // 为了更好的性能，缩放图片到合适的大小
       const maxSize = 300;
       const scale = Math.min(
+        1,
         maxSize / img.naturalWidth,
         maxSize / img.naturalHeight,
       );
@@ -265,6 +264,37 @@ export const HistogramChart: FC<{
     if (!histogram || !canvasRef.current) return;
 
     const canvas = canvasRef.current;
+    const updateSize = (width: number, height: number) => {
+      const nextSize = {
+        width: Math.max(1, width),
+        height: Math.max(1, height),
+        dpr: Math.min(window.devicePixelRatio || 1, 2),
+      };
+      setCanvasSize((current) =>
+        current &&
+        current.width === nextSize.width &&
+        current.height === nextSize.height &&
+        current.dpr === nextSize.dpr
+          ? current
+          : nextSize,
+      );
+    };
+
+    const rect = canvas.getBoundingClientRect();
+    updateSize(rect.width, rect.height);
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) updateSize(entry.contentRect.width, entry.contentRect.height);
+    });
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [histogram]);
+
+  useEffect(() => {
+    if (!histogram || !canvasRef.current || !canvasSize) return;
+
+    const canvas = canvasRef.current;
 
     // Cancel any ongoing animation before starting a new one
     if (animationRef.current) {
@@ -274,13 +304,21 @@ export const HistogramChart: FC<{
 
     // If we don't have a previous histogram, draw immediately and set baseline
     if (!previousHistogramRef.current) {
-      drawHistogram(canvas, histogram);
+      drawHistogram(canvas, histogram, canvasSize);
       previousHistogramRef.current = histogram;
       return;
     }
 
     const startAt = performance.now();
     const prev = previousHistogramRef.current;
+
+    if (
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
+    ) {
+      drawHistogram(canvas, histogram, canvasSize);
+      previousHistogramRef.current = histogram;
+      return;
+    }
 
     // Spring parameters (slightly underdamped for natural feel)
     const frequency = 8; // rad/s, controls oscillation speed (lower = smoother)
@@ -315,7 +353,7 @@ export const HistogramChart: FC<{
         luminance: lerpArray(prev.luminance, histogram.luminance, eased),
       };
 
-      drawHistogram(canvas, interpolated);
+      drawHistogram(canvas, interpolated, canvasSize);
 
       const done = Math.abs(1 - eased) < restDelta || elapsedMs >= maxMs;
       if (!done) {
@@ -334,17 +372,27 @@ export const HistogramChart: FC<{
         animationRef.current = null;
       }
     };
-  }, [histogram]);
+  }, [canvasSize, histogram]);
 
   return (
     <div className={cx("relative grow w-full h-32 group", className)}>
       {loading && (
-        <div className="bg-material-ultra-thin absolute inset-0 z-10 flex items-center justify-center rounded-sm backdrop-blur-xl">
-          <div className="i-mingcute-loading-3-line animate-spin text-xl" />
+        <div
+          className="bg-material-ultra-thin absolute inset-0 z-10 flex items-center justify-center rounded-sm backdrop-blur-xl"
+          role="status"
+          aria-label={t("loading.default")}
+        >
+          <div
+            className="i-mingcute-loading-3-line animate-spin text-xl"
+            aria-hidden="true"
+          />
         </div>
       )}
       {error && (
-        <div className="bg-material-ultra-thin absolute inset-0 flex items-center justify-center rounded-sm backdrop-blur-xl">
+        <div
+          className="bg-material-ultra-thin absolute inset-0 flex items-center justify-center rounded-sm backdrop-blur-xl"
+          role="alert"
+        >
           <div className="text-center">
             <div className="text-text-secondary text-xs">
               {t("photo.error.loading")}
@@ -355,8 +403,10 @@ export const HistogramChart: FC<{
       {histogram && (
         <canvas
           ref={canvasRef}
+          role="img"
+          aria-label={t("exif.histogram")}
           className={clsx(
-            "bg-material-ultra-thin ring-fill-tertiary/20 group-hover:ring-fill-tertiary/40 h-full w-full rounded-sm ring-1 backdrop-blur-xl transition-all duration-200",
+            "bg-material-ultra-thin ring-fill-tertiary/20 group-hover:ring-fill-tertiary/40 h-full w-full rounded-sm ring-1 backdrop-blur-xl transition-[opacity,box-shadow] duration-200",
             loading && "opacity-30",
           )}
         />

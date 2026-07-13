@@ -22,6 +22,29 @@ export interface StorageUploadOptions {
   cacheControl?: string;
 }
 
+export const DEFAULT_MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024;
+export const DEFAULT_DOWNLOAD_MEMORY_BUDGET_BYTES = 2 * 1024 * 1024 * 1024;
+
+export type StorageListingIncompleteCode =
+  | "max-file-limit"
+  | "pagination-anomaly"
+  | "provider-error";
+
+/**
+ * A storage listing is a snapshot only when `complete` is true.  Callers that
+ * reconcile or delete artifacts must never infer removals from an incomplete
+ * listing: doing so can turn a pagination hiccup or a safety limit into mass
+ * deletion.
+ */
+export interface StorageListing<T = StorageObject> {
+  objects: T[];
+  complete: boolean;
+  reason?: {
+    code: StorageListingIncompleteCode;
+    message: string;
+  };
+}
+
 // 存储提供商的通用接口
 export interface StorageProvider {
   /**
@@ -30,7 +53,7 @@ export interface StorageProvider {
    * @param logger 可选的日志记录器
    * @returns 文件的 Buffer 数据，如果不存在则返回 null
    */
-  getFile: (key: string) => Promise<Buffer | null>;
+  getFile: (key: string, signal?: AbortSignal) => Promise<Buffer | null>;
 
   /**
    * 列出存储中的所有图片文件
@@ -46,6 +69,15 @@ export interface StorageProvider {
   listAllFiles: (
     progressCallback?: ProgressCallback,
   ) => Promise<StorageObject[]>;
+
+  /**
+   * Completeness-aware variant used by the build workflow. `listAllFiles` is
+   * retained for API compatibility, but destructive reconciliation must use
+   * this method.
+   */
+  listAllFilesDetailed: (
+    progressCallback?: ProgressCallback,
+  ) => Promise<StorageListing>;
 
   /**
    * 生成文件的公共访问 URL
@@ -83,6 +115,9 @@ export interface StorageProvider {
     data: Buffer,
     options?: StorageUploadOptions,
   ) => Promise<StorageObject>;
+
+  /** Release sockets or other provider-owned resources. Idempotent. */
+  dispose: () => void | Promise<void>;
 }
 
 export type S3Config = {
@@ -91,7 +126,7 @@ export type S3Config = {
    * 写 provider——运行时缺失时由 normalizeStorageConfig 兜底成 "s3"。
    */
   provider: "s3";
-  bucket?: string;
+  bucket: string;
   region?: string;
   endpoint?: string;
   accessKeyId?: string;
@@ -122,6 +157,10 @@ export type S3Config = {
   maxAttempts?: number;
   // Download concurrency limiter within a single process/worker
   downloadConcurrency?: number;
+  /** Hard upper bound for one downloaded object (default: 1 GiB). */
+  maxDownloadBytes?: number;
+  /** Total bytes that concurrent downloads may buffer (default: 2 GiB). */
+  downloadMemoryBudgetBytes?: number;
 };
 
 export type LocalConfig = {
@@ -129,7 +168,7 @@ export type LocalConfig = {
   /** 照片源目录（本地文件系统路径），key 为相对该目录的 posix 路径 */
   basePath: string;
   /**
-   * 生成 originalUrl 时的公共 URL 前缀，默认 "/photos"——
+   * 生成 originalUrl 时的公共 URL 前缀，默认 "/originals"——
    * 与 apps/web 的 photos-static Vite 插件在 dev 下服务的路径一致。
    */
   baseUrl?: string;

@@ -56,7 +56,10 @@ export function createShader(
   type: number,
   source: string,
 ): WebGLShader {
-  const shader = gl.createShader(type)!;
+  const shader = gl.createShader(type);
+  if (!shader) {
+    throw new Error("Failed to create WebGL shader");
+  }
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
 

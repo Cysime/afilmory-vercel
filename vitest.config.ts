@@ -7,18 +7,28 @@ import { defineConfig } from "vitest/config";
 const pointerCaptureShim = fileURLToPath(
   new URL("test/setup/pointer-capture-shim.ts", import.meta.url),
 );
+const failOnConsole = fileURLToPath(
+  new URL("test/setup/fail-on-console.ts", import.meta.url),
+);
+const jsdomStorageShim = fileURLToPath(
+  new URL("test/setup/jsdom-storage-shim.ts", import.meta.url),
+);
 
 export default defineConfig({
   esbuild: {
     jsx: "automatic",
   },
   test: {
+    // fail-on-console relies on teardown hooks unwinding in reverse order so
+    // file-level afterEach/afterAll output is checked before the guard restores.
+    sequence: { hooks: "stack" },
     projects: [
       {
         test: {
           name: "schema",
           root: "./packages/schema",
           include: ["src/**/*.test.ts"],
+          setupFiles: [failOnConsole],
         },
       },
       {
@@ -26,6 +36,7 @@ export default defineConfig({
           name: "media",
           root: "./packages/media",
           include: ["src/**/*.test.ts"],
+          setupFiles: [failOnConsole],
         },
       },
       {
@@ -34,6 +45,7 @@ export default defineConfig({
           root: ".",
           include: ["scripts/**/*.test.ts"],
           environment: "node",
+          setupFiles: [failOnConsole],
         },
       },
       {
@@ -45,6 +57,7 @@ export default defineConfig({
           root: "./packages/ui",
           include: ["src/**/*.test.{ts,tsx}"],
           environment: "jsdom",
+          setupFiles: [failOnConsole, jsdomStorageShim],
         },
       },
       {
@@ -52,6 +65,7 @@ export default defineConfig({
           name: "builder",
           root: "./packages/builder",
           include: ["src/**/*.test.ts"],
+          setupFiles: [failOnConsole],
         },
       },
       {
@@ -60,6 +74,7 @@ export default defineConfig({
           root: "./packages/build-assets",
           include: ["src/**/*.test.ts"],
           environment: "node",
+          setupFiles: [failOnConsole],
         },
       },
       {
@@ -71,7 +86,16 @@ export default defineConfig({
           root: "./packages/webgl-viewer",
           include: ["src/**/*.test.{ts,tsx}"],
           environment: "jsdom",
-          setupFiles: [pointerCaptureShim],
+          setupFiles: [failOnConsole, jsdomStorageShim, pointerCaptureShim],
+        },
+      },
+      {
+        test: {
+          name: "web-build",
+          root: "./apps/web",
+          include: ["plugins/**/*.test.ts"],
+          environment: "node",
+          setupFiles: [failOnConsole],
         },
       },
       {
@@ -120,12 +144,11 @@ export default defineConfig({
           root: "./apps/web",
           include: ["src/**/*.test.{ts,tsx}"],
           environment: "jsdom",
-          setupFiles: [pointerCaptureShim],
+          setupFiles: [failOnConsole, jsdomStorageShim, pointerCaptureShim],
         },
       },
     ],
     coverage: {
-      // 报告优先（非强制门禁）：先建立可见的基线，后续再决定阈值。
       provider: "v8",
       reporter: ["text", "text-summary", "json-summary", "html", "lcov"],
       reportsDirectory: "./coverage",
@@ -156,6 +179,14 @@ export default defineConfig({
         // 配置文件
         "**/*.config.{ts,js,mjs}",
       ],
+      // Keep a little headroom below the measured baseline while making broad
+      // coverage regressions fail CI. Raise these values as tests improve.
+      thresholds: {
+        statements: 70,
+        branches: 75,
+        functions: 80,
+        lines: 70,
+      },
     },
   },
 });

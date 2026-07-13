@@ -8,6 +8,7 @@ export type LivePhotoResult =
       isLivePhoto: true;
       livePhotoVideoUrl: string;
       livePhotoVideoS3Key: string;
+      livePhotoVideoVersion: string;
     };
 
 /**
@@ -43,5 +44,12 @@ export async function processLivePhoto(
     isLivePhoto: true,
     livePhotoVideoUrl,
     livePhotoVideoS3Key: videoKey,
+    livePhotoVideoVersion: getStorageObjectVersion(livePhotoVideo),
   };
+}
+
+export function getStorageObjectVersion(object: StorageObject): string {
+  if (object.etag) return `etag:${object.etag}`;
+  const modified = object.lastModified?.toISOString() ?? "unknown";
+  return `mtime:${modified}:size:${object.size ?? 0}`;
 }

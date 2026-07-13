@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanupStaleDevServiceWorker } from "../dev-service-worker-cleanup";
 
 type ServiceWorkerRegistrationMock = {
+  active: { scriptURL: string } | null;
+  installing: null;
+  scope: string;
   unregister: ReturnType<typeof vi.fn>;
+  waiting: null;
 };
 
 describe("cleanupStaleDevServiceWorker", () => {
@@ -33,7 +37,7 @@ describe("cleanupStaleDevServiceWorker", () => {
     const cacheDelete = vi.fn(async () => true);
 
     stubServiceWorkerState({
-      controller: {},
+      controller: createWorker(),
       registrations: [registration],
     });
     stubCaches({
@@ -67,7 +71,7 @@ describe("cleanupStaleDevServiceWorker", () => {
     const reload = vi.fn();
 
     stubServiceWorkerState({
-      controller: {},
+      controller: createWorker(),
       registrations: [registration],
     });
     stubCaches({
@@ -89,8 +93,16 @@ describe("cleanupStaleDevServiceWorker", () => {
 
 function createRegistration(): ServiceWorkerRegistrationMock {
   return {
+    active: createWorker(),
+    installing: null,
+    scope: new URL("/", window.location.href).toString(),
     unregister: vi.fn(async () => true),
+    waiting: null,
   };
+}
+
+function createWorker(): { scriptURL: string } {
+  return { scriptURL: new URL("/sw.js", window.location.href).toString() };
 }
 
 function stubServiceWorkerState(options: {

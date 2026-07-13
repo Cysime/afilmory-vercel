@@ -12,7 +12,7 @@ import { processThumbnailAndThumbHash } from "./data-processors.js";
 // `generateThumbnailAndThumbHash` resolves to the mock below.
 vi.mock("../image/thumbnail.js", () => ({
   generateThumbnailAndThumbHash: vi.fn(),
-  getThumbnailPublicUrl: (photoId: string) => `/thumbnails/${photoId}.jpg`,
+  resolveExistingThumbnail: vi.fn(async () => null),
   thumbnailExists: vi.fn(async () => false),
 }));
 
@@ -128,6 +128,7 @@ describe("processThumbnailAndThumbHash failure handling", () => {
       expect.any(Buffer),
       "changed-photo",
       true,
+      undefined,
     );
   });
 });

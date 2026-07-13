@@ -193,6 +193,8 @@ export const GalleryThumbnail: FC<{
                 photoId={photo.id}
                 src={photo.thumbnailUrl}
                 alt={photo.title || photo.id}
+                width={photo.width}
+                height={photo.height}
                 thumbHash={photo.thumbHash}
                 loading={index === currentIndex ? "eager" : "lazy"}
                 fetchPriority={index === currentIndex ? "high" : "low"}

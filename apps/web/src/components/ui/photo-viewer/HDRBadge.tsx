@@ -9,7 +9,7 @@ export const HDRBadge: FC = () => {
         import.meta.env.DEV ? "top-24 right-4" : "top-20 lg:top-8 left-4",
       )}
     >
-      <i className="i-mingcute-sun-line size-4" />
+      <i className="i-mingcute-sun-line size-4" aria-hidden="true" />
       <span className="mr-1">HDR</span>
     </div>
   );

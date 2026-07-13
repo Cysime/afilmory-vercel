@@ -2,6 +2,7 @@ import process from "node:process";
 
 import { AfilmoryBuilder } from "./builder/builder.js";
 import { ExifService } from "./image/exif.js";
+import { configureLoggerObservability } from "./logger/index.js";
 import type {
   BatchTaskMessage,
   BatchTaskResult,
@@ -39,6 +40,10 @@ export async function runAsWorker() {
   const initializeWorker = async (sharedData: ClusterWorkerSharedData) => {
     if (taskRuntime) return;
 
+    configureLoggerObservability(
+      sharedData.builderConfig.system.observability.logging,
+    );
+
     // IPC 通道使用 advanced（v8）序列化，Map 等结构已在传输层原生还原，
     // 这里直接使用共享数据即可，无需手动 Buffer.from + v8.deserialize。
     const builder = new AfilmoryBuilder(sharedData.builderConfig, {
@@ -50,6 +55,9 @@ export async function runAsWorker() {
 
     taskRuntime = {
       workerId,
+      taskTimeoutMs:
+        sharedData.builderConfig.system.observability.performance.worker
+          .timeout,
       imageObjects: sharedData.imageObjects,
       existingManifestMap: sharedData.existingManifestMap,
       livePhotoMap: sharedData.livePhotoMap,

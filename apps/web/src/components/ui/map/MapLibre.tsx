@@ -2,6 +2,7 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./MapLibre.css";
 
+import { useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { MapMouseEvent, MapRef } from "react-map-gl/maplibre";
@@ -131,6 +132,7 @@ export const Maplibre = ({
   syncViewStateOnInitialViewStateChange = true,
 }: PureMaplibreProps) => {
   const { t } = useTranslation();
+  const shouldReduceMotion = useReducedMotion() === true;
   const internalMapRef = useRef<MapRef | null>(null);
   const resolvedMapRef = mapRef ?? internalMapRef;
   const [currentZoom, setCurrentZoom] = useState(initialViewState.zoom);
@@ -228,7 +230,7 @@ export const Maplibre = ({
         map.flyTo({
           center: [longitude, latitude],
           zoom: nextViewState.zoom,
-          duration: 500,
+          duration: shouldReduceMotion ? 0 : 500,
         });
         return;
       }
@@ -236,7 +238,7 @@ export const Maplibre = ({
       setViewState(nextViewState);
       setCurrentZoom(nextViewState.zoom);
     },
-    [resolvedMapRef, onClusterClick, viewState],
+    [resolvedMapRef, onClusterClick, shouldReduceMotion, viewState],
   );
 
   // 自动适配到包含所有照片的区域 - 只在初次加载时执行
@@ -295,7 +297,7 @@ export const Maplibre = ({
           ],
           {
             padding,
-            duration: 800, // 平滑动画
+            duration: shouldReduceMotion ? 0 : 800,
             maxZoom: 15, // 最大缩放级别限制，避免过度放大
           },
         );
@@ -325,6 +327,7 @@ export const Maplibre = ({
     isMapLoaded,
     resolvedMapRef,
     hasInitialFitCompleted,
+    shouldReduceMotion,
   ]);
 
   // 当地图加载完成时触发适配

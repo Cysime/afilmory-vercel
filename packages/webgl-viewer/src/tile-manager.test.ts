@@ -149,6 +149,20 @@ describe("TileManager", () => {
       manager.updateTileCache();
       expect(requestTileFromWorker).toHaveBeenCalled();
     });
+
+    it("releases a loading slot when posting a tile request throws", () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { host, requestTileFromWorker } = createHost();
+      requestTileFromWorker.mockImplementationOnce(() => {
+        throw new Error("worker terminated");
+      });
+      const manager = new TileManager(host);
+
+      manager.updateTileCache();
+
+      const failedKey = requestedKeys(requestTileFromWorker)[0];
+      expect(manager.loadingTiles.has(failedKey)).toBe(false);
+    });
   });
 
   describe("base-coverage gate", () => {
@@ -254,6 +268,28 @@ describe("TileManager", () => {
       expect(bitmap.close).toHaveBeenCalledTimes(1);
       expect(createTexture).not.toHaveBeenCalled();
       expect(manager.tileCache.has("9-9-2")).toBe(false);
+      expect(requestRender).not.toHaveBeenCalled();
+    });
+
+    it("closes the bitmap and releases the loading slot when texture upload throws", () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { host, createTexture, requestRender, requestTileFromWorker } =
+        createHost();
+      const manager = new TileManager(host);
+      manager.updateTileCache();
+      const key = requestedKeys(requestTileFromWorker)[0];
+      const bitmap = makeBitmap();
+      createTexture.mockImplementationOnce(() => {
+        throw new Error("GPU allocation failed");
+      });
+
+      manager.handleWorkerMessage({
+        type: "tile-created",
+        payload: { key, imageBitmap: bitmap, lodLevel: 2 },
+      });
+
+      expect(bitmap.close).toHaveBeenCalledTimes(1);
+      expect(manager.loadingTiles.has(key)).toBe(false);
       expect(requestRender).not.toHaveBeenCalled();
     });
 

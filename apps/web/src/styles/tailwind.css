@@ -113,12 +113,28 @@ html body {
   @apply max-w-screen overflow-x-hidden;
 }
 
-*:focus {
-  outline: none;
+:where(
+  a,
+  button,
+  input,
+  textarea,
+  select,
+  summary,
+  [tabindex]:not([tabindex="-1"])
+):focus-visible {
+  outline: 2px solid var(--color-accent, currentColor);
+  outline-offset: 2px;
 }
 
-*:not(input):not(textarea):not([contenteditable="true"]):focus-visible {
-  outline: 0 !important;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @layer components {

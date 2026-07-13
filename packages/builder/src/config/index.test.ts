@@ -82,7 +82,7 @@ describe("resolveBuilderConfig — old merge semantics preserved", () => {
           performance: {
             worker: {
               workerCount: 4,
-              timeout: 30_000,
+              timeout: 300_000,
               useClusterMode: false,
               workerConcurrency: 2,
             },

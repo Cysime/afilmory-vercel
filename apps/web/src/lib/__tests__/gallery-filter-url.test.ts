@@ -13,6 +13,7 @@ describe("gallery filter URL helpers", () => {
         "?tags=street,night&cameras=SONY+ILCE-7C&lenses=FE+35mm&tag_mode=intersection",
       ),
     ).toEqual({
+      sortOrder: "desc",
       selectedTags: ["street", "night"],
       selectedCameras: ["SONY ILCE-7C"],
       selectedLenses: ["FE 35mm"],
@@ -26,6 +27,7 @@ describe("gallery filter URL helpers", () => {
   it("writes active gallery filters without dropping unrelated params", () => {
     expect(
       buildGalleryFilterSearch("?photoId=A7C09524", {
+        sortOrder: "desc",
         selectedTags: [],
         selectedCameras: ["SONY ILCE-7C"],
         selectedLenses: [],
@@ -43,6 +45,7 @@ describe("gallery filter URL helpers", () => {
         "?tags=street&tags=night%2Ccity&cameras=SONY+ILCE-7C",
       ),
     ).toEqual({
+      sortOrder: "desc",
       selectedTags: ["street", "night,city"],
       selectedCameras: ["SONY ILCE-7C"],
       selectedLenses: [],
@@ -55,6 +58,7 @@ describe("gallery filter URL helpers", () => {
 
   it("reads and writes geographic filters", () => {
     const search = buildGalleryFilterSearch("", {
+      sortOrder: "desc",
       selectedTags: [],
       selectedCameras: [],
       selectedLenses: [],
@@ -88,6 +92,7 @@ describe("gallery filter URL helpers", () => {
       buildGalleryFilterSearch(
         "?regionId=region%3Acountry%3Dcn%7Cregion%3Danhui",
         {
+          sortOrder: "desc",
           selectedTags: [],
           selectedCameras: [],
           selectedLenses: [],
@@ -103,6 +108,7 @@ describe("gallery filter URL helpers", () => {
   it("keeps explicit region and district geographic filters shareable", () => {
     expect(
       buildGalleryFilterSearch("?geo_region=legacy&geo_district=legacy", {
+        sortOrder: "desc",
         selectedTags: [],
         selectedCameras: [],
         selectedLenses: [],
@@ -137,6 +143,7 @@ describe("gallery filter URL helpers", () => {
       buildGalleryFilterSearch(
         "?tags=street&cameras=SONY+ILCE-7C&tag_mode=intersection",
         {
+          sortOrder: "desc",
           selectedTags: [],
           selectedCameras: [],
           selectedLenses: [],
@@ -147,5 +154,22 @@ describe("gallery filter URL helpers", () => {
         },
       ),
     ).toBe("");
+  });
+
+  it("round-trips ascending sort order while keeping descending as the default", () => {
+    const ascending = buildGalleryFilterSearch("", {
+      sortOrder: "asc",
+      selectedTags: [],
+      selectedCameras: [],
+      selectedLenses: [],
+      selectedGeoCountries: [],
+      selectedGeoRegions: [],
+      selectedGeoCities: [],
+      selectedGeoDistricts: [],
+    });
+
+    expect(ascending).toBe("?sort=asc");
+    expect(getGalleryFiltersFromSearch(ascending).sortOrder).toBe("asc");
+    expect(getGalleryFiltersFromSearch("").sortOrder).toBe("desc");
   });
 });

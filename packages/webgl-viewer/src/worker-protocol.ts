@@ -1,5 +1,7 @@
 import type { TileKey } from "./tile-cache";
 
+export type TextureWorkerSessionId = number;
+
 /**
  * Messages posted by texture.worker.js back to the main thread.
  *
@@ -8,9 +10,10 @@ import type { TileKey } from "./tile-cache";
  * `self.postMessage` calls.
  */
 export type TextureWorkerMessage =
-  | { type: "init-done" }
+  | { type: "init-done"; sessionId: TextureWorkerSessionId }
   | {
       type: "image-loaded";
+      sessionId: TextureWorkerSessionId;
       payload: {
         imageBitmap: ImageBitmap;
         imageWidth: number;
@@ -18,9 +21,18 @@ export type TextureWorkerMessage =
         lodLevel: number;
       };
     }
-  | { type: "load-error"; payload: { error: unknown } }
+  | {
+      type: "load-error";
+      sessionId: TextureWorkerSessionId;
+      payload: { error: unknown };
+    }
   | {
       type: "tile-created";
+      sessionId: TextureWorkerSessionId;
       payload: { key: TileKey; imageBitmap: ImageBitmap; lodLevel: number };
     }
-  | { type: "tile-error"; payload: { key: TileKey; error: unknown } };
+  | {
+      type: "tile-error";
+      sessionId: TextureWorkerSessionId;
+      payload: { key: TileKey; error: unknown };
+    };

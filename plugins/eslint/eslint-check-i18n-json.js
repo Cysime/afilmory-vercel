@@ -1,19 +1,19 @@
 // @ts-check
 /** @type {import("eslint").ESLint.Plugin} */
-import fs from 'node:fs'
-import path from 'node:path'
+import fs from "node:fs";
+import path from "node:path";
 
-import { cleanJsonText } from './utils.js'
+import { cleanJsonText } from "./utils.js";
 
 export default {
   rules: {
-    'valid-i18n-keys': {
+    "valid-i18n-keys": {
       meta: {
-        type: 'problem',
+        type: "problem",
         docs: {
           description:
-            'Ensure i18n JSON keys are flat and valid as object paths',
-          category: 'Possible Errors',
+            "Ensure i18n JSON keys are flat and valid as object paths",
+          category: "Possible Errors",
           recommended: true,
         },
         fixable: null,
@@ -21,36 +21,36 @@ export default {
       create(context) {
         return {
           Program(node) {
-            const { filename, sourceCode } = context
+            const { filename, sourceCode } = context;
 
-            if (!filename.endsWith('.json')) return
+            if (!filename.endsWith(".json")) return;
 
-            let json
+            let json;
             try {
-              json = JSON.parse(cleanJsonText(sourceCode.text))
+              json = JSON.parse(cleanJsonText(sourceCode.text));
             } catch {
               context.report({
                 node,
-                message: 'Invalid JSON format',
-              })
-              return
+                message: "Invalid JSON format",
+              });
+              return;
             }
 
-            const keys = Object.keys(json)
-            const keyPrefixes = new Set()
+            const keys = Object.keys(json);
+            const keyPrefixes = new Set();
 
             for (const key of keys) {
-              if (key.includes('.')) {
-                const parts = key.split('.')
+              if (key.includes(".")) {
+                const parts = key.split(".");
                 for (let i = 1; i < parts.length; i++) {
-                  const prefix = parts.slice(0, i).join('.')
+                  const prefix = parts.slice(0, i).join(".");
                   if (keys.includes(prefix)) {
                     context.report({
                       node,
                       message: `Invalid key structure: '${key}' conflicts with '${prefix}'`,
-                    })
+                    });
                   }
-                  keyPrefixes.add(prefix)
+                  keyPrefixes.add(prefix);
                 }
               }
             }
@@ -60,60 +60,62 @@ export default {
                 context.report({
                   node,
                   message: `Invalid key structure: '${key}' is a prefix of another key`,
-                })
+                });
               }
             }
           },
-        }
+        };
       },
     },
-    'no-extra-keys': {
+    "no-extra-keys": {
       meta: {
-        type: 'problem',
+        type: "problem",
         docs: {
           description:
             "Ensure non-English JSON files don't have extra keys not present in en.json",
-          category: 'Possible Errors',
+          category: "Possible Errors",
           recommended: true,
         },
-        fixable: 'code', // Set fixable to "code"
+        fixable: "code", // Set fixable to "code"
       },
       create(context) {
         return {
           Program(node) {
-            const { filename, sourceCode } = context
+            const { filename, sourceCode } = context;
 
-            if (!filename.endsWith('.json')) return
+            if (!filename.endsWith(".json")) return;
 
-            const parts = filename.split(path.sep)
-            const lang = parts.at(-1).split('.')[0]
-            const namespace = parts.at(-2)
+            const parts = filename.split(path.sep);
+            const lang = parts.at(-1).split(".")[0];
+            const namespace = parts.at(-2);
 
-            if (lang === 'en') return
+            if (lang === "en") return;
 
-            let currentJson = {}
-            let englishJson = {}
+            let currentJson = {};
+            let englishJson = {};
 
             try {
-              currentJson = JSON.parse(sourceCode.text)
+              currentJson = JSON.parse(sourceCode.text);
               const englishFilePath = path.join(
                 path.dirname(filename),
-                '../',
+                "../",
                 namespace,
-                'en.json',
-              )
-              englishJson = JSON.parse(fs.readFileSync(englishFilePath, 'utf8'))
+                "en.json",
+              );
+              englishJson = JSON.parse(
+                fs.readFileSync(englishFilePath, "utf8"),
+              );
             } catch (error) {
               context.report({
                 node,
                 message: `Error parsing JSON: ${error.message}`,
-              })
-              return
+              });
+              return;
             }
 
             const extraKeys = Object.keys(currentJson).filter(
               (key) => !Object.prototype.hasOwnProperty.call(englishJson, key),
-            )
+            );
 
             for (const key of extraKeys) {
               context.report({
@@ -124,17 +126,17 @@ export default {
                     Object.entries(currentJson).filter(
                       ([k]) => !extraKeys.includes(k),
                     ),
-                  )
+                  );
 
-                  const newText = `${JSON.stringify(newJson, null, 2)}\n`
+                  const newText = `${JSON.stringify(newJson, null, 2)}\n`;
 
-                  return fixer.replaceText(node, newText)
+                  return fixer.replaceText(node, newText);
                 },
-              })
+              });
             }
           },
-        }
+        };
       },
     },
   },
-}
+};

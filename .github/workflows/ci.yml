@@ -10,15 +10,22 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
       - name: Setup
         uses: ./.github/actions/setup
+      - name: Check formatting
+        run: pnpm format:check
       - name: Lint
         run: pnpm lint
 
@@ -27,7 +34,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
       - name: Setup
         uses: ./.github/actions/setup
       - name: Type-check
@@ -38,7 +47,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
       - name: Setup
         uses: ./.github/actions/setup
       - name: Run unit tests with coverage
@@ -51,7 +62,7 @@ jobs:
           fi
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage
           path: coverage/
@@ -62,14 +73,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
       # `pnpm audit` resolves advisories from pnpm-lock.yaml against the
       # registry — it needs pnpm + Node but no node_modules, so skip the
       # workspace install (and its sharp/esbuild postinstall builds).
       - name: Setup
         uses: ./.github/actions/setup
         with:
-          install: 'false'
+          install: "false"
       - name: Dependency audit
         run: pnpm audit:prod
 
@@ -78,7 +91,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
       - name: Setup
         uses: ./.github/actions/setup
       - name: Create manifest fixture
@@ -91,13 +106,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
       - name: Setup
         uses: ./.github/actions/setup
-      - name: Stage e2e manifest fixture
-        run: |
-          mkdir -p generated
-          cp apps/web/e2e/fixtures/photos-manifest.json generated/photos-manifest.json
       # Standard actions/cache + Playwright recipe: cache the browser binaries
       # keyed on the @playwright/test version; on a cache hit only the OS deps
       # still need installing (they live outside ~/.cache/ms-playwright).
@@ -106,7 +119,7 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').devDependencies['@playwright/test']")" >> "$GITHUB_OUTPUT"
       - name: Cache Playwright browsers
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
@@ -125,7 +138,7 @@ jobs:
         run: pnpm test:e2e:prod
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report
           path: |

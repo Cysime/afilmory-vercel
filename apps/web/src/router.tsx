@@ -17,15 +17,15 @@ const tree = buildGlobRoutes(globTree);
 
 export const createAppRouter = (runtime: AppRuntime) =>
   createBrowserRouter([
-  {
-    path: "/",
-    element: <App runtime={runtime} />,
-    children: tree,
-    errorElement: <ErrorElement />,
-    hydrateFallbackElement: <></>,
-  },
-  {
-    path: "*",
-    element: <NotFound />,
-  },
-]);
+    {
+      path: "/",
+      element: <App runtime={runtime} />,
+      children: tree,
+      errorElement: <ErrorElement />,
+      hydrateFallbackElement: <></>,
+    },
+    {
+      path: "*",
+      element: <NotFound />,
+    },
+  ]);

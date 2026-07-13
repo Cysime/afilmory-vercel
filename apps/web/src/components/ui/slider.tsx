@@ -178,7 +178,7 @@ export const Slider = ({
           {/* 激活区域 */}
           <div
             className={clsxm(
-              "absolute top-0 h-full rounded-full transition-all duration-150 max-w-full",
+              "absolute top-0 h-full max-w-full rounded-full transition-[background-color,width] duration-150",
               value === "auto" ? "bg-accent/70" : "bg-accent",
             )}
             style={{
@@ -205,7 +205,7 @@ export const Slider = ({
           aria-disabled={disabled || undefined}
           onKeyDown={handleKeyDown}
           className={clsxm(
-            "absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-lg transition-all duration-150",
+            "absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-lg transition-[background-color,box-shadow,transform] duration-150",
             "focus-visible:ring-accent/45 focus-visible:ring-offset-background focus-visible:ring-2 focus-visible:ring-offset-2",
             isDragging ? "scale-110" : "hover:scale-105",
             value === "auto" ? "bg-accent/80" : "bg-accent",

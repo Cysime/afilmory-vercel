@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { encodeStorageKeyForUrl, joinPublicUrl } from "./url.js";
+import {
+  encodeStorageKeyForUrl,
+  isSafeHttpBaseUrl,
+  joinPublicUrl,
+} from "./url.js";
 
 describe("encodeStorageKeyForUrl", () => {
   it("encodes each path segment while keeping slashes as separators", () => {
@@ -47,5 +51,21 @@ describe("joinPublicUrl", () => {
     expect(joinPublicUrl("https://cdn.example.com/", "my album/a b.jpg")).toBe(
       "https://cdn.example.com/my%20album/a%20b.jpg",
     );
+  });
+});
+
+describe("isSafeHttpBaseUrl", () => {
+  it("accepts public http endpoints with an optional path", () => {
+    expect(isSafeHttpBaseUrl("https://s3.example.com/account")).toBe(true);
+  });
+
+  it.each([
+    "ftp://example.com",
+    "https://user:secret@example.com",
+    "https://example.com?token=secret",
+    "https://example.com/#secret",
+    "not-a-url",
+  ])("rejects unsafe public URLs: %s", (value) => {
+    expect(isSafeHttpBaseUrl(value)).toBe(false);
   });
 });

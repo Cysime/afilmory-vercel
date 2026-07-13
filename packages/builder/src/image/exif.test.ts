@@ -1,11 +1,26 @@
+import { access, stat } from "node:fs/promises";
+import path from "node:path";
+
 import type { Tags } from "exiftool-vendored";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  extractExifData,
   extractFujiRecipe,
   extractSonyRecipe,
   handleExifData,
 } from "./exif.js";
+
+const exifLogger = vi.hoisted(() => ({
+  error: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  warn: vi.fn(),
+}));
+
+vi.mock("../photo/logger-adapter.js", () => ({
+  getPhotoProcessingLoggers: () => ({ exif: exifLogger }),
+}));
 
 describe("EXIF normalization helpers", () => {
   it("extracts typed Fuji and Sony recipe fields", () => {
@@ -64,5 +79,29 @@ describe("EXIF normalization helpers", () => {
       Model: "X-T5",
     });
     expect("NonManifestField" in normalized).toBe(false);
+  });
+
+  it("uses a private temporary directory and file for source bytes", async () => {
+    let tempPath = "";
+    let directoryMode = 0;
+    let fileMode = 0;
+    await extractExifData(
+      {
+        close: vi.fn(),
+        read: vi.fn(async (filePath) => {
+          tempPath = filePath;
+          directoryMode = (await stat(path.dirname(filePath))).mode & 0o777;
+          fileMode = (await stat(filePath)).mode & 0o777;
+          return { SourceFile: filePath } as Tags;
+        }),
+      },
+      Buffer.from("jpeg"),
+    );
+
+    if (process.platform !== "win32") {
+      expect(directoryMode).toBe(0o700);
+      expect(fileMode).toBe(0o600);
+    }
+    await expect(access(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

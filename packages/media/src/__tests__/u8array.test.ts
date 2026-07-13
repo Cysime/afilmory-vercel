@@ -12,4 +12,16 @@ describe("u8array helpers", () => {
   it("pads single-nibble bytes", () => {
     expect(uint8ArrayToHex(Uint8Array.from([0, 15, 255]))).toBe("000fff");
   });
+
+  it.each(["0", "abc", "0g", "zz"])(
+    "rejects malformed hex instead of partially decoding %s",
+    (hex) => {
+      expect(() => hexToUint8Array(hex)).toThrow(TypeError);
+    },
+  );
+
+  it("accepts empty and uppercase hex input", () => {
+    expect(hexToUint8Array("")).toEqual(new Uint8Array());
+    expect(hexToUint8Array("00FF")).toEqual(Uint8Array.from([0, 255]));
+  });
 });

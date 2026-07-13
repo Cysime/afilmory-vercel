@@ -1,4 +1,5 @@
 import { TransformAnimationController } from "./animation-controller";
+import { resolveCanvasBackingStore } from "./canvas-memory";
 import { createWebGLDebugInfo } from "./debug-adapter";
 import { resolveDoubleClickToggle } from "./double-click-zoom-policy";
 import { LoadingState } from "./enum";
@@ -20,8 +21,14 @@ import {
   getFitToScreenScale as getFitToScreenScaleForGeometry,
   zoomAtTransform,
 } from "./transform-controller";
-import { TextureWorkerBridge } from "./worker-bridge";
+import { BASE_TEXTURE_BYTE_BUDGET, TextureWorkerBridge } from "./worker-bridge";
 import type { TextureWorkerMessage } from "./worker-protocol";
+
+interface ActiveImageLoad {
+  sessionId: number;
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
 
 // 简化的 WebGL 图像查看器引擎
 export class WebGLImageViewerEngine {
@@ -31,6 +38,7 @@ export class WebGLImageViewerEngine {
   private textureManager!: TextureLodManager;
   private imageLoaded = false;
   private originalImageSrc = "";
+  private originalSourceBlob: Blob | null = null;
 
   // 变换状态
   private scale = 1;
@@ -41,7 +49,6 @@ export class WebGLImageViewerEngine {
   private canvasWidth = 0;
   private canvasHeight = 0;
   private devicePixelRatio = 1;
-  private isDoubleClickZoomed = false;
 
   // 动画状态
   private isDestroyed = false;
@@ -68,6 +75,7 @@ export class WebGLImageViewerEngine {
   private currentQuality: "high" | "medium" | "low" | "unknown" = "unknown";
   private isLoadingTexture = true;
   private workerBridge: TextureWorkerBridge | null = null;
+  private hasWorkerFatalError = false;
   private textureWorkerInitialized = false;
   private tileOutlineEnabled = false;
 
@@ -78,14 +86,15 @@ export class WebGLImageViewerEngine {
 
   // GPU 能力：单纹理最大边长，用于钳制 worker 生成的底图纹理
   private readonly maxTextureSize: number;
+  private readonly maxCanvasDimension: number;
 
   // 调试用真实数据：帧计数与底图纹理实际尺寸
   private frameCount = 0;
   private baseTextureSize: { width: number; height: number } | null = null;
 
-  // Promise resolvers for loadImage
-  private loadImageResolve: (() => void) | null = null;
-  private loadImageReject: ((error: Error) => void) | null = null;
+  private loadGeneration = 0;
+  private currentSessionId = 0;
+  private activeLoad: ActiveImageLoad | null = null;
   private hasNotifiedImagePainted = false;
 
   constructor(
@@ -107,6 +116,9 @@ export class WebGLImageViewerEngine {
       // 关闭 MSAA：渲染内容是贴满视口的纹理四边形，多重采样只作用于图元边缘、
       // 对照片像素毫无收益，却让全屏抗锯齿后备缓冲的 GPU 内存翻倍（iOS 上尤其致命）。
       antialias: false,
+      depth: false,
+      stencil: false,
+      preserveDrawingBuffer: false,
       powerPreference: "default",
     });
     if (!gl) {
@@ -115,6 +127,7 @@ export class WebGLImageViewerEngine {
     this.gl = gl;
     this.textureManager = new TextureLodManager(gl);
     this.maxTextureSize = Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)) || 0;
+    this.maxCanvasDimension = getCanvasDimensionLimit(gl, this.maxTextureSize);
 
     this.tileManager = new TileManager({
       getViewport: () => ({
@@ -138,7 +151,10 @@ export class WebGLImageViewerEngine {
         this.workerBridge !== null &&
         this.textureWorkerInitialized,
       requestTileFromWorker: (request) => {
-        this.workerBridge?.createTile(request);
+        this.workerBridge?.createTile({
+          ...request,
+          sessionId: this.currentSessionId,
+        });
       },
       onVisibleLodReady: (lodLevel) => this.handleVisibleLodReady(lodLevel),
       // 回到底图覆盖区间：质量应反映常驻底图（textureManager.currentLOD），否则
@@ -149,14 +165,19 @@ export class WebGLImageViewerEngine {
 
     this.boundResizeCanvas = () => this.resizeCanvas();
 
-    this.setupCanvas();
-    this.setupContextLossHandlers();
-    this.initWebGL();
-    this.initWorker();
-    this.setupEventListeners();
+    try {
+      this.setupCanvas();
+      this.setupContextLossHandlers();
+      this.initWebGL();
+      this.initWorker();
+      this.setupEventListeners();
 
-    this.isLoadingTexture = false;
-    this.notifyLoadingStateChange(false);
+      this.isLoadingTexture = false;
+      this.notifyLoadingStateChange(false);
+    } catch (error) {
+      this.rollbackFailedConstruction();
+      throw error;
+    }
   }
 
   private resizeObserver: ResizeObserver | null = null;
@@ -176,17 +197,19 @@ export class WebGLImageViewerEngine {
 
   private resizeCanvas() {
     const rect = this.canvas.getBoundingClientRect();
-    this.devicePixelRatio = window.devicePixelRatio || 1;
-
     this.canvasWidth = rect.width;
     this.canvasHeight = rect.height;
+    const backingStore = resolveCanvasBackingStore({
+      cssWidth: rect.width,
+      cssHeight: rect.height,
+      requestedDpr: window.devicePixelRatio || 1,
+      maxTextureSize: this.maxCanvasDimension,
+    });
+    this.devicePixelRatio = backingStore.dpr;
 
-    const actualWidth = Math.round(rect.width * this.devicePixelRatio);
-    const actualHeight = Math.round(rect.height * this.devicePixelRatio);
-
-    this.canvas.width = actualWidth;
-    this.canvas.height = actualHeight;
-    this.gl.viewport(0, 0, actualWidth, actualHeight);
+    this.canvas.width = backingStore.width;
+    this.canvas.height = backingStore.height;
+    this.gl.viewport(0, 0, backingStore.width, backingStore.height);
 
     if (this.imageLoaded) {
       this.constrainScaleAndPosition();
@@ -231,10 +254,23 @@ export class WebGLImageViewerEngine {
     if (this.isDestroyed) return;
     this.isContextLost = false;
 
-    // Recreate all context-dependent resources (programs, buffers, textures).
-    this.textureManager = new TextureLodManager(this.gl);
-    this.initWebGL();
-    this.resizeCanvas();
+    try {
+      // Recreate all context-dependent resources (programs, buffers, textures).
+      this.textureManager = new TextureLodManager(this.gl);
+      this.initWebGL();
+      this.resizeCanvas();
+      this.imageLoaded = false;
+    } catch (error) {
+      const normalizedError = toError(
+        error,
+        "Failed to restore the WebGL context",
+      );
+      this.isLoadingTexture = false;
+      this.rejectActiveLoad(normalizedError);
+      this.notifyLoadingStateChange(false);
+      this.config.onError(normalizedError);
+      return;
+    }
 
     // Re-decode and re-upload the current image if one was loaded; otherwise
     // just repaint the (now empty) scene.
@@ -243,8 +279,12 @@ export class WebGLImageViewerEngine {
         this.originalImageSrc,
         this.imageWidth || undefined,
         this.imageHeight || undefined,
+        this.originalSourceBlob,
       ).catch((error) => {
-        console.error("Failed to reload image after context restore:", error);
+        if (!this.isDestroyed) {
+          console.error("Failed to reload image after context restore:", error);
+          this.config.onError(error);
+        }
       });
     } else {
       this.render();
@@ -258,7 +298,33 @@ export class WebGLImageViewerEngine {
   private initWorker() {
     this.workerBridge = new TextureWorkerBridge({
       onMessage: (event) => this.handleWorkerMessage(event),
+      onError: (event) => {
+        event.preventDefault();
+        this.handleWorkerFatalError(
+          event.error ?? new Error(event.message || "Texture worker crashed"),
+        );
+      },
+      onMessageError: () =>
+        this.handleWorkerFatalError(
+          new Error("Texture worker returned an unreadable message"),
+        ),
     });
+  }
+
+  private handleWorkerFatalError(error: unknown): void {
+    if (this.isDestroyed || this.hasWorkerFatalError) return;
+    this.hasWorkerFatalError = true;
+    const normalizedError = toError(error, "Texture worker crashed");
+    const hadPendingLoad = this.activeLoad !== null;
+    this.isLoadingTexture = false;
+    this.textureWorkerInitialized = false;
+    this.rejectActiveLoad(normalizedError);
+    this.workerBridge?.dispose();
+    this.workerBridge = null;
+    if (!hadPendingLoad) {
+      this.config.onError(normalizedError);
+    }
+    this.notifyLoadingStateChange(false);
   }
 
   private handleWorkerMessage(e: MessageEvent<TextureWorkerMessage>) {
@@ -268,6 +334,13 @@ export class WebGLImageViewerEngine {
       // destroy() 已 terminate worker，但已入队的消息这一拍仍会送达。转移来的
       // ImageBitmap（0.5x 底图可达 ~45MB）必须立即 close，不能等 GC——与
       // texture.worker.js 里写明的 iOS 内存纪律同一条。
+      if (message.type === "image-loaded" || message.type === "tile-created") {
+        message.payload.imageBitmap.close();
+      }
+      return;
+    }
+
+    if (message.sessionId !== this.currentSessionId) {
       if (message.type === "image-loaded" || message.type === "tile-created") {
         message.payload.imageBitmap.close();
       }
@@ -294,45 +367,40 @@ export class WebGLImageViewerEngine {
         const baseBitmapWidth = imageBitmap.width;
         const baseBitmapHeight = imageBitmap.height;
         const texture = this.createWebGLTexture(imageBitmap);
-        imageBitmap.close();
-
-        if (texture) {
-          this.textureManager.setBaseTexture(texture, lodLevel);
-          this.baseTextureSize = {
-            width: baseBitmapWidth,
-            height: baseBitmapHeight,
-          };
-          this.currentQuality = getLodQuality(lodLevel);
-        }
+        this.textureManager.setBaseTexture(texture, lodLevel);
+        this.baseTextureSize = {
+          width: baseBitmapWidth,
+          height: baseBitmapHeight,
+        };
+        this.currentQuality = getLodQuality(lodLevel);
 
         this.imageLoaded = true;
         this.isLoadingTexture = false;
         this.notifyLoadingStateChange(false);
         this.render();
         this.notifyZoomChange();
-        if (this.loadImageResolve) {
-          this.loadImageResolve();
-        }
+        this.resolveActiveLoad(message.sessionId);
       } catch (error) {
-        if (this.loadImageReject) {
-          this.loadImageReject(error as Error);
-        }
+        this.imageLoaded = false;
+        this.isLoadingTexture = false;
+        this.rejectActiveLoad(
+          toError(error, "Failed to upload the base image texture"),
+          message.sessionId,
+        );
+        this.notifyLoadingStateChange(false);
       } finally {
-        // 结算后清空 resolver，避免下一次 loadImage 把已结算的 promise 当作"被取代"。
-        this.loadImageResolve = null;
-        this.loadImageReject = null;
+        imageBitmap.close();
       }
       return;
     }
 
     if (message.type === "load-error") {
       this.isLoadingTexture = false;
+      this.rejectActiveLoad(
+        toError(message.payload.error, "Failed to load image in worker"),
+        message.sessionId,
+      );
       this.notifyLoadingStateChange(false);
-      if (this.loadImageReject) {
-        this.loadImageReject(new Error("Failed to load image in worker"));
-      }
-      this.loadImageResolve = null;
-      this.loadImageReject = null;
       return;
     }
 
@@ -364,10 +432,15 @@ export class WebGLImageViewerEngine {
         "WebGLImageViewerEngine renders a single image; create a new engine to load a different URL",
       );
     }
+    if (!this.workerBridge) {
+      throw new Error("Texture worker is unavailable");
+    }
 
     this.hasNotifiedImagePainted = false;
     this.originalImageSrc = url;
+    this.originalSourceBlob = sourceBlob ?? null;
     this.isLoadingTexture = true;
+    this.textureWorkerInitialized = false;
     this.notifyLoadingStateChange(true, LoadingState.IMAGE_LOADING);
 
     if (preknownWidth && preknownHeight) {
@@ -377,22 +450,46 @@ export class WebGLImageViewerEngine {
     }
 
     // 若上一次 loadImage 尚未结算就再次调用，先拒绝旧 promise，避免它永远挂起。
-    if (this.loadImageReject) {
-      this.loadImageReject(new Error("loadImage superseded by a newer call"));
-      this.loadImageResolve = null;
-      this.loadImageReject = null;
-    }
+    this.rejectActiveLoad(new Error("loadImage superseded by a newer call"));
+    this.tileManager.reset();
+    const sessionId = ++this.loadGeneration;
+    this.currentSessionId = sessionId;
 
     return new Promise<void>((resolve, reject) => {
-      this.loadImageResolve = resolve;
-      this.loadImageReject = reject;
+      this.activeLoad = { sessionId, resolve, reject };
 
-      this.workerBridge?.loadImage({
-        url,
-        blob: sourceBlob ?? null,
-        maxTextureSize: this.maxTextureSize,
-      });
+      try {
+        this.workerBridge!.loadImage({
+          sessionId,
+          url,
+          blob: sourceBlob ?? null,
+          maxTextureSize: this.maxTextureSize,
+          maxTextureBytes: BASE_TEXTURE_BYTE_BUDGET,
+        });
+      } catch (error) {
+        this.rejectActiveLoad(
+          toError(error, "Failed to send the image to the texture worker"),
+          sessionId,
+        );
+      }
     });
+  }
+
+  private resolveActiveLoad(sessionId: number): void {
+    if (this.activeLoad?.sessionId !== sessionId) return;
+    const { resolve } = this.activeLoad;
+    this.activeLoad = null;
+    resolve();
+  }
+
+  private rejectActiveLoad(error: Error, sessionId?: number): void {
+    if (!this.activeLoad) return;
+    if (sessionId !== undefined && this.activeLoad.sessionId !== sessionId) {
+      return;
+    }
+    const { reject } = this.activeLoad;
+    this.activeLoad = null;
+    reject(error);
   }
 
   private setupInitialScaling() {
@@ -406,7 +503,7 @@ export class WebGLImageViewerEngine {
 
   private createWebGLTexture(
     source: HTMLCanvasElement | HTMLImageElement | ImageBitmap,
-  ): WebGLTexture | null {
+  ): WebGLTexture {
     return this.renderer.createTexture(source);
   }
 
@@ -473,7 +570,7 @@ export class WebGLImageViewerEngine {
     this.translateY = tempTranslateY;
 
     this.animationController.start({
-      duration: animationTime || (this.config.smooth ? 300 : 0),
+      duration: animationTime ?? (this.config.smooth ? 300 : 0),
       from: startTransform,
       startLOD,
       startTime: performance.now(),
@@ -519,7 +616,6 @@ export class WebGLImageViewerEngine {
     this.applyTransformState(
       createFitTransform(this.getViewportGeometry(), this.config.initialScale),
     );
-    this.isDoubleClickZoomed = false;
   }
 
   private createMatrix(): Float32Array {
@@ -614,6 +710,7 @@ export class WebGLImageViewerEngine {
 
     this.frameCount++;
     this.renderer.prepareFrame(this.canvas.width, this.canvas.height);
+    if (this.canvasWidth <= 0 || this.canvasHeight <= 0) return;
 
     // 始终渲染一个低分辨率的底图作为回退，防止瓦片加载过程中出现空白
     if (this.textureManager.texture) {
@@ -754,11 +851,7 @@ export class WebGLImageViewerEngine {
 
     // destroy 是 superseded 之外另一条需要结算旧 promise 的路径：worker 一旦
     // terminate 就不会再有 image-loaded/load-error 消息，不拒绝则 promise 永远挂起。
-    if (this.loadImageReject) {
-      this.loadImageReject(new Error("viewer destroyed"));
-      this.loadImageResolve = null;
-      this.loadImageReject = null;
-    }
+    this.rejectActiveLoad(new Error("viewer destroyed"));
 
     this.workerBridge?.dispose();
     this.workerBridge = null;
@@ -767,6 +860,30 @@ export class WebGLImageViewerEngine {
     // 绘制缓冲与驱动侧内存要等 JS GC 才释放——iOS WebKit 的 GC 在内存压力下才跑、
     // 且对同页存活上下文数量有硬上限：查看器每次开关都新建引擎，不 loseContext 会
     // 逐次累积 GPU 内存，最终触发 Safari 强制整页重载（jetsam）。
+    this.gl.getExtension("WEBGL_lose_context")?.loseContext();
+  }
+
+  private rollbackFailedConstruction(): void {
+    this.isDestroyed = true;
+    this.animationController.cancel();
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+    window.removeEventListener("resize", this.boundResizeCanvas);
+    this.canvas.removeEventListener("webglcontextlost", this.boundContextLost);
+    this.canvas.removeEventListener(
+      "webglcontextrestored",
+      this.boundContextRestored,
+    );
+    this.resizeObserver?.disconnect();
+    this.inputController?.dispose();
+    this.inputController = null;
+    this.workerBridge?.dispose();
+    this.workerBridge = null;
+    this.tileManager.dispose();
+    this.textureManager.dispose();
+    this.renderer?.dispose();
     this.gl.getExtension("WEBGL_lose_context")?.loseContext();
   }
 
@@ -861,8 +978,10 @@ export class WebGLImageViewerEngine {
     this.animationController.cancel();
 
     if (this.config.doubleClick.mode === "toggle") {
+      const configuredFitScale =
+        this.getFitToScreenScale() * this.config.initialScale;
       const result = resolveDoubleClickToggle({
-        isZoomed: this.isDoubleClickZoomed,
+        isZoomed: this.scale > configuredFitScale * 1.001,
         point: { x, y },
         transform: this.getTransformState(),
         canvasWidth: this.canvasWidth,
@@ -880,7 +999,6 @@ export class WebGLImageViewerEngine {
         result.transform.translateY,
         this.config.doubleClick.animationTime,
       );
-      this.isDoubleClickZoomed = result.isZoomed;
     } else {
       this.zoomAt(x, y, this.config.doubleClick.step, true);
     }
@@ -909,4 +1027,27 @@ export class WebGLImageViewerEngine {
       this.notifyZoomChange();
     }
   }
+}
+
+function toError(error: unknown, fallbackMessage: string): Error {
+  if (error instanceof Error) return error;
+  if (typeof error === "string" && error) return new Error(error);
+  return new Error(fallbackMessage, { cause: error });
+}
+
+function getCanvasDimensionLimit(
+  gl: WebGLRenderingContext,
+  fallback: number,
+): number {
+  const renderbufferLimit = Number(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
+  const viewportDimensions = gl.getParameter(gl.MAX_VIEWPORT_DIMS) as unknown;
+  const viewportLimit =
+    viewportDimensions instanceof Int32Array ||
+    Array.isArray(viewportDimensions)
+      ? Math.min(Number(viewportDimensions[0]), Number(viewportDimensions[1]))
+      : Number(viewportDimensions);
+  const limits = [renderbufferLimit, viewportLimit, fallback].filter(
+    (value) => Number.isFinite(value) && value > 0,
+  );
+  return limits.length > 0 ? Math.min(...limits) : 0;
 }

@@ -85,6 +85,22 @@ describe("decidePhotoWork", () => {
     expect(hasThumbnail).not.toHaveBeenCalled();
   });
 
+  it("forces leniently repaired cache entries through processing", async () => {
+    const hasThumbnail = vi.fn(async () => true);
+    const result = await decidePhotoWork(
+      createExistingPhoto(),
+      createStorageObject(),
+      createOptions({ reprocessKeys: ["photo.jpg"] }),
+      hasThumbnail,
+    );
+
+    expect(result).toEqual({
+      shouldProcess: true,
+      reason: "repaired manifest cache",
+    });
+    expect(hasThumbnail).not.toHaveBeenCalled();
+  });
+
   it("processes when lastModified is newer", async () => {
     const result = await decidePhotoWork(
       createExistingPhoto(),
@@ -242,6 +258,7 @@ describe("shouldProcessPhoto", () => {
     expect(thumbnailExists).toHaveBeenCalledWith(
       "photo",
       "/test-out/thumbnails",
+      "/thumbnails/photo.jpg",
     );
   });
 

@@ -10,6 +10,7 @@ import { Marker } from "react-map-gl/maplibre";
 import { Link, useLocation } from "react-router";
 
 import { ThumbnailImage } from "~/components/ui/ThumbnailImage";
+import { getPhotoDate } from "~/lib/photo-date";
 import { buildPhotoDetailPathname } from "~/lib/photo-detail-route";
 import { buildPhotoDetailSearch } from "~/lib/return-to";
 
@@ -42,13 +43,6 @@ export const PhotoMarkerPin = ({
     onClose?.();
   };
 
-  const handleMarkerKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      handleClick();
-    }
-  };
-
   return (
     <Marker
       key={marker.id}
@@ -61,7 +55,8 @@ export const PhotoMarkerPin = ({
         closeDelay={isSelected ? 0 : 100} // 选中时不自动关闭
       >
         <HoverCardTrigger asChild>
-          <m.div
+          <m.button
+            type="button"
             className="focus-visible:ring-accent/45 group focus-visible:ring-offset-background relative flex h-11 w-11 cursor-pointer items-center justify-center rounded-full focus-visible:ring-2 focus-visible:ring-offset-2"
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
@@ -73,9 +68,6 @@ export const PhotoMarkerPin = ({
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
             onClick={handleClick}
-            onKeyDown={handleMarkerKeyDown}
-            role="button"
-            tabIndex={0}
             aria-label={marker.photo.title || marker.photo.id}
           >
             {/* Selection ring - 只有选中时显示 */}
@@ -89,6 +81,8 @@ export const PhotoMarkerPin = ({
                 photoId={marker.photo.id}
                 src={marker.photo.thumbnailUrl || marker.photo.originalUrl}
                 alt={marker.photo.title || marker.photo.id}
+                width={marker.photo.width}
+                height={marker.photo.height}
                 thumbHash={marker.photo.thumbHash}
                 containerClassName="h-full w-full opacity-40"
                 imageClassName="h-full w-full object-cover"
@@ -102,7 +96,7 @@ export const PhotoMarkerPin = ({
 
             {/* Main marker container */}
             <div
-              className={`relative flex h-10 w-10 items-center justify-center rounded-full border shadow-lg backdrop-blur-md transition-all duration-300 hover:shadow-xl ${
+              className={`relative flex h-10 w-10 items-center justify-center rounded-full border shadow-lg backdrop-blur-md transition-[background-color,border-color,box-shadow,transform] duration-300 hover:shadow-xl ${
                 isSelected
                   ? "border-blue/40 bg-blue/90 shadow-blue/50 dark:border-blue/30 dark:bg-blue/80"
                   : "border-white/40 bg-white/95 hover:bg-white dark:border-white/20 dark:bg-black/80 dark:hover:bg-black/90"
@@ -116,12 +110,13 @@ export const PhotoMarkerPin = ({
                 className={`i-mingcute-camera-line relative z-10 text-lg drop-shadow-sm ${
                   isSelected ? "text-white" : "text-gray-700 dark:text-white"
                 }`}
+                aria-hidden="true"
               />
 
               {/* Subtle inner shadow for depth */}
               <div className="absolute inset-0 rounded-full shadow-inner shadow-black/5" />
             </div>
-          </m.div>
+          </m.button>
         </HoverCardTrigger>
 
         <HoverCardContent
@@ -145,7 +140,10 @@ export const PhotoMarkerPin = ({
                 aria-label={t("common.close")}
                 title={t("common.close")}
               >
-                <i className="i-mingcute-close-line text-lg" />
+                <i
+                  className="i-mingcute-close-line text-lg"
+                  aria-hidden="true"
+                />
               </GlassButton>
             )}
 
@@ -155,6 +153,8 @@ export const PhotoMarkerPin = ({
                 photoId={marker.photo.id}
                 src={marker.photo.thumbnailUrl || marker.photo.originalUrl}
                 alt={marker.photo.title || marker.photo.id}
+                width={marker.photo.width}
+                height={marker.photo.height}
                 thumbHash={marker.photo.thumbHash}
                 containerClassName="h-full w-full"
                 imageClassName="h-full w-full object-cover"
@@ -182,29 +182,39 @@ export const PhotoMarkerPin = ({
                 >
                   {marker.photo.title || marker.photo.id}
                 </h3>
-                <i className="i-mingcute-arrow-right-line text-text-secondary transition-transform group-hover/link:translate-x-0.5" />
+                <i
+                  className="i-mingcute-arrow-right-line text-text-secondary transition-transform group-hover/link:translate-x-0.5"
+                  aria-hidden="true"
+                />
               </Link>
 
               {/* Metadata */}
               <div className="space-y-2">
                 {marker.photo.exif?.DateTimeOriginal && (
                   <div className="text-text-secondary flex items-center gap-2 text-xs">
-                    <i className="i-mingcute-calendar-line text-sm" />
+                    <i
+                      className="i-mingcute-calendar-line text-sm"
+                      aria-hidden="true"
+                    />
                     <span>
-                      {new Date(
-                        marker.photo.exif.DateTimeOriginal,
-                      ).toLocaleDateString(i18n.language, {
-                        year: "numeric",
-                        month: "short",
-                        day: "numeric",
-                      })}
+                      {getPhotoDate(marker.photo).toLocaleDateString(
+                        i18n.language,
+                        {
+                          year: "numeric",
+                          month: "short",
+                          day: "numeric",
+                        },
+                      )}
                     </span>
                   </div>
                 )}
 
                 {marker.photo.exif?.Make && marker.photo.exif?.Model && (
                   <div className="text-text-secondary flex items-center gap-2 text-xs">
-                    <i className="i-mingcute-camera-line text-sm" />
+                    <i
+                      className="i-mingcute-camera-line text-sm"
+                      aria-hidden="true"
+                    />
                     <span className="truncate">
                       {marker.photo.exif.Make} {marker.photo.exif.Model}
                     </span>
@@ -213,7 +223,10 @@ export const PhotoMarkerPin = ({
 
                 <div className="text-text-secondary space-y-1 text-xs">
                   <div className="flex items-center gap-2">
-                    <i className="i-mingcute-location-line text-sm" />
+                    <i
+                      className="i-mingcute-location-line text-sm"
+                      aria-hidden="true"
+                    />
                     <span className="font-mono">
                       <span>{Math.abs(marker.latitude).toFixed(4)}°</span>
                       <span>{latitudeDirection}</span>
@@ -224,7 +237,10 @@ export const PhotoMarkerPin = ({
                   </div>
                   {marker.altitude !== undefined && (
                     <div className="flex items-center gap-2">
-                      <i className="i-mingcute-mountain-2-line text-sm" />
+                      <i
+                        className="i-mingcute-mountain-2-line text-sm"
+                        aria-hidden="true"
+                      />
                       <span className="font-mono">
                         <span>
                           {marker.altitudeRef === "Below Sea Level" ? "-" : ""}

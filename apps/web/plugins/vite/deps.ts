@@ -1,3 +1,5 @@
+import { gzipSync } from "node:zlib";
+
 import type { Plugin, UserConfig } from "vite";
 
 export type DependencyChunkGroup = {
@@ -55,6 +57,20 @@ export function createDependencyChunksPlugin(
       };
 
       outputConfig.manualChunks = (id: string) => {
+        // Vite's preload helper and Rollup's CommonJS helpers are shared by both
+        // eager and lazy chunks. If Rollup happens to place either helper inside
+        // a large lazy-only vendor chunk (MapLibre was the observed case), the
+        // entry chunk acquires a static import to that vendor and Vite emits a
+        // modulepreload for the whole feature. Keep runtime glue in a tiny,
+        // neutral chunk so feature boundaries stay real rather than cosmetic.
+        if (
+          id.includes("vite/preload-helper") ||
+          id.includes("commonjsHelpers") ||
+          id.includes("commonjs-dynamic-modules")
+        ) {
+          return "vendor/runtime";
+        }
+
         if (!id.includes("/node_modules/")) {
           return null;
         }
@@ -73,16 +89,15 @@ export function createDependencyChunksPlugin(
       };
     },
     generateBundle(_outputOptions, bundle) {
+      const chunks = Object.values(bundle).filter(
+        (item): item is Extract<(typeof bundle)[string], { type: "chunk" }> =>
+          item.type === "chunk",
+      );
+      const chunksByFileName = new Map(
+        chunks.map((chunk) => [chunk.fileName, chunk]),
+      );
       const entryFiles = new Set(
-        Object.values(bundle)
-          .filter(
-            (
-              item,
-            ): item is Extract<(typeof bundle)[string], { type: "chunk" }> =>
-              item.type === "chunk",
-          )
-          .filter((chunk) => chunk.isEntry)
-          .map((chunk) => chunk.fileName),
+        chunks.filter((chunk) => chunk.isEntry).map((chunk) => chunk.fileName),
       );
 
       for (const item of Object.values(bundle)) {
@@ -101,6 +116,53 @@ export function createDependencyChunksPlugin(
               "This creates a bootstrap cycle and can break production initialization.",
           );
         }
+      }
+
+      // Protect the initial dependency closure, not merely individual chunk
+      // sizes. A tiny entry can still preload a megabyte through one misplaced
+      // helper import. Map/HEIC/raw-EXIF are deliberately lazy product features
+      // and must never enter the static entry closure.
+      const initialFiles = new Set<string>();
+      const visitInitialImport = (fileName: string) => {
+        if (initialFiles.has(fileName)) return;
+        initialFiles.add(fileName);
+        const chunk = chunksByFileName.get(fileName);
+        for (const importedFile of chunk?.imports ?? []) {
+          visitInitialImport(importedFile);
+        }
+      };
+      for (const entryFile of entryFiles) visitInitialImport(entryFile);
+
+      const forbiddenInitialPrefixes = [
+        "vendor/map-",
+        "vendor/heic-",
+        "vendor/exiftool-",
+      ];
+      const leakedLazyChunk = [...initialFiles].find((fileName) =>
+        forbiddenInitialPrefixes.some((prefix) => fileName.startsWith(prefix)),
+      );
+      if (leakedLazyChunk) {
+        this.error(
+          `Lazy-only chunk ${leakedLazyChunk} leaked into the static entry dependency closure.`,
+        );
+      }
+
+      const initialGzipBytes = [...initialFiles].reduce((total, fileName) => {
+        const item = bundle[fileName];
+        if (!item) return total;
+        const source =
+          item.type === "chunk"
+            ? item.code
+            : typeof item.source === "string"
+              ? item.source
+              : Buffer.from(item.source);
+        return total + gzipSync(source).byteLength;
+      }, 0);
+      const initialJsBudget = 360 * 1024;
+      if (initialGzipBytes > initialJsBudget) {
+        this.error(
+          `Initial JavaScript closure is ${(initialGzipBytes / 1024).toFixed(1)} KiB gzip; budget is ${initialJsBudget / 1024} KiB.`,
+        );
       }
     },
   };

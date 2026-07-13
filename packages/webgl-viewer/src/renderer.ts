@@ -15,83 +15,99 @@ export class WebGLViewerRenderer {
   private readonly imageLocation: WebGLUniformLocation;
   private readonly renderModeLocation: WebGLUniformLocation;
   private readonly solidColorLocation: WebGLUniformLocation;
+  private disposed = false;
 
   constructor(private readonly gl: WebGLRenderingContext) {
-    const vertexShader = createShader(
-      gl,
-      gl.VERTEX_SHADER,
-      VERTEX_SHADER_SOURCE,
-    );
-    const fragmentShader = createShader(
-      gl,
-      gl.FRAGMENT_SHADER,
-      FRAGMENT_SHADER_SOURCE,
-    );
+    let vertexShader: WebGLShader | null = null;
+    let fragmentShader: WebGLShader | null = null;
+    let program: WebGLProgram | null = null;
+    let positionBuffer: WebGLBuffer | null = null;
+    let texCoordBuffer: WebGLBuffer | null = null;
+    let tileOutlineBuffer: WebGLBuffer | null = null;
 
-    const program = gl.createProgram();
-    if (!program) {
-      throw new Error("Failed to create WebGL program");
-    }
-    this.program = program;
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-    gl.linkProgram(program);
-
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      throw new Error(
-        `Program linking failed: ${gl.getProgramInfoLog(program)}`,
+    try {
+      vertexShader = createShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER_SOURCE);
+      fragmentShader = createShader(
+        gl,
+        gl.FRAGMENT_SHADER,
+        FRAGMENT_SHADER_SOURCE,
       );
+
+      program = gl.createProgram();
+      if (!program) {
+        throw new Error("Failed to create WebGL program");
+      }
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        throw new Error(
+          `Program linking failed: ${gl.getProgramInfoLog(program)}`,
+        );
+      }
+
+      gl.useProgram(program);
+
+      const positionLocation = gl.getAttribLocation(program, "a_position");
+      const texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
+      if (positionLocation === -1 || texCoordLocation === -1) {
+        throw new Error("Failed to get attribute locations");
+      }
+
+      const matrixLocation = gl.getUniformLocation(program, "u_matrix");
+      const imageLocation = gl.getUniformLocation(program, "u_image");
+      const renderModeLocation = gl.getUniformLocation(program, "u_renderMode");
+      const solidColorLocation = gl.getUniformLocation(program, "u_solidColor");
+      if (
+        matrixLocation === null ||
+        imageLocation === null ||
+        renderModeLocation === null ||
+        solidColorLocation === null
+      ) {
+        throw new Error("Failed to get uniform locations");
+      }
+
+      positionBuffer = this.createBuffer(
+        new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
+        "position",
+      );
+      texCoordBuffer = this.createBuffer(
+        new Float32Array([0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0]),
+        "texCoord",
+      );
+      tileOutlineBuffer = this.createBuffer(
+        new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]),
+        "outline",
+      );
+
+      this.program = program;
+      this.positionBuffer = positionBuffer;
+      this.texCoordBuffer = texCoordBuffer;
+      this.tileOutlineBuffer = tileOutlineBuffer;
+      this.positionLocation = positionLocation;
+      this.texCoordLocation = texCoordLocation;
+      this.matrixLocation = matrixLocation;
+      this.imageLocation = imageLocation;
+      this.renderModeLocation = renderModeLocation;
+      this.solidColorLocation = solidColorLocation;
+
+      gl.enableVertexAttribArray(positionLocation);
+      gl.enableVertexAttribArray(texCoordLocation);
+      this.bindQuadBuffers();
+      gl.uniform1i(renderModeLocation, 0);
+    } catch (error) {
+      if (positionBuffer) gl.deleteBuffer(positionBuffer);
+      if (texCoordBuffer) gl.deleteBuffer(texCoordBuffer);
+      if (tileOutlineBuffer) gl.deleteBuffer(tileOutlineBuffer);
+      if (program) gl.deleteProgram(program);
+      throw error;
+    } finally {
+      // Once linked, shaders are owned by the program. Marking them for
+      // deletion here also covers every constructor failure path.
+      if (vertexShader) gl.deleteShader(vertexShader);
+      if (fragmentShader) gl.deleteShader(fragmentShader);
     }
-
-    gl.useProgram(program);
-
-    this.positionLocation = gl.getAttribLocation(program, "a_position");
-    this.texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
-
-    if (this.positionLocation === -1 || this.texCoordLocation === -1) {
-      throw new Error("Failed to get attribute locations");
-    }
-
-    const matrixLocation = gl.getUniformLocation(program, "u_matrix");
-    const imageLocation = gl.getUniformLocation(program, "u_image");
-    const renderModeLocation = gl.getUniformLocation(program, "u_renderMode");
-    const solidColorLocation = gl.getUniformLocation(program, "u_solidColor");
-
-    if (
-      !matrixLocation ||
-      !imageLocation ||
-      !renderModeLocation ||
-      !solidColorLocation
-    ) {
-      throw new Error("Failed to get uniform locations");
-    }
-
-    this.matrixLocation = matrixLocation;
-    this.imageLocation = imageLocation;
-    this.renderModeLocation = renderModeLocation;
-    this.solidColorLocation = solidColorLocation;
-
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-    this.positionBuffer = this.createBuffer(
-      new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
-      "position",
-    );
-    this.texCoordBuffer = this.createBuffer(
-      new Float32Array([0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0]),
-      "texCoord",
-    );
-    this.tileOutlineBuffer = this.createBuffer(
-      new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]),
-      "outline",
-    );
-
-    gl.enableVertexAttribArray(this.positionLocation);
-    gl.enableVertexAttribArray(this.texCoordLocation);
-
-    this.bindQuadBuffers();
-    gl.uniform1i(this.renderModeLocation, 0);
   }
 
   prepareFrame(width: number, height: number): void {
@@ -100,12 +116,18 @@ export class WebGLViewerRenderer {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(this.program);
+    // Base and tile textures describe the same source pixels at different
+    // resolutions. Source-over blending would composite translucent pixels
+    // twice where a tile replaces the base. Textured draws therefore replace
+    // framebuffer pixels; blending is only enabled for debug outlines.
+    gl.disable(gl.BLEND);
     this.bindQuadBuffers();
     gl.uniform1i(this.renderModeLocation, 0);
   }
 
   drawTexturedQuad(texture: WebGLTexture, matrix: Float32Array): void {
     const { gl } = this;
+    gl.disable(gl.BLEND);
     gl.uniformMatrix3fv(this.matrixLocation, false, matrix);
     gl.uniform1i(this.imageLocation, 0);
     gl.activeTexture(gl.TEXTURE0);
@@ -119,6 +141,8 @@ export class WebGLViewerRenderer {
     }
 
     const { gl } = this;
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.uniform1i(this.renderModeLocation, 1);
     gl.uniform4f(this.solidColorLocation, 1, 0.4, 0, 0.7);
     this.bindOutlineBuffer();
@@ -131,26 +155,57 @@ export class WebGLViewerRenderer {
 
     this.bindQuadBuffers();
     gl.uniform1i(this.renderModeLocation, 0);
+    gl.disable(gl.BLEND);
   }
 
   createTexture(
     source: HTMLCanvasElement | HTMLImageElement | ImageBitmap,
-  ): WebGLTexture | null {
+  ): WebGLTexture {
     const { gl } = this;
     const texture = gl.createTexture();
-    if (!texture) return null;
+    if (!texture) {
+      throw new Error("Failed to allocate WebGL texture");
+    }
 
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    try {
+      // Discard errors left by unrelated callers so the check below belongs to
+      // this upload. The cap avoids looping forever on a lost context.
+      for (let i = 0; i < 8; i++) {
+        if (gl.getError() === gl.NO_ERROR) break;
+      }
 
-    return texture;
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        source,
+      );
+
+      const uploadError = gl.getError();
+      if (uploadError !== gl.NO_ERROR) {
+        throw new Error(
+          `WebGL texture upload failed (${describeWebGLError(gl, uploadError)})`,
+        );
+      }
+      return texture;
+    } catch (error) {
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.deleteTexture(texture);
+      throw error;
+    }
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.gl.deleteBuffer(this.positionBuffer);
     this.gl.deleteBuffer(this.texCoordBuffer);
     this.gl.deleteBuffer(this.tileOutlineBuffer);
@@ -180,4 +235,13 @@ export class WebGLViewerRenderer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.tileOutlineBuffer);
     gl.vertexAttribPointer(this.positionLocation, 2, gl.FLOAT, false, 0, 0);
   }
+}
+
+function describeWebGLError(gl: WebGLRenderingContext, error: number): string {
+  if (error === gl.INVALID_ENUM) return "INVALID_ENUM";
+  if (error === gl.INVALID_VALUE) return "INVALID_VALUE";
+  if (error === gl.INVALID_OPERATION) return "INVALID_OPERATION";
+  if (error === gl.OUT_OF_MEMORY) return "OUT_OF_MEMORY";
+  if (error === gl.CONTEXT_LOST_WEBGL) return "CONTEXT_LOST_WEBGL";
+  return `0x${error.toString(16)}`;
 }

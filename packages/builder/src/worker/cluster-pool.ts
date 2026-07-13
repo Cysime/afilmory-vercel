@@ -52,6 +52,8 @@ interface WorkerHandle {
   state: WorkerLifecycleState;
   processedTasks: number; // 已成功处理的任务数
   activeTaskCount: number; // 当前正在处理的任务数
+  activeTaskIds: Set<string>;
+  watchdog?: NodeJS.Timeout;
 }
 
 export interface ClusterPoolOptions<T> {
@@ -62,6 +64,8 @@ export interface ClusterPoolOptions<T> {
   workerConcurrency?: number; // 每个 worker 内部的并发数
   sharedData?: ClusterWorkerSharedData;
   onTaskCompleted?: (payload: TaskCompletedPayload<T>) => void;
+  /** Startup/init/task-batch watchdog. */
+  timeoutMs?: number;
 }
 
 // 基于 Node.js cluster 的 Worker 池管理器
@@ -73,6 +77,7 @@ export class ClusterPool<T> extends EventEmitter {
   private logger: Logger;
   private sharedData?: ClusterPoolOptions<T>["sharedData"];
   private onTaskCompleted?: (payload: TaskCompletedPayload<T>) => void;
+  private readonly timeoutMs: number;
 
   private taskQueue: QueuedClusterTask[] = [];
   private workerHandles = new Map<number, WorkerHandle>();
@@ -89,10 +94,48 @@ export class ClusterPool<T> extends EventEmitter {
     this.concurrency = options.concurrency;
     this.totalTasks = options.totalTasks;
     this.workerEnv = options.workerEnv || {};
-    this.workerConcurrency = options.workerConcurrency || 5; // 默认每个 worker 同时处理 5 个任务
+    this.workerConcurrency = options.workerConcurrency ?? 5; // 默认每个 worker 同时处理 5 个任务
     this.logger = options.logger ?? logger;
     this.sharedData = options.sharedData;
     this.onTaskCompleted = options.onTaskCompleted;
+    this.timeoutMs = options.timeoutMs ?? 300_000;
+
+    if (
+      !Number.isSafeInteger(this.concurrency) ||
+      this.concurrency <= 0 ||
+      this.concurrency > 1024
+    ) {
+      throw new Error(
+        "ClusterPool concurrency must be a positive integer <= 1024",
+      );
+    }
+    if (
+      !Number.isSafeInteger(this.totalTasks) ||
+      this.totalTasks < 0 ||
+      this.totalTasks > 10_000_000
+    ) {
+      throw new Error(
+        "ClusterPool totalTasks must be a non-negative integer <= 10000000",
+      );
+    }
+    if (
+      !Number.isSafeInteger(this.workerConcurrency) ||
+      this.workerConcurrency <= 0 ||
+      this.workerConcurrency > 1024
+    ) {
+      throw new Error(
+        "ClusterPool workerConcurrency must be a positive integer <= 1024",
+      );
+    }
+    if (
+      !Number.isSafeInteger(this.timeoutMs) ||
+      this.timeoutMs <= 0 ||
+      this.timeoutMs > 86_400_000
+    ) {
+      throw new Error(
+        "ClusterPool timeoutMs must be a positive integer <= 86400000",
+      );
+    }
 
     // 没有 sharedData 的 worker 无法重建 builder，也永远等不到 init-complete——
     // 那是静默死锁。有任务就必须有共享数据，缺了在构造期就大声失败。
@@ -209,19 +252,21 @@ export class ClusterPool<T> extends EventEmitter {
         state: "starting",
         processedTasks: 0,
         activeTaskCount: 0,
+        activeTaskIds: new Set(),
       });
 
       const workerLogger = this.logger.worker(workerId);
 
       const startupTimer = setTimeout(() => {
         reject(new Error(`Worker ${workerId} startup timed out`));
-      }, 10_000);
+      }, this.timeoutMs);
 
       worker.on("online", () => {
         workerLogger.start(
           `Worker ${workerId} process started (PID: ${worker.process?.pid})`,
         );
         clearTimeout(startupTimer);
+        this.armWorkerWatchdog(workerId, "ready handshake");
         resolve();
       });
 
@@ -288,6 +333,8 @@ export class ClusterPool<T> extends EventEmitter {
       return;
     }
 
+    this.clearWorkerWatchdog(handle);
+
     // 首次 ready：发送初始化数据，等待 init-complete 后才算真正就绪
     if (this.sharedData) {
       // IPC 通道已启用 advanced（v8）序列化，existingManifestMap / livePhotoMap
@@ -301,6 +348,7 @@ export class ClusterPool<T> extends EventEmitter {
     }
 
     handle.state = "initializing";
+    this.armWorkerWatchdog(workerId, "initialization");
     workerLogger.info(
       `Worker ${workerId} received init request, waiting for initialization to complete`,
     );
@@ -310,6 +358,16 @@ export class ClusterPool<T> extends EventEmitter {
     const handle = this.workerHandles.get(workerId);
     if (!handle) return;
 
+    if (handle.state !== "initializing") {
+      this.logger
+        .worker(workerId)
+        .warn(
+          `Worker ${workerId} sent init-complete while in ${handle.state}; ignoring`,
+        );
+      return;
+    }
+
+    this.clearWorkerWatchdog(handle);
     handle.state = "ready";
     this.logger
       .worker(workerId)
@@ -346,6 +404,7 @@ export class ClusterPool<T> extends EventEmitter {
 
     for (const task of tasks) {
       this.pendingTaskIds.add(task.taskId);
+      handle.activeTaskIds.add(task.taskId);
     }
     handle.activeTaskCount += tasks.length;
 
@@ -357,6 +416,10 @@ export class ClusterPool<T> extends EventEmitter {
     };
 
     handle.worker.send(message);
+    this.armWorkerWatchdog(
+      workerId,
+      `batch (${tasks.map((task) => task.taskIndex + 1).join(", ")})`,
+    );
 
     this.logger
       .worker(workerId)
@@ -372,6 +435,8 @@ export class ClusterPool<T> extends EventEmitter {
     const handle = this.workerHandles.get(workerId);
     if (!handle) return;
 
+    this.clearWorkerWatchdog(handle);
+
     const workerLogger = this.logger.worker(workerId);
 
     let completedInBatch = 0;
@@ -385,6 +450,7 @@ export class ClusterPool<T> extends EventEmitter {
       }
 
       this.pendingTaskIds.delete(taskResult.taskId);
+      handle.activeTaskIds.delete(taskResult.taskId);
       completedInBatch++;
 
       if (taskResult.type === "result" && taskResult.result !== undefined) {
@@ -422,6 +488,10 @@ export class ClusterPool<T> extends EventEmitter {
     );
     handle.processedTasks += successfulInBatch;
 
+    if (handle.activeTaskIds.size > 0) {
+      this.armWorkerWatchdog(workerId, "remaining batch results");
+    }
+
     workerLogger.info(
       `Completed batch: ${successfulInBatch}/${completedInBatch} succeeded (total completed: ${this.completedTasks}/${this.totalTasks}, in progress: ${handle.activeTaskCount})`,
     );
@@ -440,14 +510,20 @@ export class ClusterPool<T> extends EventEmitter {
     const handle = this.workerHandles.get(workerId);
     if (!handle) return;
 
+    this.clearWorkerWatchdog(handle);
+
     const workerLogger = this.logger.worker(workerId);
 
     if (!this.pendingTaskIds.has(message.taskId)) {
       workerLogger.warn(`Received unknown task result: ${message.taskId}`);
+      if (handle.activeTaskIds.size > 0) {
+        this.armWorkerWatchdog(workerId, "task results");
+      }
       return;
     }
 
     this.pendingTaskIds.delete(message.taskId);
+    handle.activeTaskIds.delete(message.taskId);
 
     // 更新任务计数
     handle.activeTaskCount = Math.max(0, handle.activeTaskCount - 1);
@@ -484,6 +560,10 @@ export class ClusterPool<T> extends EventEmitter {
       return;
     }
 
+    if (handle.activeTaskIds.size > 0) {
+      this.armWorkerWatchdog(workerId, "remaining task results");
+    }
+
     // 为该 worker 分配下一批任务
     this.assignBatchTasksToWorker(workerId);
   }
@@ -515,11 +595,32 @@ export class ClusterPool<T> extends EventEmitter {
     );
   }
 
+  private armWorkerWatchdog(workerId: number, phase: string): void {
+    const handle = this.workerHandles.get(workerId);
+    if (!handle || this.hasFailed || this.isShuttingDown) return;
+    this.clearWorkerWatchdog(handle);
+    handle.watchdog = setTimeout(() => {
+      this.fail(
+        new Error(
+          `Worker ${workerId} ${phase} timed out after ${this.timeoutMs}ms`,
+        ),
+      );
+    }, this.timeoutMs);
+  }
+
+  private clearWorkerWatchdog(handle: WorkerHandle): void {
+    if (!handle.watchdog) return;
+    clearTimeout(handle.watchdog);
+    handle.watchdog = undefined;
+  }
+
   private async shutdown(): Promise<void> {
     this.isShuttingDown = true;
     const shutdownPromises: Promise<void>[] = [];
 
-    for (const { worker } of this.workerHandles.values()) {
+    for (const handle of this.workerHandles.values()) {
+      this.clearWorkerWatchdog(handle);
+      const { worker } = handle;
       shutdownPromises.push(
         new Promise((resolve) => {
           const timeout = setTimeout(() => {

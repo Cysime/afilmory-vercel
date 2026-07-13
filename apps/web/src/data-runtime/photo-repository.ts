@@ -7,6 +7,10 @@ import type {
 import { createEmptyManifest } from "@afilmory/schema";
 
 import { debugLog } from "~/lib/debug-log";
+import {
+  appendMediaVersion,
+  getVersionedOriginalUrl,
+} from "~/lib/media-version-url";
 
 export class PhotoRepository {
   private readonly photos: PhotoManifestItem[];
@@ -15,7 +19,26 @@ export class PhotoRepository {
   private readonly lenses: LensInfo[];
 
   constructor(manifest: AfilmoryManifest = createEmptyManifest()) {
-    this.photos = manifest.photos;
+    this.photos = manifest.photos.map((photo) => {
+      const originalUrl = getVersionedOriginalUrl(photo);
+      return {
+        ...photo,
+        originalUrl,
+        ...(photo.video?.type === "live-photo"
+          ? {
+              video: {
+                ...photo.video,
+                videoUrl: appendMediaVersion(
+                  photo.video.videoUrl,
+                  photo.video.version ||
+                    photo.etag ||
+                    `${photo.lastModified}:${photo.size}:video`,
+                ),
+              },
+            }
+          : {}),
+      };
+    });
     this.cameras = manifest.indexes.cameras;
     this.lenses = manifest.indexes.lenses;
     this.photoMap = new Map(

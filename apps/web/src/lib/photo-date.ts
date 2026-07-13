@@ -1,10 +1,16 @@
 import type { PhotoManifestItem } from "@afilmory/schema";
 
 /**
- * Extract a Date object from a photo's EXIF DateTimeOriginal or lastModified.
+ * Extract a Date object from the builder's canonical dateTaken field, with raw
+ * EXIF and object lastModified retained only as compatibility fallbacks.
  * EXIF date format: "YYYY:MM:DD HH:mm:ss" or ISO string
  */
 export function getPhotoDate(photo: PhotoManifestItem): Date {
+  const canonicalDate = new Date(photo.dateTaken);
+  if (!Number.isNaN(canonicalDate.getTime())) {
+    return canonicalDate;
+  }
+
   if (photo.exif?.DateTimeOriginal) {
     const dateStr = photo.exif.DateTimeOriginal;
     // EXIF date format "YYYY:MM:DD HH:mm:ss" → "YYYY-MM-DD HH:mm:ss"

@@ -1,7 +1,7 @@
 import "dotenv-expand/config";
 
 /* eslint-disable no-console */
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,11 +29,8 @@ export const precheck = async (options: PrecheckOptions = {}) => {
   // deploys; REQUIRE_FRESH_BUILD=true is the platform-agnostic override.
   const requireFreshBuild =
     env.REQUIRE_FRESH_BUILD === "true" || env.VERCEL_ENV === "production";
-  const requiredS3Vars = [
-    "S3_BUCKET_NAME",
-    "S3_ACCESS_KEY_ID",
-    "S3_SECRET_ACCESS_KEY",
-  ] as const;
+  const photoStorageProvider = env.PHOTO_STORAGE_PROVIDER ?? "s3";
+  const requiredS3Vars = ["S3_BUCKET_NAME"] as const;
   const missingS3Vars = requiredS3Vars.filter((key) => !env[key]);
   const manifestPath = path.join(workdir, "generated/photos-manifest.json");
   const readExistingManifestSnapshot = async (): Promise<ManifestSnapshot> => {
@@ -65,7 +62,16 @@ export const precheck = async (options: PrecheckOptions = {}) => {
     return;
   }
 
-  if (missingS3Vars.length > 0) {
+  if (
+    photoStorageProvider === "s3" &&
+    Boolean(env.S3_ACCESS_KEY_ID) !== Boolean(env.S3_SECRET_ACCESS_KEY)
+  ) {
+    throw new Error(
+      "[precheck] S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must either both be provided or both be omitted to use the AWS default credential chain.",
+    );
+  }
+
+  if (photoStorageProvider === "s3" && missingS3Vars.length > 0) {
     if (requireFreshBuild) {
       throw new Error(
         `[precheck] Missing required S3 environment variables: ${missingS3Vars.join(", ")}. ` +
@@ -89,7 +95,7 @@ export const precheck = async (options: PrecheckOptions = {}) => {
       throw new Error(
         `[precheck] Missing required S3 environment variables: ${missingS3Vars.join(", ")}. ` +
           `Either configure them or commit an existing manifest at ${manifestPath}. ` +
-          "Required: S3_BUCKET_NAME, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY. " +
+          "Required: S3_BUCKET_NAME. S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are optional as a pair; omitting both uses the AWS default credential chain. " +
           "Optional: S3_REGION (default: us-east-1), S3_ENDPOINT, S3_PREFIX, S3_CUSTOM_DOMAIN.",
       );
     }
@@ -97,10 +103,6 @@ export const precheck = async (options: PrecheckOptions = {}) => {
 
   console.info(
     "[precheck] Running builder CLI to refresh manifest from source...",
-  );
-
-  const fallbackManifest = await readExistingManifestSnapshot().catch(
-    () => null,
   );
 
   const runBuilder =
@@ -115,21 +117,34 @@ export const precheck = async (options: PrecheckOptions = {}) => {
   try {
     await runBuilder({ ...env });
   } catch (error) {
-    if (!fallbackManifest || requireFreshBuild) {
-      if (requireFreshBuild && fallbackManifest) {
+    if (requireFreshBuild) {
+      const hasValidManifest = await readExistingManifestSnapshot()
+        .then(() => true)
+        .catch(() => false);
+      if (hasValidManifest) {
         console.error(
           "[precheck] Builder failed and a fresh build is required " +
-            "(VERCEL_ENV=production or REQUIRE_FRESH_BUILD=true); refusing to " +
-            "publish the existing (stale) manifest.",
+            "(VERCEL_ENV=production or REQUIRE_FRESH_BUILD=true); refusing to publish.",
         );
       }
       throw error;
     }
 
-    await writeFile(fallbackManifest.path, fallbackManifest.content);
+    // The builder switches manifests atomically. A failure before that switch
+    // leaves the old manifest untouched; a late plugin/cleanup failure may
+    // happen after a new valid manifest was committed and old immutable
+    // thumbnails were collected. Never roll the JSON file back by itself: that
+    // could make it reference thumbnails that no longer exist. Continue only
+    // when the manifest currently on disk is independently valid.
+    let currentManifest: ManifestSnapshot;
+    try {
+      currentManifest = await readExistingManifestSnapshot();
+    } catch {
+      throw error;
+    }
 
     console.warn(
-      `[precheck] Builder failed, using existing manifest at ${fallbackManifest.path}. ` +
+      `[precheck] Builder failed, continuing with the valid manifest at ${currentManifest.path}. ` +
         `Set SKIP_MANIFEST_BUILD=true to make this explicit. Error: ${
           error instanceof Error ? error.message : String(error)
         }`,

@@ -77,6 +77,10 @@ vi.mock("react-router", () => ({
   ],
 }));
 
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+}));
+
 vi.mock("~/config", () => ({
   siteConfig: {
     accentColor: "",

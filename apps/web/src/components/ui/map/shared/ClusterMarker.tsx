@@ -21,18 +21,12 @@ export const ClusterMarker = ({
 }: ClusterMarkerProps) => {
   const { t } = useTranslation();
   const size = Math.min(64, Math.max(44, 32 + Math.log(pointCount) * 8));
-  const handleClusterKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onClusterClick?.(longitude, latitude);
-    }
-  };
-
   return (
     <Marker longitude={longitude} latitude={latitude}>
       <HoverCard openDelay={300} closeDelay={150}>
         <HoverCardTrigger asChild>
-          <m.div
+          <m.button
+            type="button"
             className="focus-visible:ring-accent/45 group focus-visible:ring-offset-background relative cursor-pointer rounded-full focus-visible:ring-2 focus-visible:ring-offset-2"
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
@@ -44,9 +38,6 @@ export const ClusterMarker = ({
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => onClusterClick?.(longitude, latitude)}
-            onKeyDown={handleClusterKeyDown}
-            role="button"
-            tabIndex={0}
             aria-label={t(
               displayMode === "regions"
                 ? "explore.cluster.regions"
@@ -67,7 +58,7 @@ export const ClusterMarker = ({
 
             {/* Main cluster container */}
             <div
-              className="relative flex items-center justify-center rounded-full border border-white/40 bg-white/95 shadow-lg backdrop-blur-md transition-all duration-300 hover:bg-white hover:shadow-xl dark:border-white/10 dark:bg-black/80 dark:hover:bg-black/90"
+              className="relative flex items-center justify-center rounded-full border border-white/40 bg-white/95 shadow-lg backdrop-blur-md transition-[background-color,border-color,box-shadow,transform] duration-300 hover:bg-white hover:shadow-xl dark:border-white/10 dark:bg-black/80 dark:hover:bg-black/90"
               style={{
                 width: size,
                 height: size,
@@ -99,6 +90,8 @@ export const ClusterMarker = ({
                             photoMarker.photo.originalUrl
                           }
                           alt={photoMarker.photo.title || photoMarker.photo.id}
+                          width={photoMarker.photo.width}
+                          height={photoMarker.photo.height}
                           thumbHash={photoMarker.photo.thumbHash}
                           containerClassName="h-full w-full"
                           imageClassName="h-full w-full object-cover"
@@ -126,7 +119,7 @@ export const ClusterMarker = ({
               {/* Subtle inner shadow for depth */}
               <div className="absolute inset-0 rounded-full shadow-inner shadow-black/5" />
             </div>
-          </m.div>
+          </m.button>
         </HoverCardTrigger>
 
         <HoverCardContent

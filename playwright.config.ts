@@ -2,12 +2,15 @@ import path from "node:path";
 
 import { defineConfig, devices } from "@playwright/test";
 
+// Some developer shells export both; Playwright workers inherit this process.
+// FORCE_COLOR has precedence, and removing NO_COLOR avoids Node's warning.
+if (process.env.FORCE_COLOR !== undefined) delete process.env.NO_COLOR;
+
 // 两种互斥的运行模式，避免日常 dev-server 迭代为生产构建买单：
 //
 // - 默认（`pnpm test:e2e`）：vite dev server + 内嵌 manifest，跑 chromium /
 //   mobile 两个 project（runtime-state、dismiss-gesture 等 spec）。
-// - prod-smoke（`pnpm test:e2e:prod`，即 E2E_PROD_SMOKE=true；命令行里出现
-//   "prod-smoke" —— 如 `playwright test --project=prod-smoke` —— 也会触发）：
+// - prod-smoke（`pnpm test:e2e:prod`；也可用 E2E_PROD_SMOKE=true 触发）：
 //   webServer 换成 scripts/e2e-prod-server.ts，先用合成 fixture 做一次真实
 //   vite build（外部 manifest 资产 + PWA Service Worker + 压缩分块产物），
 //   再以 vite preview 伺服 dist，只跑 prod-smoke project。
@@ -18,10 +21,17 @@ const prodSmoke =
   process.env.E2E_PROD_SMOKE === "true" ||
   process.argv.some((arg) => arg.includes("prod-smoke"));
 
-const devBaseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:1924";
+const devPort = process.env.E2E_DEV_PORT ?? "1925";
+const prodPort = process.env.E2E_PROD_PORT ?? "4174";
+const devBaseURL =
+  process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${devPort}`;
 const prodBaseURL =
-  process.env.PLAYWRIGHT_PROD_BASE_URL ?? "http://127.0.0.1:4173";
+  process.env.PLAYWRIGHT_PROD_BASE_URL ?? `http://127.0.0.1:${prodPort}`;
 const baseURL = prodSmoke ? prodBaseURL : devBaseURL;
+// Reusing an arbitrary process on the expected port makes a green run possible
+// against stale code or a developer's real manifest. Keep isolation by default;
+// local users can opt in deliberately when they own the server lifecycle.
+const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_SERVER === "true";
 
 // 本地 zsh 的 nvm lazy-loader 可能让 webServer 子进程解析不到 node/pnpm：
 // 把当前 node 的 bin 目录置于 PATH 最前（nvm 下全局 pnpm 也装在这里）。
@@ -56,24 +66,23 @@ export default defineConfig({
   webServer: prodSmoke
     ? {
         command: "pnpm exec tsx scripts/e2e-prod-server.ts",
-        env: { PATH: webServerPath },
-        // Playwright 默认 SIGKILL 整棵进程树，e2e-prod-server 的 manifest
-        // 备份恢复（SIGTERM → preview exit → restore）会被跳过：先给 SIGTERM
-        // 一个宽限期，恢复逻辑才有机会执行。
+        env: { E2E_PROD_PORT: prodPort, PATH: webServerPath },
+        // Give vite preview a graceful flush window before Playwright kills the
+        // process tree. The manifest fixture itself is read-only and isolated.
         gracefulShutdown: { signal: "SIGTERM", timeout: 5000 },
-        reuseExistingServer: !process.env.CI,
+        reuseExistingServer,
         // 完整生产构建（含 vite-plugin-checker 的 tsc）+ preview 启动。
         timeout: 420_000,
         url: prodBaseURL,
       }
     : {
-        command:
-          "pnpm --filter @afilmory/web exec vite --host 127.0.0.1 --port 1924 --strictPort",
+        command: "pnpm exec tsx scripts/e2e-dev-server.ts",
         env: {
-          AFILMORY_EMBED_MANIFEST: "true",
+          E2E_DEV_PORT: devPort,
           PATH: webServerPath,
         },
-        reuseExistingServer: !process.env.CI,
+        gracefulShutdown: { signal: "SIGTERM", timeout: 5000 },
+        reuseExistingServer,
         // Cold Vite dep-optimization (heavy deps: maplibre, react, motion) can take
         // well over a minute on a fresh CI cache; keep generous headroom.
         timeout: 180_000,

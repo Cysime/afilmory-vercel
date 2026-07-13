@@ -24,7 +24,6 @@
 ### 状态和数据
 
 - Jotai
-- TanStack Query
 - `apps/web/src/data-runtime/manifest-runtime.ts`
 - `apps/web/src/data-runtime/photo-repository.ts`
 - `apps/web/src/runtime/app-runtime.ts`
@@ -43,11 +42,12 @@
 apps/web/
 ├── plugins/vite/
 │   ├── ast.ts
-│   ├── build-assets.ts         # 生成 OG 图片、feed.xml、sitemap.xml
+│   ├── build-assets.ts         # 编排 OG、feed、sitemap 与逐照片 HTML 产物
+│   ├── build-assets-seo.ts     # canonical/OG/JSON-LD/静态照片页纯 helper
 │   ├── data-inject.ts          # 注入 manifest loader 和 site config
 │   ├── deps.ts                 # vendor chunk 规则
 │   ├── locales-json.ts         # i18n JSON key 转换
-│   ├── photos-static.ts        # dev only /photos 本地映射
+│   ├── photos-static.ts        # dev only /originals 本地映射
 │   └── rss.ts                  # RSS feed 生成
 ├── public/
 │   ├── thumbnails/             # builder 生成的缩略图
@@ -151,8 +151,8 @@ pnpm dev
 根脚本会运行 `pnpm --filter @afilmory/web dev`，实际执行 `tsx scripts/dev.ts`：
 
 1. 运行 `apps/web/scripts/precheck.ts`。
-2. 如果 S3 凭据完整，刷新 manifest。
-3. 如果缺少 S3 凭据但已有 `generated/photos-manifest.json`，复用现有 manifest。
+2. 本地 provider 直接刷新 manifest；S3 provider 在 bucket 与有效凭据来源可用时刷新。
+3. S3 provider 缺少必需配置但已有 `generated/photos-manifest.json` 时，复用现有 manifest。Access key/secret 可同时省略以使用 AWS SDK 默认凭据链，但显式配置时必须成对。
 4. 启动 Vite dev server，默认端口 `1924`。
 
 ### 生产构建
@@ -166,9 +166,9 @@ pnpm build
 1. `pnpm exec tsx apps/web/scripts/precheck.ts`
 2. `pnpm build:web`
 
-workspace 包直接从 TS 源码消费，部署构建不运行 `pnpm build:packages`（它仅供 npm 发布）。
+workspace 包直接从 TS 源码消费，部署构建不需要额外的 package dist 构建步骤。
 
-`pnpm build:web` 只运行 Vite build，要求 manifest 已存在。`buildAssetsPlugin` 会读取 manifest 并生成 `feed.xml`、`sitemap.xml` 和 OG 图片。
+`pnpm build:web` 只运行 Vite build，要求 manifest 已存在。`buildAssetsPlugin` 会读取 manifest 并生成 `feed.xml`、`sitemap.xml`、首页 OG 图片及 `photos/<photo-id>/index.html` 静态照片页。
 
 ### 输出
 
@@ -179,6 +179,8 @@ apps/web/dist/
 │   ├── photos-manifest.<hash>.json
 │   └── vendor / app chunks
 ├── thumbnails/
+├── photos/<photo-id>/index.html # 每张照片的可抓取静态 HTML shell
+├── originals/                  # 仅本地 provider 默认前缀；名称随配置变化
 ├── feed.xml
 ├── sitemap.xml
 ├── manifest.webmanifest
@@ -197,15 +199,15 @@ apps/web/dist/
 
 ### `photosStaticPlugin`
 
-- 只在 dev server 中为 `/photos/*` 映射仓库根 `photos` 目录。
-- 不负责生产构建复制照片资源。
-- 若 `apps/web/public/photos` 已存在，会跳过以避免和 Vite 静态目录冲突。
+- 本地 provider 在 dev server 中把 `LOCAL_PHOTOS_BASE_URL` 映射到 `LOCAL_PHOTOS_PATH`。
+- 本地 provider 的生产构建把原图复制到 `dist` 中与 URL 前缀匹配的位置；S3 provider 不复制原图。
+- 若 `apps/web/public/<LOCAL_PHOTOS_BASE_URL>` 已存在，会跳过以避免和 Vite 静态目录冲突。
 
 ### `buildAssetsPlugin`
 
 - 构建期生成 Open Graph PNG。
-- 读取 manifest 生成 RSS feed 和 sitemap。
-- 将 meta tags 插入 `index.html`。
+- 读取 manifest 生成 RSS feed、唯一 URL sitemap 和按拍摄时间稳定排序的照片页。
+- 为首页和每张照片生成唯一 canonical、Open Graph/Twitter metadata；照片页还包含 JSON-LD 与 `<noscript>` shell。
 - OG 图片由 `@afilmory/build-assets`（`packages/build-assets/src/generate-og-image.ts`）使用 Sharp 和 SVG/text helpers 生成。
 
 ### `createDependencyChunksPlugin`

@@ -225,7 +225,10 @@ export const ProgressiveImage = ({
             />
           ) : (
             <div className="flex size-full items-center justify-center">
-              <i className="i-mingcute-loading-line text-text-tertiary animate-spin text-2xl" />
+              <i
+                className="i-mingcute-loading-line text-text-tertiary animate-spin text-2xl"
+                aria-hidden="true"
+              />
             </div>
           )}
         </div>
@@ -288,6 +291,9 @@ export const ProgressiveImage = ({
           ) : (
             <WebGLImageViewer
               ref={webglImageViewerRef}
+              role="img"
+              aria-label={alt}
+              aria-hidden={!isHighResImageRendered}
               src={blobSrc}
               sourceBlob={imageBlob}
               className="absolute inset-0 h-full w-full"
@@ -330,7 +336,10 @@ export const ProgressiveImage = ({
         isActiveImage &&
         !error && (
           <div className="pointer-events-none absolute top-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded bg-black/50 px-3 py-1.5 text-white">
-            <i className="i-mingcute-warning-line text-base" />
+            <i
+              className="i-mingcute-warning-line text-base"
+              aria-hidden="true"
+            />
             <span className="text-xs">{t("photo.webgl.unavailable")}</span>
           </div>
         )}

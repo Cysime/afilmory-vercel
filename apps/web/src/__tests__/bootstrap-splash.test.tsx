@@ -44,7 +44,9 @@ describe("bootstrap splash", () => {
     expect(rootIndex).toBeGreaterThan(-1);
     expect(splashIndex).toBeLessThan(rootIndex);
     expect(html).toContain("afilmory:startup-metrics:v1");
-    expect(html).toContain("rel='stylesheet'");
+    expect(html).toContain('rel="preload"');
+    expect(html).toContain('href="/src/assets/fonts/GeistVF.woff2"');
+    expect(html).not.toContain("fonts.googleapis.com");
     expect(html).not.toContain("logoFade");
     expect(html).not.toContain("titleFade");
     expect(html).not.toContain("subtitleFade");

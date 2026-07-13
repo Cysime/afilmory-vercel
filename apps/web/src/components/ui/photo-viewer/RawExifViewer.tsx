@@ -7,13 +7,12 @@ import {
   DialogTrigger,
   ScrollArea,
 } from "@afilmory/ui";
-import { useSetAtom } from "jotai";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
-import { isExiftoolLoadedAtom } from "~/atoms/app";
 import { ExifToolManager } from "~/lib/exiftool";
+import { useAfilmoryRuntime } from "~/runtime/app-runtime";
 import type { PhotoManifest } from "~/types/photo";
 
 import { ExifFieldGroup } from "./exif/ExifFieldGroup";
@@ -154,7 +153,7 @@ export const RawExifViewer: React.FC<RawExifViewerProps> = ({
   currentPhoto,
 }) => {
   const { t } = useTranslation();
-  const setExiftoolLoaded = useSetAtom(isExiftoolLoadedAtom);
+  const runtime = useAfilmoryRuntime();
   const [isOpen, setIsOpen] = useState(false);
   const [rawExifData, setRawExifData] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -191,16 +190,26 @@ export const RawExifViewer: React.FC<RawExifViewerProps> = ({
     const requestPhotoId = currentPhoto.id;
 
     try {
-      const response = await fetch(currentPhoto.originalUrl, {
-        signal: requestController.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to fetch original image: ${response.status}`);
+      const sourcePath = new URL(
+        currentPhoto.originalUrl,
+        window.location.href,
+      ).pathname.toLowerCase();
+      const cachedImage = runtime.imageCache.get(currentPhoto.originalUrl);
+      const cacheMayContainConvertedPixels =
+        /\.(?:heic|heif|hif|tif|tiff)$/.test(sourcePath);
+      let blob = cacheMayContainConvertedPixels ? undefined : cachedImage?.blob;
+
+      if (!blob) {
+        const response = await fetch(currentPhoto.originalUrl, {
+          signal: requestController.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to fetch original image: ${response.status}`);
+        }
+        blob = await response.blob();
       }
-      const blob = await response.blob();
-      const data = await ExifToolManager.parse(blob, currentPhoto.s3Key, () =>
-        setExiftoolLoaded(true),
-      );
+
+      const data = await ExifToolManager.parse(blob, currentPhoto.s3Key);
       if (
         requestController.signal.aborted ||
         currentPhotoIdRef.current !== requestPhotoId
@@ -271,9 +280,12 @@ export const RawExifViewer: React.FC<RawExifViewerProps> = ({
           className="focus-visible:ring-accent/45 flex size-11 cursor-pointer items-center justify-center rounded-full text-white/70 transition-[background-color,box-shadow,color,transform] duration-200 hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-50 md:size-8"
         >
           {isLoading ? (
-            <i className="i-mingcute-loading-3-line animate-spin" />
+            <i
+              className="i-mingcute-loading-3-line animate-spin"
+              aria-hidden="true"
+            />
           ) : (
-            <i className="i-mingcute-braces-line" />
+            <i className="i-mingcute-braces-line" aria-hidden="true" />
           )}
         </button>
       </DialogTrigger>
@@ -292,10 +304,13 @@ export const RawExifViewer: React.FC<RawExifViewerProps> = ({
 
         {isLoading && (
           <div className="flex h-full grow flex-col items-center justify-center gap-4 text-white/70">
-            <i className="i-mingcute-loading-3-line animate-spin text-3xl" />
+            <i
+              className="i-mingcute-loading-3-line animate-spin text-3xl"
+              aria-hidden="true"
+            />
             <span className="text-sm">
               {t("exif.raw.loading", {
-                defaultValue: "Loading EXIF data...",
+                defaultValue: "Loading EXIF data…",
               })}
             </span>
           </div>

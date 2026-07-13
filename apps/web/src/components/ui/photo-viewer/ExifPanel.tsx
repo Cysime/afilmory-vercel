@@ -23,9 +23,8 @@ export const ExifPanel: FC<{
   currentPhoto: PhotoManifestItem;
   exifData: PickedExif | null;
   onClose?: () => void;
-  onTagClick?: (tag: string) => void;
   visible?: boolean;
-}> = ({ currentPhoto, exifData, onClose, onTagClick, visible = true }) => {
+}> = ({ currentPhoto, exifData, onClose, visible = true }) => {
   const { t, i18n } = useTranslation();
   const isMobile = useMobile();
   const sectionT = useCallback(
@@ -56,7 +55,7 @@ export const ExifPanel: FC<{
         isMobile
           ? "exif-panel-mobile fixed right-0 bottom-0 left-0 z-10 max-h-[60vh] w-full rounded-t-2xl backdrop-blur-2xl"
           : "relative w-80 shrink-0 backdrop-blur-2xl"
-      } border-accent/20 flex flex-col text-white`}
+      } border-accent/20 flex flex-col overscroll-contain text-white`}
       initial={{
         opacity: 0,
         ...(isMobile ? { y: 100 } : { x: 100 }),
@@ -99,7 +98,10 @@ export const ExifPanel: FC<{
               className="glassmorphic-btn border-accent/20 focus-visible:ring-accent/45 flex size-11 items-center justify-center rounded-full border text-white/70 transition-[background-color,border-color,box-shadow,color,transform] duration-200 hover:text-white focus-visible:ring-2 focus-visible:ring-inset"
               onClick={onClose}
             >
-              <i className="i-mingcute-close-line text-base" />
+              <i
+                className="i-mingcute-close-line text-base"
+                aria-hidden="true"
+              />
             </button>
           )}
         </div>
@@ -116,7 +118,6 @@ export const ExifPanel: FC<{
         <div className={isMobile ? "space-y-3" : "space-y-4"}>
           <BasicExifSection
             currentPhoto={currentPhoto}
-            onTagClick={onTagClick}
             t={sectionT}
             viewModel={viewModel}
           />

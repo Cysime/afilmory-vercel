@@ -2,6 +2,7 @@ import type { GallerySetting } from "~/atoms/app";
 
 export type GalleryFilterState = Pick<
   GallerySetting,
+  | "sortOrder"
   | "selectedTags"
   | "selectedCameras"
   | "selectedLenses"
@@ -12,6 +13,7 @@ export type GalleryFilterState = Pick<
 >;
 
 const GALLERY_FILTER_KEYS = [
+  "sortOrder",
   "selectedTags",
   "selectedCameras",
   "selectedLenses",
@@ -30,6 +32,9 @@ export const filtersEqual = (
   GALLERY_FILTER_KEYS.every((key) => {
     const left = a[key];
     const right = b[key];
+    if (typeof left === "string" || typeof right === "string") {
+      return left === right;
+    }
     return (
       left.length === right.length &&
       left.every((value, index) => value === right[index])
@@ -106,6 +111,7 @@ export const getGalleryFiltersFromSearch = (
 ): GalleryFilterState => {
   const searchParams = toSearchParams(search);
   const filters: GalleryFilterState = {
+    sortOrder: searchParams.get("sort") === "asc" ? "asc" : "desc",
     selectedTags: getSearchList(searchParams, "tags"),
     selectedCameras: getSearchList(searchParams, "cameras"),
     selectedLenses: getSearchList(searchParams, "lenses"),
@@ -124,6 +130,8 @@ export const applyGalleryFiltersToSearch = (
   filters: GalleryFilterState,
 ): URLSearchParams => {
   const searchParams = toSearchParams(search);
+  if (filters.sortOrder === "asc") searchParams.set("sort", "asc");
+  else searchParams.delete("sort");
   setSearchList(searchParams, "tags", filters.selectedTags);
   setSearchList(searchParams, "cameras", filters.selectedCameras);
   setSearchList(searchParams, "lenses", filters.selectedLenses);
@@ -147,6 +155,7 @@ export const buildGalleryFilterSearch = (
 
 export const buildSingleTagFilterSearch = (tag: string): string =>
   buildGalleryFilterSearch("", {
+    sortOrder: "desc",
     selectedTags: [tag],
     selectedCameras: [],
     selectedLenses: [],

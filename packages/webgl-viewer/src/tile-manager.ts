@@ -5,6 +5,8 @@ import {
   MAX_TILES_PER_FRAME,
   parseTileKey,
   SIMPLE_LOD_LEVELS,
+  TEXTURE_BYTES_PER_PIXEL,
+  TILE_CACHE_BYTE_BUDGET,
   TILE_CACHE_SIZE,
 } from "./tile-cache";
 import type { LoadingTileInfo } from "./tile-request-runtime";
@@ -15,6 +17,12 @@ import {
   disposeAllTileTextures,
 } from "./tile-texture-cleanup";
 import type { TextureWorkerMessage } from "./worker-protocol";
+
+type SessionlessWorkerMessage = TextureWorkerMessage extends infer Message
+  ? Message extends { sessionId: number }
+    ? Omit<Message, "sessionId">
+    : never
+  : never;
 
 /** 渲染循环里瓦片更新的防抖间隔（毫秒）。 */
 const TILE_UPDATE_DEBOUNCE_MS = 100;
@@ -58,7 +66,7 @@ export interface TileManagerHost {
    */
   isLodCoveredByBase: (lodLevel: number) => boolean;
   /** Upload a decoded tile bitmap into a GL texture (via the renderer). */
-  createTexture: (source: ImageBitmap) => WebGLTexture | null;
+  createTexture: (source: ImageBitmap) => WebGLTexture;
   deleteTexture: (texture: WebGLTexture) => void;
   /** Repaint request — a tile that is currently visible became renderable. */
   requestRender: () => void;
@@ -211,7 +219,9 @@ export class TileManager {
    * Handle a tile-related worker message. Returns true when the message was a
    * tile message (consumed here); false so the engine can handle the rest.
    */
-  handleWorkerMessage(message: TextureWorkerMessage): boolean {
+  handleWorkerMessage(
+    message: TextureWorkerMessage | SessionlessWorkerMessage,
+  ): boolean {
     if (message.type === "tile-created") {
       this.handleTileCreated(message.payload);
       return true;
@@ -251,41 +261,51 @@ export class TileManager {
       return;
     }
 
-    const texture = this.host.createTexture(imageBitmap);
-    imageBitmap.close(); // free memory
-
-    if (texture) {
-      const { x, y } = parseTileKey(key);
-      const tileInfo: TileInfo = {
-        x,
-        y,
-        lodLevel,
-        texture,
-        lastUsed: performance.now(),
-        isLoading: false,
-        priority: loadingInfo
-          ? loadingInfo.priority
-          : tileInfoInCache
-            ? tileInfoInCache.priority
-            : 0,
-      };
-      // 上下文丢失时 reset() 清空 requestRuntime 但 worker 仍存活，恢复后重发的
-      // 请求可能与迟到的旧响应对同一 key 各产出一张纹理；覆盖前必须删旧纹理，
-      // 否则它脱离缓存后 cleanup/disposeAll 都遍历不到，泄漏到上下文销毁为止。
-      if (tileInfoInCache?.texture) {
-        this.host.deleteTexture(tileInfoInCache.texture);
-      }
-      this.cache.set(key, tileInfo);
-
+    const byteSize =
+      imageBitmap.width * imageBitmap.height * TEXTURE_BYTES_PER_PIXEL;
+    let texture: WebGLTexture;
+    try {
+      texture = this.host.createTexture(imageBitmap);
+    } catch (error) {
+      console.warn(`Failed to upload tile texture: ${key}`, error);
       if (loadingInfo) {
-        this.requestRuntime.markLoaded(key);
+        this.requestRuntime.markFailed(key);
       }
-
-      this.host.requestRender();
-      this.notifyIfVisibleLodReady();
-    } else if (loadingInfo) {
-      this.requestRuntime.markFailed(key);
+      return;
+    } finally {
+      imageBitmap.close();
     }
+
+    const { x, y } = parseTileKey(key);
+    const tileInfo: TileInfo = {
+      x,
+      y,
+      lodLevel,
+      texture,
+      lastUsed: performance.now(),
+      isLoading: false,
+      priority: loadingInfo
+        ? loadingInfo.priority
+        : tileInfoInCache
+          ? tileInfoInCache.priority
+          : 0,
+      byteSize,
+    };
+    // 上下文丢失时 reset() 清空 requestRuntime 但 worker 仍存活，恢复后重发的
+    // 请求可能与迟到的旧响应对同一 key 各产出一张纹理；覆盖前必须删旧纹理，
+    // 否则它脱离缓存后 cleanup/disposeAll 都遍历不到，泄漏到上下文销毁为止。
+    if (tileInfoInCache?.texture) {
+      this.host.deleteTexture(tileInfoInCache.texture);
+    }
+    this.cache.set(key, tileInfo);
+
+    if (loadingInfo) {
+      this.requestRuntime.markLoaded(key);
+    }
+
+    this.cleanupOldTiles();
+    this.host.requestRender();
+    this.notifyIfVisibleLodReady();
   }
 
   // ---- Cache update / dispatch ---------------------------------------------
@@ -361,6 +381,7 @@ export class TileManager {
     cleanupTileTextures({
       currentVisibleTiles: this.visibleTiles,
       deleteTexture: (texture) => this.host.deleteTexture(texture),
+      maxCacheBytes: TILE_CACHE_BYTE_BUDGET,
       maxCacheSize: TILE_CACHE_SIZE,
       now: performance.now(),
       tileCache: this.cache,
@@ -393,15 +414,20 @@ export class TileManager {
       const { x, y, lodLevel } = parseTileKey(key);
       const lodConfig = SIMPLE_LOD_LEVELS[lodLevel];
 
-      this.host.requestTileFromWorker({
-        x,
-        y,
-        lodLevel,
-        lodConfig,
-        imageWidth,
-        imageHeight,
-        key,
-      });
+      try {
+        this.host.requestTileFromWorker({
+          x,
+          y,
+          lodLevel,
+          lodConfig,
+          imageWidth,
+          imageHeight,
+          key,
+        });
+      } catch (error) {
+        console.warn(`Failed to dispatch tile request: ${key}`, error);
+        this.requestRuntime.markFailed(key);
+      }
     }
 
     if (this.requestRuntime.hasPendingWork && this.processingFrameId === null) {

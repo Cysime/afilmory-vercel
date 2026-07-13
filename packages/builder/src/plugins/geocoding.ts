@@ -11,7 +11,9 @@ import { createGeocodingProvider } from "../photo/geocoding.js";
 import type { GeocodingCacheState } from "./geocoding-cache.js";
 import {
   createGeocodingCacheState,
+  ensurePersistentCacheLoaded,
   hasRequiredLocalizedLocation,
+  mergeGeocodingCacheDelta,
   normalizeCachePath,
   savePersistentCacheIfNeeded,
 } from "./geocoding-cache.js";
@@ -28,6 +30,7 @@ import type { BuilderPlugin } from "./types.js";
 
 const PLUGIN_NAME = "afilmory:geocoding";
 const RUN_STATE_KEY = "geocodingState";
+const CACHE_DELTA_PLUGIN_DATA_KEY = "afilmory:geocoding:cache-delta";
 
 type LocationLogger = Logger["main"];
 
@@ -54,7 +57,7 @@ function buildProviderKey(
   settings: ResolvedGeocodingSettings,
   locale: string,
 ): string {
-  return `${settings.provider}:${settings.mapboxToken ?? ""}:${settings.nominatimBaseUrl ?? ""}:${settings.nominatimUserAgent ?? ""}:${locale}`;
+  return `${settings.provider}:${settings.mapboxToken ?? ""}:${settings.nominatimBaseUrl ?? ""}:${settings.nominatimUserAgent ?? ""}:${settings.requestTimeoutMs}:${locale}`;
 }
 
 function ensureProvider(
@@ -75,6 +78,7 @@ function ensureProvider(
     settings.nominatimBaseUrl,
     locale,
     settings.nominatimUserAgent,
+    settings.requestTimeoutMs,
   );
 
   if (!provider) {
@@ -140,7 +144,7 @@ export default function geocodingPlugin(
           const state = getOrCreateState(runShared);
           const locationLogger = logger.main.withTag("LOCATION");
           const exif = item.exif ?? payload.context.existingItem?.exif ?? null;
-          await resolveLocationForItem({
+          const resolution = await resolveLocationForItem({
             item,
             exif,
             state: state.cache,
@@ -150,6 +154,13 @@ export default function geocodingPlugin(
             getProvider: (locale) =>
               ensureProvider(state, currentSettings, locale, locationLogger),
           });
+          if (resolution.cacheDelta) {
+            // ProcessPhotoResult crosses the cluster IPC boundary, so this
+            // small per-photo delta lets the primary process persist cache
+            // updates without workers racing to overwrite the same file.
+            payload.result.pluginData[CACHE_DELTA_PLUGIN_DATA_KEY] =
+              resolution.cacheDelta;
+          }
         });
       },
       afterProcessTasks: async ({
@@ -170,6 +181,28 @@ export default function geocodingPlugin(
         await runWithPhotoExecutionContext(
           createPhotoExecutionContext(services, emitPluginEvent, 0),
           async () => {
+            const cachePath = normalizeCachePath(currentSettings.cachePath);
+            await ensurePersistentCacheLoaded(
+              state.cache,
+              cachePath,
+              locationLogger,
+            );
+            for (const result of payload.results) {
+              const delta = result.pluginData?.[CACHE_DELTA_PLUGIN_DATA_KEY];
+              if (
+                delta &&
+                typeof delta === "object" &&
+                "key" in delta &&
+                "entry" in delta &&
+                typeof delta.key === "string"
+              ) {
+                mergeGeocodingCacheDelta(
+                  state.cache,
+                  delta as Parameters<typeof mergeGeocodingCacheDelta>[1],
+                );
+              }
+            }
+
             let attempted = 0;
             let updated = 0;
             const shouldOverwriteExisting =
@@ -220,7 +253,7 @@ export default function geocodingPlugin(
 
             await savePersistentCacheIfNeeded(
               state.cache,
-              normalizeCachePath(currentSettings.cachePath),
+              cachePath,
               locationLogger,
             );
           },

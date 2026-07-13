@@ -221,15 +221,18 @@ export const MasonryHeaderMasonryItem = ({
             )}
             {!siteConfig.author.avatar && (
               <div className="from-accent to-accent/80 inline-flex size-16 items-center justify-center rounded-full bg-gradient-to-br shadow-sm">
-                <i className="i-mingcute-camera-2-line text-2xl text-white" />
+                <i
+                  className="i-mingcute-camera-2-line text-2xl text-white"
+                  aria-hidden="true"
+                />
               </div>
             )}
           </div>
         </div>
 
-        <h2 className="text-text mb-2 truncate text-xl leading-tight font-semibold">
+        <h1 className="text-text mb-2 truncate text-xl leading-tight font-semibold text-balance">
           {siteConfig.name}
-        </h2>
+        </h1>
 
         {siteConfig.social && (
           <div className="flex items-center justify-center gap-2">
@@ -242,7 +245,10 @@ export const MasonryHeaderMasonryItem = ({
                 title="GitHub"
                 aria-label="GitHub"
               >
-                <i className="i-mingcute-github-fill text-base" />
+                <i
+                  className="i-mingcute-github-fill text-base"
+                  aria-hidden="true"
+                />
               </a>
             )}
             {siteConfig.social.twitter && (
@@ -254,7 +260,10 @@ export const MasonryHeaderMasonryItem = ({
                 title="Twitter"
                 aria-label="Twitter"
               >
-                <i className="i-mingcute-twitter-fill text-base" />
+                <i
+                  className="i-mingcute-twitter-fill text-base"
+                  aria-hidden="true"
+                />
               </a>
             )}
             {siteConfig.social.rss && (
@@ -266,7 +275,10 @@ export const MasonryHeaderMasonryItem = ({
                 title="RSS"
                 aria-label="RSS"
               >
-                <i className="i-mingcute-rss-2-fill text-base" />
+                <i
+                  className="i-mingcute-rss-2-fill text-base"
+                  aria-hidden="true"
+                />
               </a>
             )}
           </div>

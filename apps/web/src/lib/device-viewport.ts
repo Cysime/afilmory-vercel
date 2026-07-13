@@ -9,16 +9,36 @@ const getUserAgent = () => {
 export const isSafari = (() => {
   const userAgent = getUserAgent();
 
-  return /Safari/.test(userAgent) && !/Chrome/.test(userAgent);
+  return (
+    /Safari/i.test(userAgent) &&
+    !/Chrome|Chromium|CriOS|FxiOS|EdgiOS|OPiOS|Android/i.test(userAgent)
+  );
 })();
 
 export const isMobileDevice = (() => {
-  if (typeof window === "undefined") return false;
-  return (
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
+    return false;
+  }
+
+  const userAgent = getUserAgent();
+  const userAgentDataMobile = (
+    navigator as Navigator & { userAgentData?: { mobile?: boolean } }
+  ).userAgentData?.mobile;
+  const isKnownMobileUserAgent =
     /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-      getUserAgent(),
-    ) ||
-    // 现代检测方式：支持触摸且屏幕较小
-    "ontouchstart" in window
+      userAgent,
+    );
+  const isDesktopModeIPad =
+    /Macintosh/i.test(userAgent) && navigator.maxTouchPoints > 1;
+  const isCoarseTouchPrimaryInput =
+    navigator.maxTouchPoints > 0 &&
+    window.matchMedia?.("(pointer: coarse) and (hover: none)").matches === true;
+
+  // `ontouchstart` alone misclassifies hybrid Windows laptops as mobile.
+  return Boolean(
+    userAgentDataMobile ??
+      (isKnownMobileUserAgent ||
+        isDesktopModeIPad ||
+        isCoarseTouchPrimaryInput),
   );
 })();

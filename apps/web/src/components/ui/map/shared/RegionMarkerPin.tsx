@@ -5,13 +5,14 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@afilmory/ui";
-import { useSetAtom } from "jotai";
+import { useAtomValue } from "jotai";
 import { m } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { Marker } from "react-map-gl/maplibre";
 import { useNavigate } from "react-router";
 
 import { gallerySettingAtom } from "~/atoms/app";
+import { buildGalleryFilterSearch } from "~/lib/gallery-filter-url";
 import { getRegionDisplayName } from "~/lib/geo-regions";
 import type { GeographicRegion } from "~/types/map";
 
@@ -59,7 +60,7 @@ export const RegionMarkerPin = ({
   onClose,
 }: RegionMarkerPinProps) => {
   const { t, i18n } = useTranslation();
-  const setGallerySetting = useSetAtom(gallerySettingAtom);
+  const gallerySetting = useAtomValue(gallerySettingAtom);
   const navigate = useNavigate();
   const displayName = getRegionDisplayName(region, i18n.language);
   const filterTarget = getGalleryFilterTarget(region);
@@ -77,20 +78,16 @@ export const RegionMarkerPin = ({
     event.stopPropagation();
     if (!filterTarget) return;
 
-    setGallerySetting((prev) => ({
-      ...prev,
+    const nextGallerySetting = {
+      ...gallerySetting,
       [filterTarget.key]: Array.from(
-        new Set([...prev[filterTarget.key], filterTarget.id]),
+        new Set([...gallerySetting[filterTarget.key], filterTarget.id]),
       ),
-    }));
-    navigate("/");
-  };
-
-  const handleMarkerKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      handleClick();
-    }
+    };
+    navigate({
+      pathname: "/",
+      search: buildGalleryFilterSearch("", nextGallerySetting),
+    });
   };
 
   return (
@@ -101,7 +98,8 @@ export const RegionMarkerPin = ({
         closeDelay={isSelected ? 0 : 120}
       >
         <HoverCardTrigger asChild>
-          <m.div
+          <m.button
+            type="button"
             className="focus-visible:ring-accent/45 group focus-visible:ring-offset-background relative cursor-pointer rounded-full focus-visible:ring-2 focus-visible:ring-offset-2"
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
@@ -113,9 +111,6 @@ export const RegionMarkerPin = ({
             whileHover={{ scale: 1.08 }}
             whileTap={{ scale: 0.92 }}
             onClick={handleClick}
-            onKeyDown={handleMarkerKeyDown}
-            role="button"
-            tabIndex={0}
             aria-label={t("explore.region.photos", {
               name: displayName,
               count: region.photoCount,
@@ -126,7 +121,7 @@ export const RegionMarkerPin = ({
             )}
 
             <div
-              className={`relative flex h-11 w-11 items-center justify-center rounded-full border shadow-lg backdrop-blur-md transition-all duration-300 hover:shadow-xl ${
+              className={`relative flex h-11 w-11 items-center justify-center rounded-full border shadow-lg backdrop-blur-md transition-[background-color,border-color,box-shadow,transform] duration-300 hover:shadow-xl ${
                 isSelected
                   ? "border-accent/40 bg-accent/90 shadow-accent/50"
                   : "border-white/40 bg-white/95 hover:bg-white dark:border-white/20 dark:bg-black/80 dark:hover:bg-black/90"
@@ -137,12 +132,13 @@ export const RegionMarkerPin = ({
                 className={`i-mingcute-map-pin-fill relative z-10 text-lg drop-shadow-sm ${
                   isSelected ? "text-white" : "text-gray-700 dark:text-white"
                 }`}
+                aria-hidden="true"
               />
               <div className="absolute -right-1 -bottom-1 z-20 flex h-5 min-w-5 items-center justify-center rounded-full bg-black/75 px-1 text-[10px] font-semibold text-white ring-1 ring-white/30">
                 {region.photoCount}
               </div>
             </div>
-          </m.div>
+          </m.button>
         </HoverCardTrigger>
 
         <HoverCardContent
@@ -166,7 +162,10 @@ export const RegionMarkerPin = ({
                 aria-label={t("common.close")}
                 title={t("common.close")}
               >
-                <i className="i-mingcute-close-line text-lg" />
+                <i
+                  className="i-mingcute-close-line text-lg"
+                  aria-hidden="true"
+                />
               </GlassButton>
             )}
             <div className="pr-14">
@@ -184,7 +183,7 @@ export const RegionMarkerPin = ({
               <button
                 type="button"
                 onClick={handleFilterRegion}
-                className="focus-visible:ring-accent/45 bg-accent text-accent-foreground focus-visible:ring-offset-background h-11 w-full rounded-lg px-3 text-xs font-semibold transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-offset-2"
+                className="focus-visible:ring-accent/45 bg-accent focus-visible:ring-offset-background h-11 w-full rounded-lg px-3 text-xs font-semibold text-[var(--color-accent-content)] transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-offset-2"
               >
                 {t("explore.region.filter")}
               </button>

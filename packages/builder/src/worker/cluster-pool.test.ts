@@ -220,6 +220,7 @@ describe("ClusterPool", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     setConsoleForwarding(true);
   });
 
@@ -532,5 +533,54 @@ describe("ClusterPool", () => {
     expect(
       worker.sentMessages.some((message) => message.type === "shutdown"),
     ).toBe(true);
+  });
+
+  it("fails when worker initialization exceeds the configured watchdog", async () => {
+    vi.useFakeTimers();
+    const pool = new ClusterPool<string>({
+      concurrency: 1,
+      sharedData: createTestSharedData(),
+      timeoutMs: 25,
+      totalTasks: 1,
+      workerConcurrency: 1,
+    });
+
+    const run = pool.execute();
+    const worker = getWorker();
+    worker.emitOnline();
+    await vi.advanceTimersByTimeAsync(0);
+    worker.emitMessage({ type: "ready", workerId: 1 });
+    // Deliberately omit init-complete.
+    const rejection = expect(run).rejects.toThrow(
+      "Worker 1 initialization timed out after 25ms",
+    );
+    await vi.advanceTimersByTimeAsync(25);
+
+    await rejection;
+  });
+
+  it("fails when an assigned batch never returns", async () => {
+    vi.useFakeTimers();
+    const pool = new ClusterPool<string>({
+      concurrency: 1,
+      sharedData: createTestSharedData(),
+      timeoutMs: 25,
+      totalTasks: 1,
+      workerConcurrency: 1,
+    });
+
+    const run = pool.execute();
+    const worker = getWorker();
+    worker.emitOnline();
+    await vi.advanceTimersByTimeAsync(0);
+    worker.emitMessage({ type: "ready", workerId: 1 });
+    worker.emitMessage({ type: "init-complete", workerId: 1 });
+    expect(getLastBatchTaskMessage(worker).tasks).toHaveLength(1);
+    const rejection = expect(run).rejects.toThrow(
+      /batch \(1\) timed out after 25ms/,
+    );
+    await vi.advanceTimersByTimeAsync(25);
+
+    await rejection;
   });
 });

@@ -32,6 +32,10 @@ export async function decidePhotoWork(
     return { shouldProcess: true, reason: "force mode" };
   }
 
+  if (options.reprocessKeys?.includes(obj.key)) {
+    return { shouldProcess: true, reason: "repaired manifest cache" };
+  }
+
   // 新照片总是需要处理
   if (!existingItem) {
     return { shouldProcess: true, reason: "new photo" };
@@ -72,6 +76,10 @@ export async function shouldProcessPhoto(
   options: PhotoProcessorOptions,
 ): Promise<PhotoWorkDecision> {
   return decidePhotoWork(existingItem, obj, options, () =>
-    thumbnailExists(photoId, getPhotoExecutionContext().output.thumbnailsDir),
+    thumbnailExists(
+      photoId,
+      getPhotoExecutionContext().output.thumbnailsDir,
+      existingItem?.thumbnailUrl,
+    ),
   );
 }

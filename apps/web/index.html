@@ -8,82 +8,96 @@
     <!-- PWA 配置 -->
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
     <meta name="apple-mobile-web-app-title" content="<%= title %>" />
 
     <title><%= title %></title>
     <script id="startup-metrics">
-      ;(() => {
-        const storageKey = 'afilmory:startup-metrics:v1'
-        const marks = []
-        const now = () => performance.now()
+      (() => {
+        const storageKey = "afilmory:startup-metrics:v1";
+        const marks = [];
+        const now = () => performance.now();
         const record = (name, detail) => {
-          const mark = { name, time: now() }
-          if (detail) mark.detail = detail
-          marks.push(mark)
+          const mark = { name, time: now() };
+          if (detail) mark.detail = detail;
+          marks.push(mark);
           try {
-            performance.mark(`afilmory:${name}`)
+            performance.mark(`afilmory:${name}`);
           } catch {}
-        }
-        const snapshot = (reason = 'snapshot') => ({
+        };
+        const snapshot = (reason = "snapshot") => ({
           reason,
           url: location.href,
           navigationStart: performance.timeOrigin,
           collectedAt: Date.now(),
           marks: [...marks],
-        })
-        const flush = (reason = 'flush') => {
-          const payload = snapshot(reason)
+        });
+        const flush = (reason = "flush") => {
+          const payload = snapshot(reason);
           try {
-            localStorage.setItem(storageKey, JSON.stringify(payload))
+            localStorage.setItem(storageKey, JSON.stringify(payload));
           } catch {}
-          let debugEnabled = location.search.includes('debug_startup=1')
+          let debugEnabled = location.search.includes("debug_startup=1");
           try {
-            debugEnabled ||= localStorage.getItem('afilmory:startup-debug') === '1'
+            debugEnabled ||=
+              localStorage.getItem("afilmory:startup-debug") === "1";
           } catch {}
           if (debugEnabled) {
-            console.table(payload.marks.map((mark) => ({ name: mark.name, ms: Math.round(mark.time) })))
+            console.table(
+              payload.marks.map((mark) => ({
+                name: mark.name,
+                ms: Math.round(mark.time),
+              })),
+            );
           }
-          return payload
-        }
+          return payload;
+        };
 
-        window.__AFILMORY__ = Object.assign({ version: 1 }, window.__AFILMORY__)
+        window.__AFILMORY__ = Object.assign(
+          { version: 1 },
+          window.__AFILMORY__,
+        );
         window.__AFILMORY__.startup = {
           marks,
           markedNames: [],
           mark: record,
           flush,
           snapshot,
-        }
-        record('html-head')
+        };
+        record("html-head");
 
         try {
           const observer = new PerformanceObserver((list) => {
             for (const entry of list.getEntries()) {
-              record(entry.name, { startTime: entry.startTime })
+              record(entry.name, { startTime: entry.startTime });
             }
-          })
-          observer.observe({ type: 'paint', buffered: true })
+          });
+          observer.observe({ type: "paint", buffered: true });
         } catch {}
 
-        document.addEventListener('DOMContentLoaded', () => record('dom-content-loaded'), { once: true })
-        window.addEventListener('load', () => record('window-load'), { once: true })
-      })()
+        document.addEventListener(
+          "DOMContentLoaded",
+          () => record("dom-content-loaded"),
+          { once: true },
+        );
+        window.addEventListener("load", () => record("window-load"), {
+          once: true,
+        });
+      })();
     </script>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="preload"
-      as="style"
-      href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap"
-      onload="this.onload=null;this.rel='stylesheet'"
+      as="font"
+      type="font/woff2"
+      href="/src/assets/fonts/GeistVF.woff2"
+      crossorigin
     />
-    <noscript>
-      <link href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap" rel="stylesheet" />
-    </noscript>
     <style>
       html {
-        font-family: 'Geist', ui-sans-serif, system-ui, sans-serif;
+        font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
         background: #0a0a0a;
         color-scheme: dark;
       }
@@ -95,7 +109,7 @@
     <script id="config">
       window.__AFILMORY__ = Object.assign({ version: 1 }, window.__AFILMORY__, {
         config: { site: {} },
-      })
+      });
     </script>
     <script id="manifest"></script>
   </head>
@@ -232,7 +246,7 @@
 
       <!-- CSS 动画 -->
       <style>
-        #splash-screen[data-state='hidden'] {
+        #splash-screen[data-state="hidden"] {
           opacity: 0;
           pointer-events: none;
         }
@@ -263,8 +277,16 @@
           #splash-screen h1 {
             font-size: 1.375rem;
           }
-          #splash-screen [style*='gap: 2rem'] {
+          #splash-screen [style*="gap: 2rem"] {
             gap: 1.5rem !important;
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          #splash-screen,
+          #splash-screen * {
+            animation: none !important;
+            transition-duration: 0.01ms !important;
           }
         }
       </style>

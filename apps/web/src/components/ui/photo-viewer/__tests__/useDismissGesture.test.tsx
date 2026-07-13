@@ -23,7 +23,7 @@ vi.mock("motion/react", async (importOriginal) => {
   };
 });
 
-// 避免加载 @afilmory/ui 整个 barrel（sonner 用了测试环境无的 tw 宏）；hook 只用到 Spring。
+// 避免加载 @afilmory/ui 整个 barrel；hook 只用到 Spring。
 vi.mock("@afilmory/ui", () => ({
   Spring: {
     smooth: (duration = 0.4, extraBounce = 0) => ({

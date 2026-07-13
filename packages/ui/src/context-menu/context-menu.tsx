@@ -121,7 +121,7 @@ const ContextMenuItem = ({
     ref={ref}
     className={clsxm(
       "cursor-menu text-sm relative flex select-none items-center rounded-lg px-2.5 py-1 outline-none data-disabled:pointer-events-none data-disabled:opacity-50",
-      "focus-within:outline-transparent transition-all duration-200",
+      "focus-within:outline-transparent transition-[background-color,color,opacity] duration-200",
       "data-highlighted:text-accent",
       "h-[28px]",
       inset && "pl-8",
@@ -148,7 +148,7 @@ const ContextMenuCheckboxItem = ({
     ref={ref}
     className={clsxm(
       "cursor-checkbox text-sm relative flex select-none items-center rounded-lg px-8 py-1.5 outline-none data-disabled:pointer-events-none data-disabled:opacity-50",
-      "focus-within:outline-transparent transition-all duration-200",
+      "focus-within:outline-transparent transition-[background-color,color,opacity] duration-200",
       "data-highlighted:text-accent",
       "h-[28px]",
       className,

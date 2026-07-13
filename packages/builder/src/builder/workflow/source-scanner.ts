@@ -1,5 +1,8 @@
 import { logger } from "../../logger/index.js";
-import type { StorageObject } from "../../storage/interfaces.js";
+import type {
+  StorageListing,
+  StorageObject,
+} from "../../storage/interfaces.js";
 import { isSupportedImageKey } from "../../storage/supported-formats.js";
 import type { BuildSession } from "./session.js";
 
@@ -7,14 +10,35 @@ export interface SourceScanResult {
   allObjects: StorageObject[];
   livePhotoMap: Map<string, StorageObject>;
   imageObjects: StorageObject[];
+  complete: boolean;
+  incompleteReason?: StorageListing["reason"];
 }
 
 export class SourceScanner {
   async scan(session: BuildSession): Promise<SourceScanResult> {
     const { options, storageManager } = session;
 
-    const allObjects = await storageManager.listAllFiles();
+    const listing = await storageManager.listAllFilesDetailed();
+    const allObjects = listing.objects;
     logger.main.info(`Found ${allObjects.length} files in storage`);
+
+    if (!listing.complete) {
+      logger.main.error(
+        `Storage listing is incomplete; destructive reconciliation is disabled for this run${
+          listing.reason?.message ? `: ${listing.reason.message}` : "."
+        }`,
+      );
+      // A partial snapshot is diagnostic data, not a valid plugin lifecycle
+      // input. Returning before hooks prevents third-party plugins from
+      // treating omitted keys as deletions or performing partial backfills.
+      return {
+        allObjects,
+        livePhotoMap: new Map(),
+        imageObjects: [],
+        complete: false,
+        incompleteReason: listing.reason,
+      };
+    }
 
     await session.emit("afterAllFilesListed", {
       options,
@@ -43,6 +67,8 @@ export class SourceScanner {
       allObjects,
       livePhotoMap,
       imageObjects,
+      complete: listing.complete,
+      incompleteReason: listing.reason,
     };
   }
 

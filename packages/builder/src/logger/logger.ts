@@ -1,3 +1,6 @@
+import { appendFileSync, chmodSync, mkdirSync } from "node:fs";
+import path from "node:path";
+
 import type { ConsolaInstance } from "consola";
 import consola from "consola";
 
@@ -22,6 +25,7 @@ export interface LogMessage {
 type LogListener = (message: LogMessage) => void;
 
 let listener: LogListener | null = null;
+const additionalListeners = new Set<LogListener>();
 let forwardToConsole = true;
 
 export function setLogListener(
@@ -38,17 +42,29 @@ export function setConsoleForwarding(enabled: boolean): void {
   forwardToConsole = enabled;
 }
 
+/** Add a sink without replacing the TUI/test listener managed by setLogListener. */
+export function addLogListener(newListener: LogListener): () => void {
+  additionalListeners.add(newListener);
+  return () => additionalListeners.delete(newListener);
+}
+
 function notifyListener(
   tag: string,
   level: LogLevel | string,
   args: unknown[],
 ): void {
-  listener?.({
+  const message: LogMessage = {
     tag,
     level,
     args,
     timestamp: new Date(),
-  });
+  };
+  listener?.(message);
+  if (additionalListeners.size > 0) {
+    for (const additionalListener of additionalListeners) {
+      additionalListener(message);
+    }
+  }
 }
 
 function combineTags(parentTag: string, childTag: string): string {
@@ -105,6 +121,96 @@ export const logger = {
   fs: createTaggedLogger("FS"),
   worker: (id: number) => createTaggedLogger(`WORKER-${id}`),
 };
+
+export interface LoggerObservabilityConfig {
+  verbose: boolean;
+  level: "info" | "warn" | "error" | "debug";
+  outputToFile: boolean;
+  logFilePath?: string;
+}
+
+const CONFIGURED_LEVELS: Record<LoggerObservabilityConfig["level"], number> = {
+  error: 0,
+  warn: 1,
+  info: 3,
+  debug: 4,
+};
+
+const MESSAGE_LEVELS: Record<string, number> = {
+  fatal: 0,
+  error: 0,
+  warn: 1,
+  log: 2,
+  info: 3,
+  success: 3,
+  ready: 3,
+  start: 3,
+  debug: 4,
+  trace: 5,
+};
+
+function setLoggerLevel(level: number): void {
+  consola.level = level;
+  logger.main.level = level;
+  logger.s3.level = level;
+  logger.image.level = level;
+  logger.thumbnail.level = level;
+  logger.thumbhash.level = level;
+  logger.exif.level = level;
+  logger.fs.level = level;
+}
+
+function formatFileArgument(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value instanceof Error) return value.stack ?? value.message;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * Apply the observability section used by the CLI and cluster workers.
+ * Returns a cleanup callback for embedders that keep the process alive.
+ */
+export function configureLoggerObservability(
+  config: LoggerObservabilityConfig,
+): () => void {
+  const configuredLevel = config.verbose
+    ? MESSAGE_LEVELS.trace
+    : CONFIGURED_LEVELS[config.level];
+  setLoggerLevel(configuredLevel);
+
+  if (!config.outputToFile) return () => {};
+
+  const logFilePath = path.resolve(
+    config.logFilePath?.trim() || "afilmory-builder.log",
+  );
+  mkdirSync(path.dirname(logFilePath), { recursive: true, mode: 0o700 });
+  appendFileSync(
+    logFilePath,
+    `\n# Afilmory Builder log started ${new Date().toISOString()}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  if (process.platform !== "win32") chmodSync(logFilePath, 0o600);
+
+  return addLogListener((message) => {
+    const messageLevel = MESSAGE_LEVELS[message.level] ?? MESSAGE_LEVELS.info;
+    if (messageLevel > configuredLevel) return;
+    try {
+      const rendered = message.args.map(formatFileArgument).join(" ");
+      appendFileSync(
+        logFilePath,
+        `${message.timestamp.toISOString()} [${message.level.toUpperCase()}] [${message.tag}] ${rendered}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
+    } catch {
+      // Logging must never turn a successful photo build into a failure after
+      // the file was opened successfully during configuration.
+    }
+  });
+}
 
 export type Logger = typeof logger;
 export type WorkerLogger = ReturnType<typeof logger.worker>;

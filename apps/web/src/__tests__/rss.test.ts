@@ -76,4 +76,39 @@ describe("generateRSSFeed XML safety", () => {
     expect(doc.querySelector("parsererror")).toBeNull();
     expect(xml).not.toContain("<b>&</b>");
   });
+
+  it("uses the configured language and deterministic build timestamp", () => {
+    const xml = generateRSSFeed(
+      [makePhoto({})],
+      {
+        title: "Test",
+        url: "https://example.com",
+        language: "zh-CN",
+      },
+      "2025-02-03T04:05:06.000Z",
+    );
+
+    expect(xml).toContain("<language>zh-CN</language>");
+    expect(xml).toContain(
+      `<lastBuildDate>${new Date("2025-02-03T04:05:06.000Z").toUTCString()}</lastBuildDate>`,
+    );
+    expect(xml).toContain("<link>https://example.com/photos/photo-1/</link>");
+  });
+
+  it("escapes author metadata that contains XML-reserved URL characters", () => {
+    const xml = generateRSSFeed([makePhoto({})], {
+      title: "Test",
+      url: "https://example.com",
+      author: {
+        name: "A & B",
+        url: "https://example.com/about?x=1&y=2",
+      },
+    });
+
+    const doc = new DOMParser().parseFromString(xml, "application/xml");
+    expect(doc.querySelector("parsererror")).toBeNull();
+    expect(doc.querySelector("managingEditor")?.textContent).toBe(
+      "A & B (https://example.com/about?x=1&y=2)",
+    );
+  });
 });

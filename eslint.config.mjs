@@ -36,8 +36,7 @@ const restrictedImports = {
     },
     {
       name: "~/data-runtime/photo-loader",
-      message:
-        "Use AppRuntime PhotoRepository instead of a module singleton.",
+      message: "Use AppRuntime PhotoRepository instead of a module singleton.",
     },
     {
       name: "~/lib/jotai",
@@ -144,10 +143,7 @@ const hyobanConfig = await defineConfig(
             "You can use `useLocaltion` or `getReadonlyRoute` to get the route info.",
         },
       ],
-      "no-restricted-imports": [
-        "error",
-        restrictedImports,
-      ],
+      "no-restricted-imports": ["error", restrictedImports],
       "no-restricted-properties": [
         "error",
         ...[

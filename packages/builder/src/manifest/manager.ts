@@ -1,8 +1,17 @@
 import fs from "node:fs/promises";
-import path, { basename } from "node:path";
+import path from "node:path";
 
-import { createManifest, parseManifestLenient } from "@afilmory/schema";
+import {
+  assertManifest,
+  createManifest,
+  parseManifestLenient,
+} from "@afilmory/schema";
 
+import {
+  getThumbnailFileNameFromUrl,
+  getThumbnailPhotoIdFromFileName,
+  isThumbnailFileNameForPhoto,
+} from "../image/thumbnail.js";
 import { logger } from "../logger/index.js";
 import type { BuilderOutputSettings } from "../output-paths.js";
 import type { StorageObject } from "../storage/interfaces.js";
@@ -18,6 +27,20 @@ import { writeFileAtomic } from "../utils/atomic-write.js";
 export async function loadExistingManifest(
   output: BuilderOutputSettings,
 ): Promise<AfilmoryManifest> {
+  return (await loadExistingManifestWithDiagnostics(output)).manifest;
+}
+
+export interface ExistingManifestLoadResult {
+  manifest: AfilmoryManifest;
+  /** Normalized cached entries that must not take the incremental skip path. */
+  repairedPhotoKeys: ReadonlySet<string>;
+  /** The on-disk JSON was recoverable but differs from the normalized form. */
+  requiresRewrite: boolean;
+}
+
+export async function loadExistingManifestWithDiagnostics(
+  output: BuilderOutputSettings,
+): Promise<ExistingManifestLoadResult> {
   const { manifestPath } = output;
   let manifestContent: string;
 
@@ -30,11 +53,12 @@ export async function loadExistingManifest(
       );
     }
 
-    logger.fs.error(
-      "🔍 Manifest file not found; creating a new manifest file...",
-    );
-    await saveManifest(output, []);
-    return createManifest();
+    logger.fs.info("🔍 Manifest file not found; starting with an empty cache");
+    return {
+      manifest: createManifest(),
+      repairedPhotoKeys: new Set(),
+      requiresRewrite: false,
+    };
   }
 
   try {
@@ -42,7 +66,7 @@ export async function loadExistingManifest(
     // 宽松解析：个别照片字段损坏只跳过该张（增量构建会把它当作新照片重新处理），
     // 而不是让 assertManifest 抛错——否则一条坏记录会让此后每次构建都在解析阶段
     // 永久失败，直到有人手动删 manifest（见 atomic-write.ts / data-processors.ts 注释）。
-    const { manifest, skipped } = parseManifestLenient(parsed);
+    const { manifest, repaired, skipped } = parseManifestLenient(parsed);
     if (skipped.length > 0) {
       logger.fs.warn(
         `⚠️  The existing manifest has ${skipped.length} invalid photo records; skipped (will be reprocessed): ${skipped
@@ -50,17 +74,32 @@ export async function loadExistingManifest(
           .join(", ")}`,
       );
     }
-    return manifest;
+    if (repaired.length > 0) {
+      logger.fs.warn(
+        `⚠️  The existing manifest has ${repaired.length} repaired photo record(s); they will be reprocessed instead of reused: ${repaired
+          .map((entry) => `#${entry.index}`)
+          .join(", ")}`,
+      );
+    }
+    return {
+      manifest,
+      repairedPhotoKeys: new Set(repaired.map((entry) => entry.s3Key)),
+      requiresRewrite: JSON.stringify(parsed) !== JSON.stringify(manifest),
+    };
   } catch (error) {
-    // 顶层结构损坏（schema/version/source/indexes/photos 非数组）：丢弃缓存做全量重建，
-    // 而不是永久抛错卡死整条构建流水线。
+    // 不可恢复的信封损坏（schema/version/generatedAt/photos 非数组或 JSON
+    // 语法错误）：丢弃缓存做全量重建，而不是永久卡死流水线。source/indexes
+    // 由宽松解析器归一化，并通过 requiresRewrite 在健康扫描后写回。
     logger.fs.error(
       `⚠️  The existing manifest has an invalid top-level structure; discarding the cache and doing a full rebuild: ${manifestPath} - ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
-    await saveManifest(output, []);
-    return createManifest();
+    return {
+      manifest: createManifest(),
+      repairedPhotoKeys: new Set(),
+      requiresRewrite: true,
+    };
   }
 }
 
@@ -87,34 +126,90 @@ export function needsUpdate(
 }
 
 // 保存 manifest
+export interface SaveManifestOptions {
+  /** Preserve generatedAt and skip the write when the candidate is identical. */
+  previousManifest?: AfilmoryManifest;
+  /** Persist a recovered/normalized manifest even if its semantic data matches. */
+  forceWrite?: boolean;
+}
+
+export interface SaveManifestResult {
+  manifest: AfilmoryManifest;
+  written: boolean;
+}
+
+function createValidatedManifest(
+  items: PhotoManifestItem[],
+  cameras: CameraInfo[],
+  lenses: LensInfo[],
+  source: ManifestSource | undefined,
+  generatedAt: string,
+): AfilmoryManifest {
+  const sortedManifest = [...items].sort(
+    (a, b) => new Date(b.dateTaken).getTime() - new Date(a.dateTaken).getTime(),
+  );
+  return assertManifest(
+    createManifest({
+      generatedAt,
+      photos: sortedManifest,
+      indexes: { cameras, lenses },
+      source: source ?? { provider: "unknown" },
+    }),
+  );
+}
+
 export async function saveManifest(
   output: BuilderOutputSettings,
   items: PhotoManifestItem[],
   cameras: CameraInfo[] = [],
   lenses: LensInfo[] = [],
   source?: ManifestSource,
-): Promise<void> {
+  options: SaveManifestOptions = {},
+): Promise<SaveManifestResult> {
   const { manifestPath } = output;
-  // 按日期排序（最新的在前）
-  const sortedManifest = [...items].sort(
-    (a, b) => new Date(b.dateTaken).getTime() - new Date(a.dateTaken).getTime(),
+  const previousGeneratedAt = options.previousManifest?.generatedAt;
+  const comparisonCandidate = createValidatedManifest(
+    items,
+    cameras,
+    lenses,
+    source,
+    previousGeneratedAt ?? new Date().toISOString(),
   );
+  const contentUnchanged = Boolean(
+    options.previousManifest &&
+      JSON.stringify(comparisonCandidate) ===
+        JSON.stringify(options.previousManifest),
+  );
+  const destinationExists = await fs
+    .access(manifestPath)
+    .then(() => true)
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return false;
+      throw error;
+    });
 
-  await writeFileAtomic(
-    manifestPath,
-    JSON.stringify(
-      createManifest({
-        photos: sortedManifest,
-        indexes: { cameras, lenses },
-        source: source ?? { provider: "unknown" },
-      }),
-      null,
-      2,
-    ),
-  );
+  if (contentUnchanged && destinationExists && !options.forceWrite) {
+    logger.fs.info(`📁 Manifest unchanged; preserving: ${manifestPath}`);
+    return { manifest: comparisonCandidate, written: false };
+  }
+
+  const manifest = contentUnchanged
+    ? comparisonCandidate
+    : previousGeneratedAt
+      ? createValidatedManifest(
+          items,
+          cameras,
+          lenses,
+          source,
+          new Date().toISOString(),
+        )
+      : comparisonCandidate;
+
+  await writeFileAtomic(manifestPath, JSON.stringify(manifest, null, 2));
 
   logger.fs.info(`📁 Manifest saved to: ${manifestPath}`);
   logger.fs.info(`📷 ${cameras.length} cameras, 🔍 ${lenses.length} lenses`);
+  return { manifest, written: true };
 }
 
 // 检测并处理已删除的图片。
@@ -130,10 +225,18 @@ export async function handleDeletedPhotos(
   const { thumbnailsDir } = output;
   logger.main.info("🔍 Checking for deleted images...");
   if (items.length === 0 && (keepPhotoIds?.size ?? 0) === 0) {
-    // Clear all thumbnails
+    const deletedCount = await fs
+      .readdir(thumbnailsDir)
+      .then(
+        (entries) => entries.filter((entry) => entry.endsWith(".jpg")).length,
+      )
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return 0;
+        throw error;
+      });
     await fs.rm(thumbnailsDir, { recursive: true, force: true });
     logger.main.info("🔍 No images; clearing thumbnails...");
-    return 0;
+    return deletedCount;
   }
 
   let deletedCount = 0;
@@ -150,14 +253,35 @@ export async function handleDeletedPhotos(
     });
 
   // If thumbnails not in manifest, delete it
-  const manifestKeySet = new Set(items.map((item) => item.id));
+  const manifestIdSet = new Set(items.map((item) => item.id));
+  const manifestExpectedFileNames = new Set<string>();
+  const manifestIdsWithExpectedFile = new Set<string>();
+  for (const item of items) {
+    const fileName = getThumbnailFileNameFromUrl(item.thumbnailUrl);
+    if (fileName && isThumbnailFileNameForPhoto(fileName, item.id)) {
+      manifestExpectedFileNames.add(fileName);
+      manifestIdsWithExpectedFile.add(item.id);
+    }
+  }
 
   for (const thumbnail of allThumbnails) {
     // 只清理 *.jpg 缩略图：目录里还住着 .encoding 编码签名标记（见 image/thumbnail.ts），
     // 误删它会在构建中途崩溃后触发下一次全量重生成缩略图，废掉 artifact-cache 增量路径。
     if (!thumbnail.endsWith(".jpg")) continue;
-    const photoId = basename(thumbnail, ".jpg");
-    if (!manifestKeySet.has(photoId) && !keepPhotoIds?.has(photoId)) {
+    const photoId = getThumbnailPhotoIdFromFileName(thumbnail);
+    const isExpected = manifestExpectedFileNames.has(thumbnail);
+    const isFailedButStillStored = Boolean(
+      photoId && !manifestIdSet.has(photoId) && keepPhotoIds?.has(photoId),
+    );
+    // If a CDN rewrote away the original basename we cannot identify the one
+    // live local artifact reliably; keep that photo's files rather than risk
+    // deleting the currently published thumbnail.
+    const hasAmbiguousPublishedUrl = Boolean(
+      photoId &&
+        manifestIdSet.has(photoId) &&
+        !manifestIdsWithExpectedFile.has(photoId),
+    );
+    if (!isExpected && !isFailedButStillStored && !hasAmbiguousPublishedUrl) {
       await fs.unlink(path.join(thumbnailsDir, thumbnail));
       deletedCount++;
     }

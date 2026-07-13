@@ -1,10 +1,11 @@
 import type { PhotoManifestItem } from "@afilmory/schema";
 import { photoMatchesGeoFilters } from "@afilmory/schema/geo";
 import { atom, useAtom, useAtomValue, useSetAtom } from "jotai";
-import { use, useCallback, useEffect, useMemo } from "react";
+import { use, useCallback, useMemo } from "react";
 
 import type { GallerySetting } from "~/atoms/app";
 import { gallerySettingAtom } from "~/atoms/app";
+import { useModalIsolation } from "~/hooks/useModalIsolation";
 import { getPhotoSortTime } from "~/lib/photo-date";
 import { PhotosContext } from "~/providers/photos-provider";
 import type { AppRuntime } from "~/runtime/app-runtime";
@@ -127,12 +128,35 @@ const getAllPhotosForViewer = (
   return sortPhotos(photos, sortOrder);
 };
 
+const photoMapsByArray = new WeakMap<
+  PhotoManifestItem[],
+  Map<string, PhotoManifestItem>
+>();
+const photosBySourceIds = new WeakMap<
+  PhotoManifestItem[],
+  WeakMap<string[], PhotoManifestItem[]>
+>();
+
 const getPhotosByIds = (photos: PhotoManifestItem[], photoIds: string[]) => {
-  const photoMap = new Map(photos.map((photo) => [photo.id, photo]));
-  return photoIds.flatMap((photoId) => {
+  let byIds = photosBySourceIds.get(photos);
+  if (!byIds) {
+    byIds = new WeakMap();
+    photosBySourceIds.set(photos, byIds);
+  }
+  const cached = byIds.get(photoIds);
+  if (cached) return cached;
+
+  let photoMap = photoMapsByArray.get(photos);
+  if (!photoMap) {
+    photoMap = new Map(photos.map((photo) => [photo.id, photo]));
+    photoMapsByArray.set(photos, photoMap);
+  }
+  const resolved = photoIds.flatMap((photoId) => {
     const photo = photoMap.get(photoId);
     return photo ? [photo] : [];
   });
+  byIds.set(photoIds, resolved);
+  return resolved;
 };
 
 const resolveViewerSourceMode = (
@@ -271,15 +295,7 @@ export const useIsPhotoViewerOpen = () => useAtomValue(openAtom);
 
 export const usePhotoViewerBodyScrollLock = () => {
   const isOpen = useAtomValue(openAtom);
-  const runtime = useAfilmoryRuntime();
-
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
-    return runtime.bodyScrollLock.lock();
-  }, [isOpen, runtime]);
+  useModalIsolation(isOpen);
 };
 
 export const useOpenPhotoViewer = () => {

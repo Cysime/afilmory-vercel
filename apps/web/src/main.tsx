@@ -61,7 +61,18 @@ function schedulePhotoViewerPreload(
   modules: Record<string, (() => Promise<unknown>) | undefined>,
 ): void {
   const preloadViewer = modules[PHOTO_VIEWER_ROUTE_MODULE_KEY];
-  if (!preloadViewer) return;
+  const { connection } = navigator as Navigator & {
+    connection?: { effectiveType?: string; saveData?: boolean };
+    deviceMemory?: number;
+  };
+  const shouldAvoidPreload =
+    document.visibilityState === "hidden" ||
+    connection?.saveData === true ||
+    connection?.effectiveType === "slow-2g" ||
+    connection?.effectiveType === "2g" ||
+    ((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4) <
+      4;
+  if (!preloadViewer || shouldAvoidPreload) return;
   const run = () => {
     void preloadViewer();
   };

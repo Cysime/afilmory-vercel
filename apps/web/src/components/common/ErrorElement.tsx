@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { isRouteErrorResponse, useRouteError } from "react-router";
 
 import { getI18n } from "~/i18n";
+import { formatUnknownError } from "~/lib/format-error";
 import {
   clearStaleRuntimeReloadAttempt,
   isStaleRuntimeError,
@@ -18,9 +19,7 @@ export function ErrorElement() {
   const error = useRouteError();
   const message = isRouteErrorResponse(error)
     ? `${error.status} ${error.statusText}`
-    : error instanceof Error
-      ? error.message
-      : JSON.stringify(error);
+    : formatUnknownError(error);
   const stack = error instanceof Error ? error.stack : null;
 
   useEffect(() => {

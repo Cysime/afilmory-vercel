@@ -15,8 +15,16 @@ export interface GeocodingCacheLogger {
 
 export type PersistentCacheEntry = {
   locales: Record<string, LocationInfo | null>;
+  /** Per-locale expiry for confirmed no-result entries. */
+  notFoundExpiresAt?: Record<string, string>;
   updatedAt?: string;
 };
+
+export interface GeocodingCacheDelta {
+  key: string;
+  entry: PersistentCacheEntry;
+  deletedLocales?: string[];
+}
 
 type PersistentCacheFileV1 = {
   version?: 1;
@@ -34,6 +42,7 @@ export interface GeocodingCacheState {
   cache: Map<string, PersistentCacheEntry>;
   loadedCachePath: string | null;
   cacheDirty: boolean;
+  loadPromise: Promise<void> | null;
 }
 
 export function createGeocodingCacheState(): GeocodingCacheState {
@@ -41,6 +50,7 @@ export function createGeocodingCacheState(): GeocodingCacheState {
     cache: new Map(),
     loadedCachePath: null,
     cacheDirty: false,
+    loadPromise: null,
   };
 }
 
@@ -69,8 +79,28 @@ export async function ensurePersistentCacheLoaded(
   cachePath: string | null,
   logger: GeocodingCacheLogger,
 ): Promise<void> {
-  if (!cachePath || state.loadedCachePath === cachePath) return;
+  if (!cachePath) return;
+  if (state.loadPromise) {
+    await state.loadPromise;
+  }
+  if (state.loadedCachePath === cachePath) return;
 
+  const loadPromise = loadPersistentCache(state, cachePath, logger);
+  state.loadPromise = loadPromise;
+  try {
+    await loadPromise;
+  } finally {
+    if (state.loadPromise === loadPromise) {
+      state.loadPromise = null;
+    }
+  }
+}
+
+async function loadPersistentCache(
+  state: GeocodingCacheState,
+  cachePath: string,
+  logger: GeocodingCacheLogger,
+): Promise<void> {
   state.cache.clear();
   state.loadedCachePath = cachePath;
   state.cacheDirty = false;
@@ -99,6 +129,17 @@ export async function ensurePersistentCacheLoaded(
         }
         state.cache.set(key, {
           locales,
+          ...(value.notFoundExpiresAt &&
+          typeof value.notFoundExpiresAt === "object"
+            ? {
+                notFoundExpiresAt: Object.fromEntries(
+                  Object.entries(value.notFoundExpiresAt).filter(
+                    (item): item is [string, string] =>
+                      typeof item[1] === "string",
+                  ),
+                ),
+              }
+            : {}),
           updatedAt: value.updatedAt,
         });
       }
@@ -137,6 +178,42 @@ export async function ensurePersistentCacheLoaded(
       error,
     );
   }
+}
+
+export function isFreshNegativeCacheEntry(
+  entry: PersistentCacheEntry,
+  locale: string,
+  now = Date.now(),
+): boolean {
+  if (entry.locales[locale] !== null) return false;
+  const expiresAt = entry.notFoundExpiresAt?.[locale];
+  if (!expiresAt) return false;
+  const timestamp = Date.parse(expiresAt);
+  return Number.isFinite(timestamp) && timestamp > now;
+}
+
+export function mergeGeocodingCacheDelta(
+  state: GeocodingCacheState,
+  delta: GeocodingCacheDelta,
+): void {
+  const existing = state.cache.get(delta.key);
+  const locales = { ...existing?.locales };
+  const notFoundExpiresAt = { ...existing?.notFoundExpiresAt };
+  for (const locale of delta.deletedLocales ?? []) {
+    delete locales[locale];
+    delete notFoundExpiresAt[locale];
+  }
+  Object.assign(locales, delta.entry.locales);
+  Object.assign(notFoundExpiresAt, delta.entry.notFoundExpiresAt);
+  for (const [locale, location] of Object.entries(delta.entry.locales)) {
+    if (location !== null) delete notFoundExpiresAt[locale];
+  }
+  state.cache.set(delta.key, {
+    locales,
+    ...(Object.keys(notFoundExpiresAt).length > 0 ? { notFoundExpiresAt } : {}),
+    updatedAt: delta.entry.updatedAt ?? existing?.updatedAt,
+  });
+  state.cacheDirty = true;
 }
 
 export function migrateV1CacheEntry(

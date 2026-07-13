@@ -151,7 +151,7 @@ describe("MasonryPhotoItem", () => {
   it("opens a filtered viewer session and navigates to the photo detail route with filters intact", () => {
     const { getByRole } = renderItem({ data: photo, width: 300, index: 0 });
 
-    fireEvent.click(getByRole("button", { name: "A7C01202" }));
+    fireEvent.click(getByRole("link", { name: "A7C01202" }));
 
     expect(openViewer).toHaveBeenCalledWith(0, {
       element: expect.any(HTMLElement),
@@ -169,7 +169,7 @@ describe("MasonryPhotoItem", () => {
 
     const { getByRole } = renderItem({ data: photo, width: 300, index: 0 });
 
-    fireEvent.click(getByRole("button", { name: "A7C01202" }));
+    fireEvent.click(getByRole("link", { name: "A7C01202" }));
 
     expect(openViewer).not.toHaveBeenCalled();
     expect(navigate).toHaveBeenCalledWith({
@@ -211,10 +211,17 @@ describe("MasonryPhotoItem", () => {
     // ring-inset 是因为格子 overflow-hidden 且边贴边，外扩 ring 会被裁掉。
     const { getByRole } = renderItem({ data: photo, width: 300, index: 0 });
 
-    const cell = getByRole("button", { name: "A7C01202" });
+    const cell = getByRole("link", { name: "A7C01202" });
     expect(cell.className).toContain("focus-visible:ring-2");
     expect(cell.className).toContain("focus-visible:ring-accent/45");
     expect(cell.className).toContain("focus-visible:ring-inset");
+  });
+
+  it("uses a level-two heading beneath the gallery's page heading", () => {
+    markThumbnailLoaded(getThumbnailLoadCacheKey(photo.id, photo.thumbnailUrl));
+    const { getByRole } = renderItem({ data: photo, width: 300, index: 0 });
+
+    expect(getByRole("heading", { level: 2, name: "A7C01202" })).toBeTruthy();
   });
 
   it("labels untitled photos with their formatted taken date for screen readers", () => {
@@ -229,7 +236,7 @@ describe("MasonryPhotoItem", () => {
     const { getByRole } = renderItem({ data: untitled, width: 300, index: 0 });
 
     expect(
-      getByRole("button", {
+      getByRole("link", {
         name: `photo.untitled.taken-on:${expectedDate}`,
       }),
     ).toBeTruthy();
@@ -240,9 +247,7 @@ describe("MasonryPhotoItem", () => {
 
     const { getByRole } = renderItem({ data: untitled, width: 300, index: 0 });
 
-    expect(
-      getByRole("button", { name: "photo.untitled.fallback" }),
-    ).toBeTruthy();
+    expect(getByRole("link", { name: "photo.untitled.fallback" })).toBeTruthy();
   });
 
   it("waits for async route navigation before opening the viewer", async () => {
@@ -255,7 +260,7 @@ describe("MasonryPhotoItem", () => {
 
     const { getByRole } = renderItem({ data: photo, width: 300, index: 0 });
 
-    fireEvent.click(getByRole("button", { name: "A7C01202" }));
+    fireEvent.click(getByRole("link", { name: "A7C01202" }));
 
     expect(navigate).toHaveBeenCalledWith({
       pathname: "/photos/photo-1",

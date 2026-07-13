@@ -1,6 +1,6 @@
 # Afilmory Builder
 
-`@afilmory/builder` is the build-time photo processing engine for Afilmory Vercel. In the default site configuration it reads source photos from S3-compatible object storage, generates thumbnails and manifest data, and hands a static data set to the web app.
+`@afilmory/builder` is the build-time photo processing engine for Afilmory Vercel. It reads source photos from S3-compatible object storage (the default) or a configured local directory, generates thumbnails and manifest data, and hands a static data set to the web app.
 
 ## Current Architecture
 
@@ -37,36 +37,32 @@ The root `builder.config.ts` is the source of truth for this repository:
 - `output.manifestPath`: `generated/photos-manifest.json`
 - `output.thumbnailsDir`: `apps/web/public/thumbnails`
 - `output.originalsDir`: `apps/web/public/originals`
-- `storage.provider`: `s3`
+- `storage.provider`: selected by `PHOTO_STORAGE_PROVIDER`, default `s3`
 - `storage.bucket`: `S3_BUCKET_NAME`
 - `storage.region`: `S3_REGION`, defaulted by `env.ts` to `us-east-1`
 - `storage.endpoint`: `S3_ENDPOINT`, defaulted by `env.ts`
 - `storage.customDomain`: optional CDN/public domain
 
-The documented deployment path uses S3. `StorageConfig` is a discriminated union on `provider`; further photo-source support should be added as a new `StorageProvider` implementation dispatched in `StorageManager`, not through a global storage registry.
+The default deployment path uses S3; setting `PHOTO_STORAGE_PROVIDER=local` selects the built-in local adapter. `StorageConfig` is a discriminated union on `provider`; further photo-source support should be added as a new `StorageProvider` implementation dispatched in `StorageManager`, not through a global storage registry.
 
 ## Local filesystem provider (zero-credential runs)
 
-The builder also ships a `provider: "local"` storage backend, so a full local run needs no object-storage credentials at all:
+The builder also ships a `provider: "local"` storage backend, so a full local run needs no object-storage credentials at all. The root configuration exposes it directly:
 
-```ts
-storage: {
-  provider: "local",
-  // photos source directory; keys are posix paths relative to this dir
-  basePath: path.resolve(__dirname, "photos"),
-  // public URL prefix used for originalUrl, defaults to "/photos"
-  // baseUrl: "/photos",
-  // excludeRegex: "^drafts/",
-}
+```bash
+PHOTO_STORAGE_PROVIDER=local
+LOCAL_PHOTOS_PATH=photos
+LOCAL_PHOTOS_BASE_URL=/originals
 ```
 
 How the dev story fits together:
 
 1. Put photos in a local directory (the repo-root `photos/` dir matches the defaults).
-2. Run `pnpm build:manifest` with the config above — the builder scans `basePath`, generates thumbnails, and writes a manifest whose `originalUrl`s look like `/photos/dir/img.jpg` (the `baseUrl` prefix plus the encoded key).
-3. Run `pnpm dev` — `apps/web/plugins/vite/photos-static.ts` already serves `/photos/*` from the repo-root `photos/` directory in dev, so the gallery loads originals straight from disk.
+2. Run `pnpm build:manifest` — the builder scans `LOCAL_PHOTOS_PATH`, generates thumbnails, and writes a manifest whose `originalUrl`s look like `/originals/dir/img.jpg` (the configured URL prefix plus the encoded key).
+3. Run `pnpm dev` — `apps/web/plugins/vite/photos-static.ts` serves the configured URL prefix from the configured local directory.
+4. Run `pnpm build` for a self-contained static result; the web build copies local originals into `apps/web/dist` under the same URL prefix.
 
-The manifest `source` field records local runs faithfully as `{ provider: "local", basePath, baseUrl }` — `@afilmory/schema`'s `ManifestSource` models `s3`/`local`/`unknown`, and its normalizer preserves the `local` variant on reload.
+The manifest `source` field records local runs without publishing the machine's absolute source path. `@afilmory/schema`'s `ManifestSource` models `s3`/`local`/`unknown` and preserves the `local` variant on reload.
 
 ## Operational environment variables
 
@@ -191,4 +187,4 @@ Plugins are loaded from explicit `plugins` entries:
 
 - [Photo pipeline](src/photo/README.md)
 - [Storage providers (S3 + local filesystem)](src/storage/providers/README.md)
-- [Shared schema types](../schema/src/types.ts)
+- [Shared schema package](../schema/README.md)

@@ -14,7 +14,9 @@ import { useNavigate } from "react-router";
 
 import { gallerySettingAtom } from "~/atoms/app";
 import { ThumbnailImage } from "~/components/ui/ThumbnailImage";
+import { useDialogFocusManagement } from "~/hooks/useDialogFocusManagement";
 import { useMobile } from "~/hooks/useMobile";
+import { useModalIsolation } from "~/hooks/useModalIsolation";
 import { usePanelDragDismiss } from "~/hooks/usePanelDragDismiss";
 import {
   getViewerPhotos,
@@ -38,10 +40,12 @@ import {
   applyGalleryCommandAction,
   buildActiveFilterChips,
   buildCommandIndex,
+  buildPhotoCommands,
   filterCommands,
   getActiveFilterCount,
   getAvailableFilterCount,
 } from "./model";
+import { buildPhotoSearchIndex, searchPhotoIndex } from "./search";
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -49,10 +53,6 @@ interface CommandPaletteProps {
 }
 
 const DISMISS_DRAG_THRESHOLD = 72;
-
-// 焦点陷阱用的可聚焦元素选择器：保持零依赖的小实现，覆盖面板内会出现的控件。
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
   const { t, i18n } = useTranslation();
@@ -79,13 +79,30 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
     [photoRepository],
   );
   const allPhotos = photoRepository.getPhotos();
+  const photoById = useMemo(
+    () => new Map(allPhotos.map((photo) => [photo.id, photo])),
+    [allPhotos],
+  );
+  const photoSearchIndex = useMemo(
+    () => buildPhotoSearchIndex(allPhotos),
+    [allPhotos],
+  );
 
   const [query, setQuery] = useState("");
+  const deferredQuery = React.useDeferredValue(query);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const isMobile = useMobile();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  useModalIsolation(isOpen);
+  useDialogFocusManagement({
+    dialogRef: panelRef,
+    focusContainerOnOpen: isMobile,
+    initialFocusSelector: '[name="gallery-search"]',
+    isOpen,
+  });
 
   // combobox/listbox 语义要求 aria-activedescendant 引用合法且页面唯一的 DOM id。
   // 命令 id 可能含空格（相机名、标签），encodeURIComponent 保证合法且不撞车。
@@ -139,16 +156,13 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
     [gallerySetting, regionLabelMaps],
   );
 
-  // Reset state when opened (drag offset resets inside usePanelDragDismiss via `enabled`)
+  // Reset state when opened (drag offset resets inside usePanelDragDismiss via `enabled`).
   useEffect(() => {
     if (isOpen) {
       setQuery("");
       setSelectedIndex(0);
-      if (isMobile) return;
-      const timer = setTimeout(() => inputRef.current?.focus(), 50);
-      return () => clearTimeout(timer);
     }
-  }, [isMobile, isOpen]);
+  }, [isOpen]);
 
   // Handle escape key
   useEffect(() => {
@@ -160,55 +174,6 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [isOpen, onClose]);
-
-  // a11y：对话框焦点管理。打开时记录先前焦点并把焦点移进面板 ——
-  // 桌面端由上面的 effect 聚焦搜索框，移动端聚焦面板本身（tabIndex=-1，
-  // 避免拉起虚拟键盘）；关闭 / 卸载时把焦点还原给打开前的元素。
-  useEffect(() => {
-    if (!isOpen) return;
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    if (isMobile) {
-      panelRef.current?.focus({ preventScroll: true });
-    }
-    return () => {
-      previouslyFocused?.focus({ preventScroll: true });
-    };
-  }, [isMobile, isOpen]);
-
-  // 焦点陷阱：Tab / Shift+Tab 在面板内循环，不让焦点跑到被遮住的页面内容上。
-  // 面板内点击非控件区域会把焦点落在面板本身（tabIndex=-1），keydown 仍会冒泡到这里。
-  const handleFocusTrapKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key !== "Tab") return;
-    const panel = panelRef.current;
-    if (!panel) return;
-
-    const focusable = [
-      ...panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-    ];
-    const first = focusable[0];
-    const last = focusable.at(-1);
-    if (!first || !last) {
-      e.preventDefault();
-      return;
-    }
-
-    const active = document.activeElement;
-    const activeInPanel =
-      active instanceof HTMLElement && panel.contains(active);
-
-    if (e.shiftKey) {
-      if (!activeInPanel || active === first || active === panel) {
-        e.preventDefault();
-        last.focus();
-      }
-    } else if (!activeInPanel || active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  }, []);
 
   const openPhoto = useCallback(
     (photo: PhotoManifest) => {
@@ -234,7 +199,7 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
   const executeCommandAction = useCallback(
     (action: CommandAction) => {
       if (action.type === "open-photo") {
-        const photo = allPhotos.find((item) => item.id === action.photoId);
+        const photo = photoById.get(action.photoId);
         if (photo) {
           openPhoto(photo);
         }
@@ -243,10 +208,10 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
 
       setGallerySetting((prev) => applyGalleryCommandAction(prev, action));
     },
-    [allPhotos, openPhoto, setGallerySetting],
+    [openPhoto, photoById, setGallerySetting],
   );
 
-  const commands = useMemo(
+  const baseCommands = useMemo(
     () =>
       buildCommandIndex({
         t: commandT,
@@ -257,7 +222,7 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
         allLenses,
         allPhotos,
         geoRegions,
-        query,
+        query: "",
         hasFilters,
       }),
     [
@@ -269,14 +234,32 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
       allLenses,
       allPhotos,
       geoRegions,
-      query,
       hasFilters,
     ],
   );
 
+  const photoCommands = useMemo(
+    () =>
+      buildPhotoCommands({
+        t: commandT,
+        photos: searchPhotoIndex(photoSearchIndex, deferredQuery, 10),
+      }),
+    [commandT, deferredQuery, photoSearchIndex],
+  );
+  const commands = useMemo(
+    () => [...baseCommands, ...photoCommands],
+    [baseCommands, photoCommands],
+  );
+
   const filteredCommands = useMemo(
-    () => filterCommands(commands, query),
-    [commands, query],
+    () => filterCommands(commands, deferredQuery),
+    [commands, deferredQuery],
+  );
+  const isBrowsingFilters = !query.trim();
+  const visibleCommands = useMemo(
+    () =>
+      !isBrowsingFilters && query === deferredQuery ? filteredCommands : [],
+    [deferredQuery, filteredCommands, isBrowsingFilters, query],
   );
 
   // Keyboard navigation
@@ -284,7 +267,7 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
     (e: React.KeyboardEvent) => {
       const intent = resolveCommandKeyboardIntent(e.key, {
         selectedIndex,
-        resultCount: filteredCommands.length,
+        resultCount: visibleCommands.length,
       });
 
       if (intent.type === "none") {
@@ -297,12 +280,12 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
         return;
       }
 
-      const command = filteredCommands[intent.selectedIndex];
+      const command = visibleCommands[intent.selectedIndex];
       if (command) {
         executeCommandAction(command.action);
       }
     },
-    [executeCommandAction, filteredCommands, selectedIndex],
+    [executeCommandAction, selectedIndex, visibleCommands],
   );
 
   // Scroll selected item into view
@@ -318,8 +301,8 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
   // alone leaves the highlight pointing at a different command than shown —
   // pressing Enter would then run the wrong command.
   const filteredCommandsKey = useMemo(
-    () => filteredCommands.map((command) => command.id).join(" "),
-    [filteredCommands],
+    () => visibleCommands.map((command) => command.id).join("\u0000"),
+    [visibleCommands],
   );
 
   // Reset selected index whenever the filtered command set changes.
@@ -329,7 +312,6 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
 
   if (!isOpen) return null;
 
-  const isBrowsingFilters = !query.trim();
   const availableFilterCount = getAvailableFilterCount({
     allTags,
     allCameras,
@@ -337,25 +319,27 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
     geoRegions,
   });
   const resultSummary = query.trim()
-    ? t("action.search.command-count", { count: filteredCommands.length })
+    ? t("action.search.command-count", { count: visibleCommands.length })
     : t("action.search.showing-filters", { count: availableFilterCount });
 
   // 读屏器可见性：只有真正渲染选项列表时 combobox 才算 expanded，
   // aria-activedescendant 跟着高亮项走，箭头键选中什么用户就听到什么。
-  const isListboxVisible = !isBrowsingFilters && filteredCommands.length > 0;
-  const selectedCommand = filteredCommands[selectedIndex];
+  const isListboxVisible = !isBrowsingFilters && visibleCommands.length > 0;
+  const selectedCommand = visibleCommands[selectedIndex];
   const activeOptionDomId =
     isListboxVisible && selectedCommand
       ? getOptionDomId(selectedCommand.id)
       : undefined;
 
   return (
-    <div
-      className="fixed inset-0 z-[9999] flex items-end justify-center"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-[9999] flex items-end justify-center">
       {/* Backdrop with blur */}
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-xl transition-[background-color,backdrop-filter] duration-200" />
+      <button
+        type="button"
+        aria-label={t("common.close")}
+        className="absolute inset-0 bg-black/30 backdrop-blur-xl transition-[background-color,backdrop-filter] duration-200"
+        onClick={onClose}
+      />
 
       {/* Command Palette Panel */}
       <div
@@ -364,15 +348,13 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
         aria-modal="true"
         aria-label={t("action.search.unified.title")}
         tabIndex={-1}
-        onKeyDown={handleFocusTrapKeyDown}
-        className="animate-in fade-in slide-in-from-bottom-4 bg-material-thick border-fill-tertiary relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-[1.75rem] border-x border-t shadow-2xl backdrop-blur-2xl duration-200 outline-none lg:mb-6 lg:max-h-[min(86vh,46rem)] lg:rounded-[1.75rem] lg:border"
+        className="animate-in fade-in slide-in-from-bottom-4 bg-material-thick border-fill-tertiary relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden overscroll-contain rounded-t-[1.75rem] border-x border-t shadow-2xl backdrop-blur-2xl duration-200 outline-none lg:mb-6 lg:max-h-[min(86vh,46rem)] lg:rounded-[1.75rem] lg:border"
         style={{
           boxShadow:
             "0 8px 32px color-mix(in srgb, var(--color-accent) 8%, transparent), 0 4px 16px color-mix(in srgb, var(--color-accent) 6%, transparent), 0 2px 8px rgba(0, 0, 0, 0.1)",
           transform: `translateY(${panelDragOffset}px)`,
           transition: isDraggingPanel ? "none" : "transform 180ms ease-out",
         }}
-        onClick={(e) => e.stopPropagation()}
       >
         {/* Inner glow layer */}
         <div
@@ -392,7 +374,10 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
         <div className="border-fill-secondary relative border-b px-6 pb-5">
           <div className="mb-4 flex items-center gap-3">
             <div className="bg-accent/10 border-accent/20 text-accent flex size-12 shrink-0 items-center justify-center rounded-2xl border shadow-sm">
-              <i className="i-mingcute-search-line text-accent text-lg" />
+              <i
+                className="i-mingcute-search-line text-accent text-lg"
+                aria-hidden="true"
+              />
             </div>
             <div className="min-w-0 flex-1">
               <h2 className="text-text text-lg leading-tight font-semibold text-pretty">
@@ -409,7 +394,10 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
               aria-label={t("action.search.reset")}
               title={t("action.search.reset")}
             >
-              <i className="i-mingcute-refresh-1-line text-base" />
+              <i
+                className="i-mingcute-refresh-1-line text-base"
+                aria-hidden="true"
+              />
             </button>
             <button
               type="button"
@@ -418,12 +406,18 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
               aria-label={t("common.close")}
               title={t("common.close")}
             >
-              <i className="i-mingcute-close-line text-base" />
+              <i
+                className="i-mingcute-close-line text-base"
+                aria-hidden="true"
+              />
             </button>
           </div>
 
           <div className="bg-fill-vibrant-quinary border-fill-tertiary focus-within:border-accent/50 focus-within:bg-fill-secondary/70 focus-within:ring-accent/20 flex h-12 items-center gap-3 rounded-2xl border px-3 shadow-inner transition-[background-color,border-color,box-shadow] duration-200 focus-within:ring-2">
-            <i className="i-mingcute-search-line text-text-tertiary shrink-0 text-lg" />
+            <i
+              className="i-mingcute-search-line text-text-tertiary shrink-0 text-lg"
+              aria-hidden="true"
+            />
             <input
               ref={inputRef}
               type="text"
@@ -448,7 +442,10 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
           <div className="border-fill-secondary relative border-b px-6 py-3">
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="text-text-secondary flex items-center gap-2 text-xs font-medium">
-                <i className="i-mingcute-filter-3-line text-sm" />
+                <i
+                  className="i-mingcute-filter-3-line text-sm"
+                  aria-hidden="true"
+                />
                 <span>
                   {t("action.search.active-filters", {
                     count: activeFilterCount,
@@ -473,9 +470,15 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
                   aria-label={`${t("action.search.clear")} ${chip.label}`}
                   title={chip.label}
                 >
-                  <i className={clsxm(chip.icon, "shrink-0 text-sm")} />
+                  <i
+                    className={clsxm(chip.icon, "shrink-0 text-sm")}
+                    aria-hidden="true"
+                  />
                   <span className="truncate">{chip.label}</span>
-                  <i className="i-mingcute-close-line shrink-0 text-sm" />
+                  <i
+                    className="i-mingcute-close-line shrink-0 text-sm"
+                    aria-hidden="true"
+                  />
                 </button>
               ))}
             </div>
@@ -497,15 +500,18 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
               showHeader={false}
               className="max-h-none overflow-visible px-6 pt-3 pb-8"
             />
-          ) : filteredCommands.length === 0 ? (
+          ) : visibleCommands.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
-              <i className="i-mingcute-search-line text-text-quaternary mb-3 text-4xl" />
+              <i
+                className="i-mingcute-search-line text-text-quaternary mb-3 text-4xl"
+                aria-hidden="true"
+              />
               <p className="text-text-secondary text-sm">
                 {t("action.search.no-results")}
               </p>
             </div>
           ) : (
-            filteredCommands.map((cmd, index) => (
+            visibleCommands.map((cmd, index) => (
               <button
                 key={cmd.id}
                 type="button"
@@ -522,7 +528,7 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
                 {/* Icon */}
                 <div
                   className={clsxm(
-                    "flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl text-lg transition-all duration-200",
+                    "flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl text-lg transition-[background-color,color,opacity,transform] duration-200",
                     cmd.active
                       ? "bg-accent/10 text-accent"
                       : "bg-fill-vibrant-quinary text-text-secondary",
@@ -541,13 +547,15 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
                       photoId={cmd.thumbnail.photoId}
                       src={cmd.thumbnail.src}
                       alt={cmd.thumbnail.alt}
+                      width={cmd.thumbnail.width}
+                      height={cmd.thumbnail.height}
                       thumbHash={cmd.thumbnail.thumbHash}
                       containerClassName="h-10 w-10 rounded-xl"
                       imageClassName="h-full w-full rounded-xl object-cover"
                       fetchPriority="low"
                     />
                   ) : (
-                    <i className={cmd.icon} />
+                    <i className={cmd.icon} aria-hidden="true" />
                   )}
                 </div>
 
@@ -564,7 +572,10 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
                     )}
                     {cmd.active && (
                       <span className="bg-accent flex h-5 w-5 items-center justify-center rounded-full text-white">
-                        <i className="i-mingcute-check-line text-xs" />
+                        <i
+                          className="i-mingcute-check-line text-xs"
+                          aria-hidden="true"
+                        />
                       </span>
                     )}
                   </div>

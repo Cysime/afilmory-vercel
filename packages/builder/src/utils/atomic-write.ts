@@ -1,6 +1,24 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import process from "node:process";
+
+async function syncDirectory(dir: string): Promise<void> {
+  let handle: fs.FileHandle | undefined;
+  try {
+    handle = await fs.open(dir, "r");
+    await handle.sync();
+  } catch (error) {
+    // Some platforms/filesystems do not allow opening or fsyncing a directory.
+    // The destination is still atomically replaced; ignore only known
+    // unsupported cases rather than hiding genuine I/O failures.
+    const { code } = error as NodeJS.ErrnoException;
+    if (!["EINVAL", "EISDIR", "ENOTSUP", "EPERM"].includes(code ?? "")) {
+      throw error;
+    }
+  } finally {
+    await handle?.close();
+  }
+}
 
 /**
  * Atomically and durably write a file.
@@ -25,12 +43,15 @@ export async function writeFileAtomic(
 
   const tmpPath = path.join(
     dir,
-    `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`,
+    `.${path.basename(filePath)}.${crypto.randomUUID()}.tmp`,
   );
 
   let handle: fs.FileHandle | undefined;
   try {
-    handle = await fs.open(tmpPath, "w");
+    // `wx` prevents following a pre-existing path/symlink. UUID names make a
+    // collision practically impossible; if one occurs, failing is safer than
+    // clobbering another writer's temporary file.
+    handle = await fs.open(tmpPath, "wx", 0o666);
     await handle.writeFile(data);
     // Flush to disk before the rename so the rename can't expose an empty file
     // after a power loss.
@@ -41,9 +62,12 @@ export async function writeFileAtomic(
     throw error;
   }
   await handle.close();
+  handle = undefined;
 
   try {
     await fs.rename(tmpPath, filePath);
+    // Persist the renamed directory entry as well as the file data.
+    await syncDirectory(dir);
   } catch (error) {
     await fs.rm(tmpPath, { force: true }).catch(() => {});
     throw error;

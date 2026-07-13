@@ -8,6 +8,17 @@ export function backoffDelay(
   return Math.floor(exp + jitter);
 }
 
-export async function sleep(ms: number): Promise<void> {
-  await new Promise((r) => setTimeout(r, ms));
+export async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }

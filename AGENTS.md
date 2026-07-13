@@ -2,13 +2,13 @@
 
 ## 项目概述
 
-Afilmory Vercel 是一个照片优先的静态站点生成器。Builder 在构建期从 S3 兼容对象存储读取照片，生成 `generated/photos-manifest.json` 和缩略图；前端是 Vite + React SPA，通过构建注入的 manifest 与站点配置运行，不依赖数据库或运行时后端。
+Afilmory Vercel 是一个照片优先的静态站点生成器。Builder 在构建期从 S3 兼容对象存储（默认）或本地文件系统读取照片，生成 `generated/photos-manifest.json` 和缩略图；前端是 Vite + React SPA，通过构建注入的 manifest 与站点配置运行，不依赖数据库或运行时后端。
 
 ## 核心理念
 
 - **照片优先**: 以照片浏览、查看器、EXIF、地图和分享体验为核心。
 - **静态优先**: 运行时数据来自 JSON manifest 和静态资源。
-- **S3 优先**: 默认站点配置只支持 S3 兼容对象存储作为原图来源。
+- **S3 优先**: 默认使用 S3 兼容对象存储；`PHOTO_STORAGE_PROVIDER=local` 提供零凭据、自包含的本地构建模式。
 - **易于部署**: 面向 Vercel，也可部署到任意静态托管平台。
 - **现代前端**: React 19、Vite 7、Tailwind CSS 4、Radix UI、Motion。
 
@@ -18,7 +18,7 @@ Afilmory Vercel 是一个照片优先的静态站点生成器。Builder 在构�
 
 - **根目录**: 统一脚本、`builder.config.ts`、`site.config.ts`、`site.config.build.ts`、`vercel.json`、根 ESLint flat config。
 - **`apps/web`**: 前端 SPA 应用，Vite + React。
-- **`packages/builder`**: 构建期照片处理、EXIF、缩略图、manifest、插件和 S3 访问。
+- **`packages/builder`**: 构建期照片处理、EXIF、缩略图、manifest、插件和 S3/本地存储访问。
 - **`packages/schema`**: 共享 manifest/photo schema 类型和 manifest v2 解析。
 - **`packages/media`**: 共享 media/binary helper，例如 thumbhash 字节压缩/解压。
 - **`packages/ui`**: 共享 UI 组件、hooks、portal、scroll area、ThumbHash 组件。
@@ -28,10 +28,10 @@ Afilmory Vercel 是一个照片优先的静态站点生成器。Builder 在构�
 
 ## 关键依赖
 
-- **构建工具**: Vite 7、TypeScript 5.9、TSX、tsdown。
+- **构建工具**: Vite 7、TypeScript 5.9、TSX。
 - **前端框架**: React 19、React Router 7。
 - **样式与 UI**: Tailwind CSS 4、Radix UI、Motion。
-- **状态管理**: Jotai、TanStack Query。
+- **状态管理**: Jotai。
 - **图片处理**: Sharp、heic-to、heic-convert、thumbhash。
 - **EXIF 处理**: `exiftool-vendored`，前端 raw EXIF 查看使用 `@uswriting/exiftool`。
 - **地图组件**: MapLibre GL、react-map-gl。
@@ -42,15 +42,15 @@ Afilmory Vercel 是一个照片优先的静态站点生成器。Builder 在构�
 
 职责：
 
-- 扫描 S3 兼容对象存储中的图片。
+- 扫描已配置的 S3 兼容对象存储或本地目录中的图片。
 - 提取 EXIF、检测 Live Photo/Motion Photo/HDR metadata。
 - 生成 600px 宽 JPEG 缩略图和 `thumbHash` 占位数据。
 - 计算影调分析、维护相机和镜头索引。
 - 输出 `generated/photos-manifest.json`，缩略图输出到 `apps/web/public/thumbnails`。
 
-当前默认站点配置在 `builder.config.ts` 中使用 `provider: "s3"`。Builder core 只内置 S3 照片来源；未来扩展应通过显式 typed adapter 重新接入，不恢复旧 storage provider registry。
+当前默认站点配置在 `builder.config.ts` 中由 `PHOTO_STORAGE_PROVIDER` 选择 `s3`（默认）或 `local`。Builder core 内置这两个显式 typed provider；未来扩展应继续使用 typed adapter，不恢复旧 storage provider registry。
 
-Builder 主流程使用 `packages/builder/src/builder/workflow` 分层：`BuildSession` 持有显式上下文，`SourceScanner` 扫描 S3，`DiffPlanner` 生成任务，`PhotoTaskProcessor` 执行 worker/cluster，`ManifestAssembler` 合并结果，`ArtifactWriter` 写 manifest/清理 artifact。`AfilmoryBuilder` 不应重新直接承担这些职责。
+Builder 主流程使用 `packages/builder/src/builder/workflow` 分层：`BuildSession` 持有显式上下文，`SourceScanner` 扫描已配置 provider，`DiffPlanner` 生成任务，`PhotoTaskProcessor` 执行 worker/cluster，`ManifestAssembler` 合并结果，`ArtifactWriter` 写 manifest/清理 artifact。`AfilmoryBuilder` 不应重新直接承担这些职责。
 
 ### Schema / Media (`@afilmory/schema`, `@afilmory/media`)
 
@@ -66,7 +66,7 @@ Builder 主流程使用 `packages/builder/src/builder/workflow` 分层：`BuildS
 
 职责：
 
-- 提供静态 SPA、瀑布流、WebGL 查看器、地图、RSS/sitemap/OG 资产。
+- 提供静态 SPA、瀑布流、WebGL 查看器、地图、RSS/sitemap/OG 资产与逐照片静态 HTML shell。
 - 构建期通过 `site.config.build.ts` 合并环境变量和 `site.config.ts` 默认值，再注入 `window.__AFILMORY__.config`。
 - 运行时通过 `window.__AFILMORY__.manifest` 加载 manifest。生产构建默认外置 `assets/photos-manifest.<hash>.json`，开发默认内联；`AFILMORY_EMBED_MANIFEST` 可覆盖。
 
@@ -87,23 +87,26 @@ Builder 主流程使用 `packages/builder/src/builder/workflow` 分层：`BuildS
 - `pnpm dev`: 运行 `apps/web/scripts/precheck.ts`，再启动 Vite dev server。
 - `pnpm build`: 运行 `precheck`，再运行 `pnpm build:web`。workspace 包直接从 TS 源码消费（exports 指向 `./src/index.ts`），部署构建不需要包的 dist/。
 - `pnpm build:manifest`: 运行 builder CLI（配置固定读取仓库根目录 `builder.config.ts`，由 c12 按 `builder` 名称约定解析）。
-- `pnpm build:packages`: 仅供 npm 发布使用，构建 `@afilmory/builder` 和 `@afilmory/webgl-viewer` 的 dist/；不在部署/CI 构建链上。
 - `pnpm build:web`: 只构建前端，要求 manifest 已存在。
 - `pnpm preview`: 预览 `apps/web/dist`。
 
 `precheck` 行为：
 
-- S3 凭据完整时刷新 manifest。
-- S3 凭据缺失但 `generated/photos-manifest.json` 存在时复用现有 manifest。
-- builder 失败但存在 manifest 时降级复用并警告。
+- 本地 provider 直接刷新 manifest，不检查 S3 凭据。
+- S3 provider 的 bucket 与有效凭据来源可用时刷新 manifest。
+- S3 必需配置缺失但 `generated/photos-manifest.json` 存在时复用现有 manifest。
+- builder 失败时，Preview 仅在当前磁盘 manifest 仍通过严格校验时继续并警告；
+  不会把 manifest 单文件回滚到旧快照。生产 fresh build 直接失败。
 - `SKIP_MANIFEST_BUILD=true` 会显式跳过 builder。
 
-Vercel 使用 `scripts/build-static.sh`。该脚本在 S3 凭据完整时运行 `pnpm build`；缺少凭据但已有 manifest 时运行 `pnpm build:web`，用于 Preview 构建。
+Vercel 使用 `scripts/build-static.sh`。该脚本始终运行 `pnpm build`，缓存与 manifest 新鲜度/降级决策统一交给 artifact-cache 和 precheck。
 
 ## 配置管理
 
 - **敏感配置**: `.env`，参考 `.env.template`。
-- **S3 必需变量**: `S3_BUCKET_NAME`、`S3_ACCESS_KEY_ID`、`S3_SECRET_ACCESS_KEY`。
+- **照片源选择**: `PHOTO_STORAGE_PROVIDER` 为 `s3`（默认）或 `local`。
+- **本地照片源**: `LOCAL_PHOTOS_PATH` 默认 `photos`，`LOCAL_PHOTOS_BASE_URL` 默认 `/originals`；生产构建把本地原图复制进匹配的静态产物路径。`/photos` 等应用保留命名空间不可用作原图前缀。
+- **S3 必需变量**: 仅 `S3_BUCKET_NAME` 始终必需；`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` 可成对显式配置，两者都省略时走 AWS SDK 默认凭据链，只设置一个属于配置错误。
 - **S3 默认值**: `S3_REGION` 默认 `us-east-1`，`S3_ENDPOINT` 默认 AWS S3 endpoint。
 - **站点默认值**: `site.config.ts`，该文件会被浏览器端导入，不能直接读取 `process.env`。
 - **构建期覆盖**: `site.config.build.ts` 读取 `env.ts` 并注入 `window.__AFILMORY__.config`。
@@ -133,6 +136,7 @@ Manifest shape 来自 `@afilmory/schema`：
 
 ```bash
 pnpm lint
+pnpm format:check
 pnpm type-check
 pnpm test
 pnpm build
@@ -150,6 +154,14 @@ pnpm dev
 ```
 
 开发服务器默认端口为 `1924`。
+
+零凭据本地照片源可在 `.env` 设置：
+
+```bash
+PHOTO_STORAGE_PROVIDER=local
+LOCAL_PHOTOS_PATH=photos
+LOCAL_PHOTOS_BASE_URL=/originals
+```
 
 ### 处理照片并生成 manifest
 

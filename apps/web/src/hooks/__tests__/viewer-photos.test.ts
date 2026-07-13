@@ -136,15 +136,18 @@ describe("viewer photo resolution", () => {
     // 三月的 EXIF 照片会被排到六月的 ISO 照片之后。
     const exifMarch = createPhoto({
       id: "exif-march",
+      dateTaken: "",
       exif: { DateTimeOriginal: "2026:03:15 14:30:00" },
       lastModified: "2026-01-01T00:00:00.000Z",
     });
     const isoFeb = createPhoto({
       id: "iso-feb",
+      dateTaken: "",
       lastModified: "2026-02-01T12:00:00.000Z",
     });
     const isoJune = createPhoto({
       id: "iso-june",
+      dateTaken: "",
       lastModified: "2026-06-01T12:00:00.000Z",
     });
 

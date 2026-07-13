@@ -149,6 +149,16 @@ export class PhotoTaskProcessor {
     // 进度回调是函数，进 IPC 会让 worker.send() 抛 DataCloneError；
     // 进度已由主进程的 onTaskCompleted 汇聚，传给 worker 前剥离。
     const { progressListener, ...builderOptions } = session.options;
+    // Workers only need manifest/live-photo entries for tasks that can be
+    // assigned in this run. Filtering here avoids cloning the entire gallery
+    // state into every cluster process during IPC initialization.
+    const taskKeys = new Set(tasksToProcess.map((task) => task.key));
+    const workerExistingManifestMap = new Map(
+      [...existingManifestMap].filter(([key]) => taskKeys.has(key)),
+    );
+    const workerLivePhotoMap = new Map(
+      [...livePhotoMap].filter(([key]) => taskKeys.has(key)),
+    );
     const clusterPool = new ClusterPool<ProcessPhotoResult>({
       concurrency,
       totalTasks: tasksToProcess.length,
@@ -157,8 +167,8 @@ export class PhotoTaskProcessor {
         session.config.system.observability.performance.worker
           .workerConcurrency,
       sharedData: {
-        existingManifestMap,
-        livePhotoMap,
+        existingManifestMap: workerExistingManifestMap,
+        livePhotoMap: workerLivePhotoMap,
         imageObjects: tasksToProcess,
         builderConfig: createSerializableBuilderConfigForWorker(
           session.getConfig(),
@@ -166,6 +176,7 @@ export class PhotoTaskProcessor {
         builderOptions,
         photoIdCollisionKeys: Array.from(session.getPhotoIdCollisionKeys()),
       },
+      timeoutMs: session.config.system.observability.performance.worker.timeout,
       onTaskCompleted,
     });
 
@@ -184,9 +195,11 @@ export class PhotoTaskProcessor {
   ): Promise<ProcessPhotoResult[]> {
     const workerPool = new WorkerPool<ProcessPhotoResult>({
       concurrency,
+      drainTimedOutTasks: true,
       totalTasks: tasksToProcess.length,
       logger: session.services.logger,
       onTaskCompleted,
+      timeoutMs: session.config.system.observability.performance.worker.timeout,
     });
 
     // 构建期恒定的依赖只组装一次；每个任务只带自己的可变部分。
@@ -200,13 +213,14 @@ export class PhotoTaskProcessor {
       builderOptions: session.options,
     };
 
-    return await workerPool.execute(async (taskIndex, workerId) => {
+    return await workerPool.execute(async (taskIndex, workerId, signal) => {
       return await processPhoto(
         {
           obj: tasksToProcess[taskIndex],
           index: taskIndex,
           workerId,
           totalImages: tasksToProcess.length,
+          signal,
         },
         runtime,
       );

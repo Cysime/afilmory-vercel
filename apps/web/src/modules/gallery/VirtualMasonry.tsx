@@ -57,7 +57,12 @@ export interface MasonryProps<Item> {
    */
   itemHeight?: (data: Item, columnWidth: number, index: number) => number;
   render: (props: MasonryRenderProps<Item>) => React.ReactNode;
-  onRender?: (startIndex: number, stopIndex: number, items: Item[]) => void;
+  onRender?: (
+    startIndex: number,
+    stopIndex: number,
+    items: Item[],
+    visibleIndices: number[],
+  ) => void;
   role?: string;
   tabIndex?: number;
   className?: string;
@@ -97,6 +102,7 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
   const [scrollTop, setScrollTop] = React.useState(0);
   const [viewportHeight, setViewportHeight] = React.useState(0);
   const [containerWidth, setContainerWidth] = React.useState(0);
+  const [containerScrollOffset, setContainerScrollOffset] = React.useState(0);
   // 需 measure 的 item（如桌面 header）：index -> measured height。
   const [measuredHeights, setMeasuredHeights] = React.useState<
     ReadonlyMap<number, number>
@@ -125,25 +131,74 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
 
   // 视口高度（滚动容器可视高度）。
   React.useEffect(() => {
-    if (!scrollElement || typeof ResizeObserver === "undefined") return;
+    if (!scrollElement) return;
     const update = () => setViewportHeight(scrollElement.clientHeight);
     update();
+    window.addEventListener("resize", update, { passive: true });
+    if (typeof ResizeObserver === "undefined") {
+      return () => window.removeEventListener("resize", update);
+    }
     const observer = new ResizeObserver(update);
     observer.observe(scrollElement);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
   }, [scrollElement]);
 
   // 容器宽度（决定列数/列宽）。用 useLayoutEffect 在首帧 paint 前同步测量，
   // 避免初始 containerWidth=0 →（单列）→ 多列 的闪烁。
   React.useLayoutEffect(() => {
     const element = containerRef.current;
-    if (!element || typeof ResizeObserver === "undefined") return;
+    if (!element) return;
     const update = () => setContainerWidth(element.clientWidth);
     update();
+    window.addEventListener("resize", update, { passive: true });
+    if (typeof ResizeObserver === "undefined") {
+      return () => window.removeEventListener("resize", update);
+    }
     const observer = new ResizeObserver(update);
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
   }, []);
+
+  // A mobile header sits before the masonry container in normal flow. Raw
+  // body.scrollTop therefore cannot be compared directly with cell.top; cache
+  // the container's offset in the scroll content and select against a relative
+  // viewport. Reads happen on layout changes, never in the scroll hot path.
+  React.useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container || !scrollElement) return;
+
+    const updateOffset = () => {
+      const viewportTop =
+        scrollElement === document.body
+          ? 0
+          : scrollElement.getBoundingClientRect().top;
+      const nextOffset =
+        container.getBoundingClientRect().top -
+        viewportTop +
+        scrollElement.scrollTop;
+      setContainerScrollOffset((current) =>
+        current === nextOffset ? current : nextOffset,
+      );
+    };
+
+    updateOffset();
+    window.addEventListener("resize", updateOffset, { passive: true });
+    if (typeof ResizeObserver === "undefined") {
+      return () => window.removeEventListener("resize", updateOffset);
+    }
+    const observer = new ResizeObserver(updateOffset);
+    observer.observe(container.parentElement ?? container);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateOffset);
+    };
+  }, [scrollElement]);
 
   // 目标列宽与实际布局共用同一个实测宽度：函数形式的 columnWidth 吃的就是
   // 本组件 ResizeObserver 的 containerWidth，双源失配从构造上消除。
@@ -204,20 +259,56 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
 
   const overscanPx =
     Math.max(viewportHeight || targetColumnWidth, 1) * overscanBy;
-  const { visible, startIndex, stopIndex } = React.useMemo(
+  const masonryScrollTop = scrollTop - containerScrollOffset;
+  const { visible } = React.useMemo(
     () =>
       selectVisibleMasonryCells({
         cells: layout.cells,
-        scrollTop,
+        columns: layout.columns,
+        scrollTop: masonryScrollTop,
         viewportHeight: viewportHeight || targetColumnWidth,
         overscanPx,
       }),
-    [layout.cells, scrollTop, viewportHeight, overscanPx, targetColumnWidth],
+    [
+      layout.cells,
+      layout.columns,
+      masonryScrollTop,
+      viewportHeight,
+      overscanPx,
+      targetColumnWidth,
+    ],
+  );
+
+  const viewportSelection = React.useMemo(
+    () =>
+      selectVisibleMasonryCells({
+        cells: layout.cells,
+        columns: layout.columns,
+        scrollTop: masonryScrollTop,
+        viewportHeight: viewportHeight || targetColumnWidth,
+        overscanPx: 0,
+      }),
+    [
+      layout.cells,
+      layout.columns,
+      masonryScrollTop,
+      viewportHeight,
+      targetColumnWidth,
+    ],
+  );
+  const viewportVisibleIndices = React.useMemo(
+    () => viewportSelection.visible.map((cell) => cell.index),
+    [viewportSelection.visible],
   );
 
   React.useEffect(() => {
-    onRender?.(startIndex, stopIndex, items);
-  }, [onRender, startIndex, stopIndex, items]);
+    onRender?.(
+      viewportSelection.startIndex,
+      viewportSelection.stopIndex,
+      items,
+      viewportVisibleIndices,
+    );
+  }, [items, onRender, viewportSelection, viewportVisibleIndices]);
 
   // 稳定的 measure 回调：身份跨滚动帧不变，MasonryCell 的 effect 才不会在每次
   // setScrollTop 重渲染时重挂 ResizeObserver + 重读 offsetHeight（强制重排——

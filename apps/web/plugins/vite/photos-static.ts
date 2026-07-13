@@ -1,163 +1,414 @@
 import fs from "node:fs";
+import { copyFile, mkdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { Plugin } from "vite";
+import { assertManifest } from "@afilmory/schema";
+import type { Plugin, ResolvedConfig } from "vite";
+
+import { MANIFEST_PATH } from "./__internal__/constants";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../../../..");
 
-/**
- * Vite 插件：为本地照片提供静态文件服务
- * 在开发模式下，将 /photos/* 请求映射到本地照片目录
- */
-export function photosStaticPlugin(): Plugin {
-  // URL 路径验证正则：只允许字母、数字、点、下划线、连字符、斜杠和空格
-  const pathValidationRegex = /^[\w\u4e00-\u9fa5\s\-./[\]()]+$/;
+export interface PhotosStaticPluginOptions {
+  baseUrl: string;
+  localPhotosPath: string;
+  provider: "local" | "s3";
+}
 
-  // 危险路径模式
-  const dangerousPatterns = [
-    /\.\.\//, // 路径遍历
-    /\.\.\\/,
-    /%2e%2e/i, // URL 编码的 ..
-    /%252e%252e/i, // 双重编码
-    /\0/, // null 字节
-  ];
+const MIME_TYPES: Record<string, string> = {
+  ".avif": "image/avif",
+  ".bmp": "image/bmp",
+  ".gif": "image/gif",
+  ".heic": "image/heic",
+  ".heif": "image/heif",
+  ".hif": "image/heif",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".m4v": "video/x-m4v",
+  ".mov": "video/quicktime",
+  ".mp4": "video/mp4",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".tif": "image/tiff",
+  ".tiff": "image/tiff",
+  ".webm": "video/webm",
+  ".webp": "image/webp",
+};
 
-  // ETag 生成函数
-  const generateETag = (stats: fs.Stats): string => {
-    return `"${stats.mtime.getTime()}-${stats.size}"`;
-  };
+export function normalizeLocalPhotosBaseUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(trimmed);
+  } catch {
+    throw new Error(
+      `LOCAL_PHOTOS_BASE_URL contains invalid URL encoding: ${JSON.stringify(value)}`,
+    );
+  }
+  if (
+    !trimmed.startsWith("/") ||
+    trimmed === "" ||
+    trimmed === "/" ||
+    trimmed.startsWith("//") ||
+    /[?#\\]/.test(trimmed) ||
+    decoded.split("/").some((segment) => segment === "." || segment === "..")
+  ) {
+    throw new Error(
+      `LOCAL_PHOTOS_BASE_URL must be a safe root-relative path such as /originals; received ${JSON.stringify(value)}`,
+    );
+  }
+  const namespace =
+    decoded.split("/").find((segment) => segment.length > 0) ?? "";
+  if (["assets", "photos", "thumbnails", "vendor"].includes(namespace)) {
+    throw new Error(
+      `LOCAL_PHOTOS_BASE_URL uses the reserved application namespace /${namespace}`,
+    );
+  }
+  return trimmed;
+}
+
+export function getLocalMediaKeyFromUrl(
+  publicUrl: string,
+  baseUrl: string,
+): string | null {
+  if (!publicUrl.startsWith("/") || publicUrl.startsWith("//")) return null;
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(publicUrl.split(/[?#]/, 1)[0] ?? "");
+  } catch {
+    return null;
+  }
+  if (decodedPath.includes("\0") || decodedPath.includes("\\")) return null;
+
+  const normalizedBaseUrl = normalizeLocalPhotosBaseUrl(baseUrl);
+  const prefix = `${normalizedBaseUrl}/`;
+  if (!decodedPath.startsWith(prefix)) return null;
+  const key = decodedPath.slice(prefix.length);
+  if (
+    !key ||
+    key
+      .split("/")
+      .some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    return null;
+  }
+  return key;
+}
+
+export function resolveLocalPhotoPath(
+  photosDirectory: string,
+  requestUrl: string,
+): string | null {
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(requestUrl.split("?", 1)[0] ?? "");
+  } catch {
+    return null;
+  }
+  if (decodedPath.includes("\0")) return null;
+
+  const relativePath = decodedPath.replace(/^[/\\]+/, "");
+  const resolvedDirectory = path.resolve(photosDirectory);
+  const resolvedPath = path.resolve(resolvedDirectory, relativePath);
+  const relative = path.relative(resolvedDirectory, resolvedPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  return resolvedPath;
+}
+
+/** Resolves symlinks as well as `..` so development never serves outside root. */
+export function resolveRealLocalPhotoPath(
+  photosDirectory: string,
+  requestUrl: string,
+): string | null {
+  const candidatePath = resolveLocalPhotoPath(photosDirectory, requestUrl);
+  if (!candidatePath) return null;
+
+  let realDirectory: string;
+  let realCandidatePath: string;
+  try {
+    realDirectory = fs.realpathSync(photosDirectory);
+    realCandidatePath = fs.realpathSync(candidatePath);
+  } catch (error) {
+    const { code } = error as NodeJS.ErrnoException;
+    if (code === "ENOENT" || code === "ENOTDIR") return null;
+    throw error;
+  }
+
+  const relativePath = path.relative(realDirectory, realCandidatePath);
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return null;
+  }
+  return realCandidatePath;
+}
+
+interface ByteRange {
+  end: number;
+  start: number;
+}
+
+export function parseByteRange(
+  header: string | undefined,
+  size: number,
+): ByteRange | null | "invalid" {
+  if (!header) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!match || size <= 0) return "invalid";
+
+  const [, startValue, endValue] = match;
+  let start: number;
+  let end: number;
+  if (!startValue) {
+    const suffixLength = Number(endValue);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) {
+      return "invalid";
+    }
+    start = Math.max(0, size - suffixLength);
+    end = size - 1;
+  } else {
+    start = Number(startValue);
+    end = endValue ? Number(endValue) : size - 1;
+  }
+
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    start < 0 ||
+    start >= size ||
+    end < start
+  ) {
+    return "invalid";
+  }
+  return { start, end: Math.min(end, size - 1) };
+}
+
+export async function copyLocalPhotos(
+  sourceDirectory: string,
+  destinationDirectory: string,
+  mediaKeys: Iterable<string>,
+): Promise<void> {
+  const realSourceDirectory = await realpath(sourceDirectory);
+  const sourceStats = await stat(realSourceDirectory);
+  if (!sourceStats.isDirectory()) {
+    throw new Error(
+      `[photos-static] Local photo source is not a regular directory: ${sourceDirectory}`,
+    );
+  }
+  const relativeToOutput = path.relative(
+    destinationDirectory,
+    realSourceDirectory,
+  );
+  if (
+    !relativeToOutput.startsWith("..") &&
+    !path.isAbsolute(relativeToOutput)
+  ) {
+    throw new Error(
+      `[photos-static] Local photo source cannot be inside its build destination: ${sourceDirectory}`,
+    );
+  }
+  const outputWithinSource = path.relative(
+    realSourceDirectory,
+    destinationDirectory,
+  );
+  if (
+    !outputWithinSource.startsWith("..") &&
+    !path.isAbsolute(outputWithinSource)
+  ) {
+    throw new Error(
+      `[photos-static] Build destination cannot be inside the local photo source: ${destinationDirectory}`,
+    );
+  }
+
+  await mkdir(destinationDirectory, { recursive: true });
+  for (const mediaKey of new Set(mediaKeys)) {
+    if (!MIME_TYPES[path.extname(mediaKey).toLowerCase()]) continue;
+
+    const candidatePath = path.resolve(realSourceDirectory, mediaKey);
+    const realSourcePath = await realpath(candidatePath);
+    const relativeSourcePath = path.relative(
+      realSourceDirectory,
+      realSourcePath,
+    );
+    if (
+      relativeSourcePath.startsWith("..") ||
+      path.isAbsolute(relativeSourcePath)
+    ) {
+      throw new Error(
+        `[photos-static] Manifest media escapes the local photo source: ${mediaKey}`,
+      );
+    }
+    if (!(await stat(realSourcePath)).isFile()) {
+      throw new Error(
+        `[photos-static] Manifest media is not a file: ${mediaKey}`,
+      );
+    }
+
+    const destinationPath = path.resolve(destinationDirectory, mediaKey);
+    const relativeDestinationPath = path.relative(
+      destinationDirectory,
+      destinationPath,
+    );
+    if (
+      relativeDestinationPath.startsWith("..") ||
+      path.isAbsolute(relativeDestinationPath)
+    ) {
+      throw new Error(
+        `[photos-static] Refusing unsafe manifest media path: ${mediaKey}`,
+      );
+    }
+    await mkdir(path.dirname(destinationPath), { recursive: true });
+    await copyFile(realSourcePath, destinationPath);
+  }
+}
+
+/** Serves local originals in development and copies them into a static build. */
+export function photosStaticPlugin(options: PhotosStaticPluginOptions): Plugin {
+  if (options.provider !== "local") {
+    return { name: "photos-static-disabled" };
+  }
+
+  const photosDirectory = path.resolve(projectRoot, options.localPhotosPath);
+  const baseUrl = normalizeLocalPhotosBaseUrl(options.baseUrl);
+  let resolvedConfig: ResolvedConfig | null = null;
+
   return {
     name: "photos-static",
+    configResolved(config) {
+      resolvedConfig = config;
+    },
     configureServer(server) {
-      // 如果 photos 目录已经存在，则警告并跳过该插件
-      const publicPhotosDir = path.resolve(
-        projectRoot,
-        "./apps/web/public/photos",
+      const publicPhotosDirectory = path.resolve(
+        server.config.publicDir,
+        `.${baseUrl}`,
       );
-      if (fs.existsSync(publicPhotosDir)) {
-        const msg =
-          "[photos-static] Detected 'apps/web/public/photos' directory. Skipping plugin to avoid conflict with Vite static serving.";
-        server.config.logger.warn(msg);
+      if (fs.existsSync(publicPhotosDirectory)) {
+        server.config.logger.warn(
+          `[photos-static] ${publicPhotosDirectory} already exists; Vite public assets take precedence over the local source middleware.`,
+        );
         return;
       }
 
-      server.middlewares.use("/photos", (req, res, next) => {
-        if (!req.url) {
-          next();
+      server.middlewares.use(baseUrl, (request, response, next) => {
+        if (!request.url) return next();
+        const requestedPhotoPath = resolveLocalPhotoPath(
+          photosDirectory,
+          request.url,
+        );
+        if (!requestedPhotoPath) {
+          response.statusCode = 403;
+          response.end("Forbidden");
           return;
         }
 
-        // 解码 URL 以处理特殊字符
-        let decodedUrl: string;
+        let localPhotoPath: string | null;
         try {
-          decodedUrl = decodeURIComponent(req.url);
-        } catch {
-          // URL 解码失败，可能是恶意请求
-          console.error("[photos-static] URL 解码失败:", req.url);
-          res.statusCode = 400;
-          res.end("Bad Request");
+          localPhotoPath = resolveRealLocalPhotoPath(
+            photosDirectory,
+            request.url,
+          );
+        } catch (error) {
+          next(error as Error);
+          return;
+        }
+        if (!localPhotoPath) {
+          response.statusCode = 404;
+          response.end("Not Found");
           return;
         }
 
-        // 移除查询参数
-        const cleanPath = decodedUrl.split("?")[0];
-
-        // 检查危险路径模式
-        for (const pattern of dangerousPatterns) {
-          if (pattern.test(cleanPath)) {
-            console.error("[photos-static] 检测到危险路径模式:", cleanPath);
-            res.statusCode = 403;
-            res.end("Forbidden");
+        let stats: fs.Stats;
+        try {
+          stats = fs.statSync(localPhotoPath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            response.statusCode = 404;
+            response.end("Not Found");
             return;
           }
-        }
-
-        // 验证路径字符
-        if (!pathValidationRegex.test(cleanPath)) {
-          console.error("[photos-static] 路径包含不允许的字符:", cleanPath);
-          res.statusCode = 403;
-          res.end("Forbidden");
+          next(error as Error);
           return;
         }
-
-        // 构建本地文件路径
-        const localPhotoPath = path.join(projectRoot, "photos", cleanPath);
-
-        // 安全检查：确保文件路径在 photos 目录内
-        const resolvedPath = path.resolve(localPhotoPath);
-        const resolvedPhotosDir = path.resolve(projectRoot, "photos");
-
-        if (!resolvedPath.startsWith(resolvedPhotosDir)) {
-          res.statusCode = 403;
-          res.end("Forbidden");
-          return;
-        }
-
-        // 检查文件是否存在
-        if (!fs.existsSync(localPhotoPath)) {
-          res.statusCode = 404;
-          res.end("Not Found");
-          return;
-        }
-
-        // 检查是否是文件（不是目录）
-        const stats = fs.statSync(localPhotoPath);
         if (!stats.isFile()) {
-          res.statusCode = 404;
-          res.end("Not Found");
+          response.statusCode = 404;
+          response.end("Not Found");
           return;
         }
 
-        // 设置正确的 Content-Type
-        const ext = path.extname(localPhotoPath).toLowerCase();
-        const mimeTypes: Record<string, string> = {
-          ".jpg": "image/jpeg",
-          ".jpeg": "image/jpeg",
-          ".png": "image/png",
-          ".webp": "image/webp",
-          ".gif": "image/gif",
-          ".bmp": "image/bmp",
-          ".tiff": "image/tiff",
-          ".tif": "image/tiff",
-          ".heic": "image/heic",
-          ".heif": "image/heif",
-          ".hif": "image/heif",
-          ".avif": "image/avif",
-          ".svg": "image/svg+xml",
-        };
-
-        const contentType = mimeTypes[ext] || "application/octet-stream";
-        res.setHeader("Content-Type", contentType);
-
-        // 设置缓存头
-        res.setHeader("Cache-Control", "no-store");
-        const etag = generateETag(stats);
-        res.setHeader("ETag", etag);
-
-        // 检查 If-None-Match 头（ETag 缓存）
-        const ifNoneMatch = req.headers["if-none-match"];
-
-        if (ifNoneMatch === etag) {
-          res.statusCode = 304;
-          res.end();
+        const extension = path.extname(localPhotoPath).toLowerCase();
+        const contentType = MIME_TYPES[extension];
+        if (!contentType) {
+          response.statusCode = 404;
+          response.end("Not Found");
           return;
         }
 
-        // 流式传输文件
-        const stream = fs.createReadStream(localPhotoPath);
+        const etag = `"${stats.mtimeMs}-${stats.size}"`;
+        response.setHeader("Content-Type", contentType);
+        response.setHeader("Cache-Control", "no-store");
+        response.setHeader("Accept-Ranges", "bytes");
+        response.setHeader("ETag", etag);
+        if (request.headers["if-none-match"] === etag) {
+          response.statusCode = 304;
+          response.end();
+          return;
+        }
 
+        const range = parseByteRange(request.headers.range, stats.size);
+        if (range === "invalid") {
+          response.statusCode = 416;
+          response.setHeader("Content-Range", `bytes */${stats.size}`);
+          response.end();
+          return;
+        }
+        if (range) {
+          response.statusCode = 206;
+          response.setHeader(
+            "Content-Range",
+            `bytes ${range.start}-${range.end}/${stats.size}`,
+          );
+          response.setHeader("Content-Length", range.end - range.start + 1);
+        } else {
+          response.setHeader("Content-Length", stats.size);
+        }
+        if (request.method === "HEAD") {
+          response.end();
+          return;
+        }
+
+        const stream = fs.createReadStream(localPhotoPath, range ?? undefined);
         stream.on("error", (error) => {
-          console.error("[photos-static] Error streaming photo file:", error);
-          if (!res.headersSent) {
-            res.statusCode = 500;
-            res.end("Internal Server Error");
-          }
+          if (!response.headersSent) next(error);
+          else response.destroy(error);
         });
-
-        stream.pipe(res);
+        stream.pipe(response);
       });
+    },
+    async closeBundle() {
+      if (!resolvedConfig || resolvedConfig.command !== "build") return;
+      const outputDirectory = path.resolve(
+        resolvedConfig.root,
+        resolvedConfig.build.outDir,
+      );
+      const destinationDirectory = path.resolve(outputDirectory, `.${baseUrl}`);
+      const manifest = assertManifest(
+        JSON.parse(await readFile(MANIFEST_PATH, "utf8")),
+      );
+      const mediaKeys = manifest.photos.flatMap((photo) => {
+        const localThumbnailKey = getLocalMediaKeyFromUrl(
+          photo.thumbnailUrl,
+          baseUrl,
+        );
+        return [
+          photo.s3Key,
+          ...(photo.video?.type === "live-photo" ? [photo.video.s3Key] : []),
+          ...(localThumbnailKey ? [localThumbnailKey] : []),
+        ];
+      });
+      await copyLocalPhotos(photosDirectory, destinationDirectory, mediaKeys);
+      resolvedConfig.logger.info(
+        `[photos-static] Copied local originals to ${destinationDirectory}`,
+      );
     },
   };
 }

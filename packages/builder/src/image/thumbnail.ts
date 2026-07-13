@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -25,7 +26,17 @@ const THUMBNAIL_WIDTH = 600;
  * 「0 张需要处理」——改了质量/尺寸/格式参数却永远不会生效。签名机制让参数变更
  * 自动触发一次全量重生成，之后缓存里存的就是新参数产物，回到增量快路径。
  */
-export const THUMBNAIL_ENCODING_SIGNATURE = `jpeg-w${THUMBNAIL_WIDTH}-q${THUMBNAIL_QUALITY}-mozjpeg`;
+export const THUMBNAIL_ENCODING_SIGNATURE = `jpeg-w${THUMBNAIL_WIDTH}-q${THUMBNAIL_QUALITY}-mozjpeg-ca1`;
+/**
+ * Short, deterministic encoding version embedded in every immutable filename.
+ * Changing any encoder parameter changes both the marker and the URL even if
+ * the encoded pixels coincidentally hash to the same bytes.
+ */
+export const THUMBNAIL_ENCODING_VERSION = crypto
+  .createHash("sha256")
+  .update(THUMBNAIL_ENCODING_SIGNATURE)
+  .digest("hex")
+  .slice(0, 12);
 
 const ENCODING_MARKER_FILENAME = ".encoding";
 
@@ -55,18 +66,131 @@ export async function writeThumbnailEncodingMarker(
   );
 }
 
-// 获取缩略图路径信息（照片作用域内调用；构建作用域的读者走显式参数，见 thumbnailExists）
-function getThumbnailPaths(photoId: string) {
-  const { thumbnailsDir } = getPhotoExecutionContext().output;
-  const filename = `${photoId}.jpg`;
-  const thumbnailPath = path.join(thumbnailsDir, filename);
-  const thumbnailUrl = getThumbnailPublicUrl(photoId);
-
-  return { thumbnailPath, thumbnailUrl };
+export function createThumbnailFileName(
+  photoId: string,
+  thumbnailBuffer: Uint8Array,
+): string {
+  const contentHash = crypto
+    .createHash("sha256")
+    .update(thumbnailBuffer)
+    .digest("hex");
+  return `${photoId}.${contentHash}.${THUMBNAIL_ENCODING_VERSION}.jpg`;
 }
 
-export function getThumbnailPublicUrl(photoId: string): string {
-  return `/thumbnails/${encodeURIComponent(`${photoId}.jpg`)}`;
+export function getThumbnailPublicUrl(
+  photoId: string,
+  thumbnailBuffer?: Uint8Array,
+): string {
+  const filename = thumbnailBuffer
+    ? createThumbnailFileName(photoId, thumbnailBuffer)
+    : `${photoId}.jpg`;
+  return getThumbnailPublicUrlForFileName(filename);
+}
+
+export function getThumbnailPublicUrlForFileName(fileName: string): string {
+  return `/thumbnails/${encodeURIComponent(fileName)}`;
+}
+
+export function getThumbnailFileNameFromUrl(
+  thumbnailUrl: string,
+): string | null {
+  try {
+    const { pathname } = new URL(thumbnailUrl, "https://afilmory.invalid");
+    const encodedName = pathname.slice(pathname.lastIndexOf("/") + 1);
+    if (!encodedName) return null;
+    const fileName = decodeURIComponent(encodedName);
+    return fileName.includes("/") || fileName.includes("\\") ? null : fileName;
+  } catch {
+    return null;
+  }
+}
+
+export function isThumbnailFileNameForPhoto(
+  fileName: string,
+  photoId: string,
+): boolean {
+  if (fileName === `${photoId}.jpg`) return true;
+  if (!fileName.startsWith(`${photoId}.`) || !fileName.endsWith(".jpg")) {
+    return false;
+  }
+  const suffix = fileName.slice(photoId.length + 1, -4);
+  const [contentHash, encodingVersion, ...extra] = suffix.split(".");
+  return (
+    extra.length === 0 &&
+    /^[\da-f]{64}$/i.test(contentHash ?? "") &&
+    /^[\da-f]{12}$/i.test(encodingVersion ?? "")
+  );
+}
+
+export function getThumbnailPhotoIdFromFileName(
+  fileName: string,
+): string | null {
+  const addressed = fileName.match(/^(.*)\.[\da-f]{64}\.[\da-f]{12}\.jpg$/i);
+  if (addressed?.[1]) return addressed[1];
+  return fileName.endsWith(".jpg") ? fileName.slice(0, -4) : null;
+}
+
+export interface ExistingThumbnail {
+  fileName: string;
+  path: string;
+  url: string;
+}
+
+/** Resolve both legacy `<id>.jpg` and content-addressed thumbnail caches. */
+export async function resolveExistingThumbnail(
+  photoId: string,
+  thumbnailsDir: string,
+  preferredUrl?: string,
+): Promise<ExistingThumbnail | null> {
+  const preferredName = preferredUrl
+    ? getThumbnailFileNameFromUrl(preferredUrl)
+    : null;
+  const candidates = [preferredName, `${photoId}.jpg`].filter(
+    (candidate, index, all): candidate is string =>
+      Boolean(candidate) &&
+      all.indexOf(candidate) === index &&
+      isThumbnailFileNameForPhoto(candidate!, photoId),
+  );
+
+  // Remote thumbnail URLs normally retain the local content-addressed basename,
+  // so this is the O(1) path for both local and remote thumbnail storage.
+  for (const fileName of candidates) {
+    const thumbnailPath = path.join(thumbnailsDir, fileName);
+    try {
+      await fs.access(thumbnailPath);
+      return {
+        fileName,
+        path: thumbnailPath,
+        url:
+          preferredUrl && fileName === preferredName
+            ? preferredUrl
+            : getThumbnailPublicUrlForFileName(fileName),
+      };
+    } catch {
+      // Try the compatibility/discovery paths below.
+    }
+  }
+
+  // A custom remote CDN may rewrite the basename. Discover a local addressed
+  // artifact as a fallback; this is only reached when the manifest URL cannot
+  // name the local file directly.
+  try {
+    const entries = await fs.readdir(thumbnailsDir);
+    const fileName = entries
+      .filter((entry) => isThumbnailFileNameForPhoto(entry, photoId))
+      .sort()
+      .at(-1);
+    return fileName
+      ? {
+          fileName,
+          path: path.join(thumbnailsDir, fileName),
+          url: getThumbnailPublicUrlForFileName(fileName),
+        }
+      : null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 // 创建成功结果
@@ -95,29 +219,33 @@ async function ensureThumbnailDir(): Promise<void> {
 export async function thumbnailExists(
   photoId: string,
   thumbnailsDir: string,
+  preferredUrl?: string,
 ): Promise<boolean> {
-  try {
-    await fs.access(path.join(thumbnailsDir, `${photoId}.jpg`));
-    return true;
-  } catch {
-    return false;
-  }
+  return Boolean(
+    await resolveExistingThumbnail(photoId, thumbnailsDir, preferredUrl),
+  );
 }
 
 // 读取现有缩略图并生成 thumbhash
 async function processExistingThumbnail(
   photoId: string,
+  preferredUrl?: string,
 ): Promise<ThumbnailResult | null> {
-  const { thumbnailPath, thumbnailUrl } = getThumbnailPaths(photoId);
+  const existing = await resolveExistingThumbnail(
+    photoId,
+    getPhotoExecutionContext().output.thumbnailsDir,
+    preferredUrl,
+  );
+  if (!existing) return null;
 
   const thumbnailLog = getPhotoProcessingLoggers().thumbnail;
   thumbnailLog.info(`Reusing existing thumbnail: ${photoId}`);
 
   try {
-    const existingBuffer = await fs.readFile(thumbnailPath);
+    const existingBuffer = await fs.readFile(existing.path);
     const thumbHash = await generateThumbHash(existingBuffer);
 
-    return createSuccessResult(thumbnailUrl, existingBuffer, thumbHash);
+    return createSuccessResult(existing.url, existingBuffer, thumbHash);
   } catch (error) {
     thumbnailLog?.warn(
       `Failed to read existing thumbnail, regenerating: ${photoId}`,
@@ -132,8 +260,6 @@ async function generateNewThumbnail(
   imageBuffer: Buffer,
   photoId: string,
 ): Promise<ThumbnailResult | null> {
-  const { thumbnailPath, thumbnailUrl } = getThumbnailPaths(photoId);
-
   const log = getPhotoProcessingLoggers().thumbnail;
   log.info(`Generating thumbnail: ${photoId}`);
   const startTime = Date.now();
@@ -150,6 +276,13 @@ async function generateNewThumbnail(
       })
       .jpeg({ quality: THUMBNAIL_QUALITY, mozjpeg: true })
       .toBuffer();
+
+    const fileName = createThumbnailFileName(photoId, thumbnailBuffer);
+    const thumbnailPath = path.join(
+      getPhotoExecutionContext().output.thumbnailsDir,
+      fileName,
+    );
+    const thumbnailUrl = getThumbnailPublicUrlForFileName(fileName);
 
     // 原子落盘：普通 writeFile 中途被杀会留下截断的 .jpg，增量路径此后会
     // 永远复用这张坏图（thumbnailExists 只看存在性，不看完整性）。
@@ -176,6 +309,7 @@ export async function generateThumbnailAndThumbHash(
   imageBuffer: Buffer,
   photoId: string,
   forceRegenerate = false,
+  preferredUrl?: string,
 ): Promise<ThumbnailResult | null> {
   const thumbnailLog = getPhotoProcessingLoggers().thumbnail;
 
@@ -188,9 +322,13 @@ export async function generateThumbnailAndThumbHash(
       (await thumbnailExists(
         photoId,
         getPhotoExecutionContext().output.thumbnailsDir,
+        preferredUrl,
       ))
     ) {
-      const existingResult = await processExistingThumbnail(photoId);
+      const existingResult = await processExistingThumbnail(
+        photoId,
+        preferredUrl,
+      );
 
       if (existingResult) {
         return existingResult;

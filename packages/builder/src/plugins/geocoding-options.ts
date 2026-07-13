@@ -3,6 +3,8 @@ import type { GeocodingProviderName } from "../photo/geocoding.js";
 export const DEFAULT_CACHE_PRECISION = 4;
 export const DEFAULT_GEOCODING_LOCALES = ["en", "zh-CN"] as const;
 export const CANONICAL_GEOCODING_LOCALE = "en";
+export const DEFAULT_GEOCODING_REQUEST_TIMEOUT_MS = 10_000;
+export const DEFAULT_GEOCODING_NEGATIVE_CACHE_TTL_MS = 24 * 60 * 60_000;
 
 export interface GeocodingPluginOptions {
   enable?: boolean;
@@ -12,6 +14,10 @@ export interface GeocodingPluginOptions {
   nominatimUserAgent?: string;
   cachePath?: string;
   cachePrecision?: number;
+  /** Per-request network timeout. */
+  requestTimeoutMs?: number;
+  /** How long a confirmed no-result response is cached. */
+  negativeCacheTtlMs?: number;
   /**
    * Preferred languages for geocoding results (BCP47). Accepts comma-separated string or array.
    */
@@ -32,6 +38,8 @@ export type GeocodingPluginOptionsResolved = Required<
     | "nominatimUserAgent"
     | "cachePath"
     | "cachePrecision"
+    | "requestTimeoutMs"
+    | "negativeCacheTtlMs"
   > & {
     locales: string[];
   };
@@ -43,6 +51,8 @@ export interface ResolvedGeocodingSettings {
   nominatimUserAgent?: string;
   cachePath?: string;
   cachePrecision: number;
+  requestTimeoutMs: number;
+  negativeCacheTtlMs: number;
   locales: string[];
 }
 
@@ -53,6 +63,16 @@ function normalizeCachePrecision(value: number | undefined): number {
 
   const rounded = Math.round(value);
   return Math.max(0, Math.min(10, rounded));
+}
+
+function normalizeBoundedInteger(
+  value: number | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(value)));
 }
 
 function parseLocaleList(value: string | string[] | undefined): string[] {
@@ -92,6 +112,18 @@ export function resolveGeocodingOptions(
     cachePrecision: normalizeCachePrecision(
       options.cachePrecision ?? DEFAULT_CACHE_PRECISION,
     ),
+    requestTimeoutMs: normalizeBoundedInteger(
+      options.requestTimeoutMs,
+      DEFAULT_GEOCODING_REQUEST_TIMEOUT_MS,
+      1,
+      60_000,
+    ),
+    negativeCacheTtlMs: normalizeBoundedInteger(
+      options.negativeCacheTtlMs,
+      DEFAULT_GEOCODING_NEGATIVE_CACHE_TTL_MS,
+      0,
+      30 * 24 * 60 * 60_000,
+    ),
     locales: normalizeGeocodingLocales(options.locales, options.language),
   };
 }
@@ -106,6 +138,10 @@ export function createResolvedGeocodingSettings(
     nominatimUserAgent: options.nominatimUserAgent,
     cachePath: options.cachePath,
     cachePrecision: options.cachePrecision ?? DEFAULT_CACHE_PRECISION,
+    requestTimeoutMs:
+      options.requestTimeoutMs ?? DEFAULT_GEOCODING_REQUEST_TIMEOUT_MS,
+    negativeCacheTtlMs:
+      options.negativeCacheTtlMs ?? DEFAULT_GEOCODING_NEGATIVE_CACHE_TTL_MS,
     locales: options.locales,
   };
 }

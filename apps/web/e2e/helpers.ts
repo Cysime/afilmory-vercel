@@ -14,24 +14,6 @@ const LIVE_PHOTO_FIXTURE_VIDEO_PATH = fileURLToPath(
   new URL("fixtures/thumbnails/SYNTH0012.webm", import.meta.url),
 );
 
-export async function stubGoogleFonts(page: Page) {
-  // index.html 从 Google Fonts 拉 Geist（preload + stylesheet + gstatic woff2）：
-  // 响应慢会触发 Chromium 的 "preload not used" 警告，连接失败/导航中止则
-  // 产生 error 级 console 输出——全都撞上 runtime-state.spec 严格的 diagnostics
-  // 断言。就地回空 CSS（无 @font-face → 不再请求 gstatic）。另一处真实外网
-  // 依赖是 carto 底图，由 stubCartoBasemap 拦截；两者合起来让测试彻底离线、
-  // 确定。
-  await page.route("https://fonts.googleapis.com/**", (route) =>
-    route.fulfill({
-      contentType: "text/css",
-      body: "/* e2e: external fonts stubbed */",
-    }),
-  );
-  await page.route("https://fonts.gstatic.com/**", (route) =>
-    route.fulfill({ contentType: "font/woff2", body: "" }),
-  );
-}
-
 export async function stubCartoBasemap(page: Page) {
   // 地图 style（MapLibreStyle.json）的 source/sprite/glyphs 全都指向
   // tiles.basemaps.cartocdn.com：CI 出口受限或 CDN 抖动时 MapLibre 会发出

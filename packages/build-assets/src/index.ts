@@ -5,6 +5,10 @@ export {
   type GeneratedImageArtifact,
   generateOGImage,
 } from "./generate-og-image.ts";
+export {
+  DEFAULT_BUILD_MANIFEST_PATH,
+  resolveBuildManifestPath,
+} from "./manifest-path.ts";
 export { buildTimePhotoLoader } from "./photo-loader.ts";
 export {
   measureSVGText,

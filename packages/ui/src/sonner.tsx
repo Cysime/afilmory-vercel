@@ -3,7 +3,7 @@ import { Toaster as Sonner } from "sonner";
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 
 const toastStyles = {
-  toast: tw`
+  toast: String.raw`
     group relative flex w-full items-center justify-between gap-3 rounded-2xl p-4
     backdrop-blur-2xl duration-300 ease-out overflow-hidden
     max-w-md min-w-[320px]
@@ -21,18 +21,18 @@ const toastStyles = {
     [&]:data-[type=info]:shadow-[0_8px_32px_rgba(0,122,255,0.08),0_4px_16px_rgba(0,122,255,0.06),0_2px_8px_rgba(0,0,0,0.1)]
     [&]:data-[type=loading]:shadow-[0_8px_32px_rgba(142,142,147,0.08),0_4px_16px_rgba(142,142,147,0.06),0_2px_8px_rgba(0,0,0,0.1)]
   `,
-  title: tw`
+  title: String.raw`
     text-sm font-medium text-text
     leading-tight
   `,
-  description: tw`
+  description: String.raw`
     text-sm text-text-secondary
     leading-relaxed mt-1
   `,
-  content: tw`
+  content: String.raw`
     flex-1 min-w-0
   `,
-  icon: tw`
+  icon: String.raw`
     flex-shrink-0 mt-0.5 size-5
     [li[data-type="success"]_&]:text-green
     [li[data-type="error"]_&]:text-red
@@ -40,12 +40,12 @@ const toastStyles = {
     [li[data-type="info"]_&]:text-blue
     [li[data-type="loading"]_&]:text-gray
   `,
-  actionButton: tw`
+  actionButton: String.raw`
     shrink-0
     h-6
     px-2.5 text-xs font-medium rounded-md
-    transition-all duration-200
-    focus:outline-none focus:shadow-lg bg-accent
+    transition-[background-color,box-shadow,color,opacity,transform] duration-200
+    focus-visible:outline-none focus-visible:shadow-lg bg-accent
     group-data-[type=success]:bg-green group-data-[type=success]:text-white group-data-[type=success]:hover:bg-green/90 group-data-[type=success]:focus:shadow-green/50
     group-data-[type=error]:bg-red group-data-[type=error]:text-white group-data-[type=error]:hover:bg-red/90 group-data-[type=error]:focus:shadow-red/50
     group-data-[type=warning]:bg-orange group-data-[type=warning]:text-white group-data-[type=warning]:hover:bg-orange/90 group-data-[type=warning]:focus:shadow-orange/50
@@ -53,25 +53,25 @@ const toastStyles = {
     group-data-[type=loading]:bg-gray group-data-[type=loading]:text-white group-data-[type=loading]:hover:bg-gray/90 group-data-[type=loading]:focus:shadow-gray/50
     hover:shadow-md active:scale-95
   `,
-  cancelButton: tw`
+  cancelButton: String.raw`
     h-6
     px-2.5 text-xs font-medium rounded-md
     bg-fill-secondary text-text-secondary
     hover:bg-fill-tertiary hover:text-text
     transition-colors duration-200
-    focus:outline-none focus:ring-2 focus:ring-fill/50 focus:ring-offset-1
+    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fill/50 focus-visible:ring-offset-1
   `,
-  closeButton: tw`
+  closeButton: String.raw`
     absolute -top-2 -right-2 w-6 h-6 rounded-full
     flex items-center justify-center
     text-text
     border border-border
     backdrop-blur-background
     bg-material-ultra-thick
-    transition-all duration-200
+    transition-[background-color,box-shadow,color,opacity,transform] duration-200
     opacity-0 group-hover:opacity-100
-    focus:outline-none focus:ring-2 focus:ring-accent/50
-    focus:opacity-100
+    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50
+    focus-visible:opacity-100
   `,
 };
 

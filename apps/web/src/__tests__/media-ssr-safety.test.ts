@@ -32,6 +32,38 @@ describe("apps/web media capability SSR safety", () => {
     expect(module.isMobileDevice).toBe(false);
   });
 
+  it("does not classify a touch-capable desktop with a fine pointer as mobile", async () => {
+    vi.stubGlobal("window", {
+      matchMedia: () => ({ matches: false }),
+    });
+    vi.stubGlobal("navigator", {
+      maxTouchPoints: 10,
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126 Safari/537.36",
+    });
+
+    const module = await import("../lib/device-viewport");
+
+    expect(module.isMobileDevice).toBe(false);
+    expect(module.isSafari).toBe(false);
+  });
+
+  it("recognizes iPad desktop mode without treating iOS Chromium as Safari", async () => {
+    vi.stubGlobal("window", {
+      matchMedia: () => ({ matches: true }),
+    });
+    vi.stubGlobal("navigator", {
+      maxTouchPoints: 5,
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X) CriOS/126 Safari/604.1",
+    });
+
+    const module = await import("../lib/device-viewport");
+
+    expect(module.isMobileDevice).toBe(true);
+    expect(module.isSafari).toBe(false);
+  });
+
   it("does not crash MOV support detection without document", async () => {
     removeGlobal("document");
 

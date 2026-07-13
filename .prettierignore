@@ -1,0 +1,13 @@
+node_modules/
+**/dist/
+coverage/
+generated/
+playwright-report*/
+test-results/
+.turbo/
+.vercel/
+apps/web/public/thumbnails/
+apps/web/public/originals/
+apps/web/public/photos/
+apps/web/e2e/fixtures/photos-manifest.json
+pnpm-lock.yaml

@@ -15,15 +15,16 @@ import {
 function createValidPhoto(
   overrides: Partial<PhotoManifestItem> = {},
 ): PhotoManifestItem {
+  const id = overrides.id ?? "photo";
   return {
-    id: "photo",
+    id,
     originalUrl: "https://example.com/photo.jpg",
     thumbnailUrl: "/thumbnails/photo.jpg",
     thumbHash: null,
     width: 4000,
     height: 3000,
     aspectRatio: 4 / 3,
-    s3Key: "photos/photo.jpg",
+    s3Key: `photos/${id}.jpg`,
     lastModified: "2026-06-06T00:00:00.000Z",
     size: 1234,
     etag: "etag",
@@ -52,7 +53,7 @@ describe("manifest v2 schema", () => {
     const input = createManifest({
       generatedAt: "2026-06-06T00:00:00.000Z",
       source: { provider: "s3", bucket: "photos", region: "us-east-1" },
-      photos: [createValidPhoto()],
+      photos: [createValidPhoto({ exif: { Make: "Sony", Model: "A7C" } })],
       indexes: {
         cameras: [{ make: "Sony", model: "A7C", displayName: "Sony A7C" }],
       },
@@ -61,6 +62,37 @@ describe("manifest v2 schema", () => {
     expect(parseManifest(input)).toEqual(input);
     expect(assertManifest(input)).toEqual(input);
     expect(validateManifest(input).success).toBe(true);
+  });
+
+  it("keeps optional Live Photo sidecar versions and remains backward compatible", () => {
+    const versioned = createManifest({
+      photos: [
+        createValidPhoto({
+          video: {
+            type: "live-photo",
+            videoUrl: "/originals/photo.mov",
+            s3Key: "photos/photo.mov",
+            version: "etag:video-v2",
+          },
+        }),
+      ],
+    });
+    const legacy = createManifest({
+      photos: [
+        createValidPhoto({
+          video: {
+            type: "live-photo",
+            videoUrl: "/originals/photo.mov",
+            s3Key: "photos/photo.mov",
+          },
+        }),
+      ],
+    });
+
+    expect(assertManifest(versioned).photos[0]?.video).toMatchObject({
+      version: "etag:video-v2",
+    });
+    expect(validateManifest(legacy).success).toBe(true);
   });
 
   it("does not migrate legacy manifests", () => {
@@ -94,10 +126,10 @@ describe("manifest v2 schema", () => {
     expect(result).toMatchObject({
       issues: expect.arrayContaining([
         "source.provider must be 's3', 'local' or 'unknown'",
-        "indexes.cameras[0].model must be a string",
-        "indexes.cameras[0].displayName must be a string",
+        "indexes.cameras[0].model must be a non-empty string",
+        "indexes.cameras[0].displayName must be a non-empty string",
         "indexes.lenses must be an array",
-        "photos[0].width must be a number",
+        "photos[0].width must be a positive integer",
       ]),
     });
     expect(parseManifest(invalid).photos).toEqual([]);
@@ -117,7 +149,7 @@ describe("manifest v2 schema", () => {
     expect(result.success).toBe(false);
     expect(result).toMatchObject({
       issues: expect.arrayContaining([
-        "photos[0].originalUrl must be a string",
+        "photos[0].originalUrl must be a non-empty string",
         "photos[0].tags must be a string array",
       ]),
     });
@@ -145,7 +177,7 @@ describe("manifest v2 schema", () => {
       expect(skipped).toHaveLength(1);
       expect(skipped[0]).toMatchObject({ index: 1 });
       expect(skipped[0].issues).toContain(
-        "photos[1].originalUrl must be a string",
+        "photos[1].originalUrl must be a non-empty string",
       );
     });
 
@@ -159,11 +191,14 @@ describe("manifest v2 schema", () => {
         ],
       });
 
-      const { manifest, skipped } = parseManifestLenient(input);
+      const { manifest, repaired, skipped } = parseManifestLenient(input);
 
       expect(manifest.photos.map((photo) => photo.id)).toEqual(["soft"]);
-      expect(manifest.photos[0]!.width).toBe(0); // normalizer 默认值
+      expect(manifest.photos[0]!.width).toBe(1); // normalizer 产出仍满足严格不变量
       expect(skipped).toEqual([]);
+      expect(repaired).toEqual([
+        expect.objectContaining({ index: 0, s3Key: "photos/soft.jpg" }),
+      ]);
     });
 
     it("keeps every photo when all are valid", () => {
@@ -236,5 +271,48 @@ describe("manifest v2 schema", () => {
       ]);
       expect(manifest.indexes.lenses).toEqual([]);
     });
+  });
+
+  it("enforces portable unique IDs, unique storage keys, and sane numbers", () => {
+    const result = validateManifest(
+      createManifest({
+        photos: [
+          createValidPhoto({ id: "Photo", size: -1 }),
+          createValidPhoto({ id: "photo", s3Key: "photos/Photo.jpg" }),
+          createValidPhoto({ id: "bad:name" }),
+        ],
+      }),
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      issues: expect.arrayContaining([
+        "photos[0].size must be a non-negative number",
+        "photos[1].id duplicates photos[0].id",
+        "photos[1].s3Key duplicates photos[0].s3Key",
+        "photos[2].id must be a non-empty portable identifier",
+      ]),
+    });
+  });
+
+  it("repairs cross-field aspect ratios and validates index references", () => {
+    const input = createManifest({
+      photos: [createValidPhoto({ id: "ratio", aspectRatio: 99 })],
+      indexes: {
+        cameras: [{ make: "Sony", model: "A7C", displayName: "Sony A7C" }],
+      },
+    });
+    const strict = validateManifest(input);
+    const lenient = parseManifestLenient(input);
+
+    expect(strict).toMatchObject({
+      success: false,
+      issues: expect.arrayContaining([
+        "photos[0].aspectRatio must match width / height",
+        "indexes.cameras[0] must reference a photo",
+      ]),
+    });
+    expect(lenient.manifest.photos[0]!.aspectRatio).toBeCloseTo(4 / 3);
+    expect(lenient.repaired).toHaveLength(1);
   });
 });

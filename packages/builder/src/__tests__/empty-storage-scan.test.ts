@@ -31,9 +31,8 @@ import type { PhotoManifestItem } from "../types/photo.js";
  * 空扫描收敛性回归（真实 local provider + 真实文件系统，零照片故无需 sharp/exiftool）：
  *
  * 1. 列举成功但得到 0 张照片、且现有 manifest 非空——必须视作疑似误配/瞬时故障：
- *    manifest 与缩略图原样保留（不清理、不落盘），hasUpdates=false，并给出指向
- *    --force 的可操作告警。旧行为在这里直接早退且永远无法收敛：故意清空存储或
- *    改错前缀的用户会永久看到旧图库。
+ *    manifest 与缩略图原样保留（不清理、不落盘），并以错误结束，让生产 fresh
+ *    build 不能把旧图库误报成刷新成功；错误给出指向 --force 的操作提示。
  * 2. 同样的空扫描叠加 --force——「空图库」是用户意图：走正常管道写出空 manifest
  *    并清空孤儿缩略图。
  * 3. 零照片构建不得落盘 .encoding 编码签名标记：瞬时空列举撞上编码参数变更时
@@ -143,14 +142,12 @@ afterEach(async () => {
 });
 
 describe("empty storage scan", () => {
-  it("keeps a non-empty manifest untouched and warns actionably without --force", async () => {
+  it("keeps a non-empty manifest untouched and fails actionably without --force", async () => {
     const manifestBefore = await readFile(manifestPath, "utf-8");
 
-    const result = await makeBuilder().buildManifest(INCREMENTAL_OPTIONS);
-
-    expect(result.hasUpdates).toBe(false);
-    expect(result.failedCount).toBe(0);
-    expect(result.totalPhotos).toBe(0);
+    await expect(
+      makeBuilder().buildManifest(INCREMENTAL_OPTIONS),
+    ).rejects.toThrow("Pass --force");
 
     // manifest 逐字节未动；缩略图与 .encoding 标记未被孤儿清理波及。
     expect(await readFile(manifestPath, "utf-8")).toBe(manifestBefore);
@@ -161,13 +158,13 @@ describe("empty storage scan", () => {
     }
     expect(await isThumbnailEncodingStale(thumbnailsDir)).toBe(false);
 
-    const warning = logs.find(
+    const failure = logs.find(
       (message) =>
-        message.level === "warn" &&
+        message.level === "error" &&
         String(message.args[0]).includes("Pass --force"),
     );
-    expect(warning, "an actionable warning should be logged").toBeDefined();
-    expect(String(warning!.args[0])).toContain(
+    expect(failure, "an actionable error should be logged").toBeDefined();
+    expect(String(failure!.args[0])).toContain(
       `manifest has ${SEEDED_PHOTOS.length}`,
     );
   });
@@ -189,18 +186,6 @@ describe("empty storage scan", () => {
 
     // 孤儿清理跑过：整个缩略图目录（含旧缩略图）被清空。
     expect(await pathExists(thumbnailsDir)).toBe(false);
-  });
-
-  it("never allows a zero-photo build to stamp the encoding marker", async () => {
-    // 真实的两种零照片结果（早退 / --force 空发布）都必须被 CLI 的判定拦下。
-    const earlyReturn = await makeBuilder().buildManifest(INCREMENTAL_OPTIONS);
-    expect(shouldWriteThumbnailEncodingMarker(earlyReturn, false)).toBe(false);
-
-    const forcedEmpty = await makeBuilder().buildManifest({
-      ...INCREMENTAL_OPTIONS,
-      isForceMode: true,
-    });
-    expect(shouldWriteThumbnailEncodingMarker(forcedEmpty, true)).toBe(false);
   });
 });
 

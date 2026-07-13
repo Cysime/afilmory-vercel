@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,9 +9,8 @@ import { checker } from "vite-plugin-checker";
 import { createHtmlPlugin } from "vite-plugin-html";
 import tsconfigPaths from "vite-tsconfig-paths";
 
-import PKG from "../../package.json";
+import { env } from "../../env";
 import { siteConfig } from "../../site.config.build";
-import { astPlugin } from "./plugins/vite/ast";
 import { buildAssetsPlugin } from "./plugins/vite/build-assets";
 import { dependencyChunkGroups } from "./plugins/vite/chunks";
 import { dataInjectPlugin } from "./plugins/vite/data-inject";
@@ -48,9 +46,13 @@ function silenceUnavailableNodeLocalStorageWarning() {
 
 const staticWebBuildPlugins: PluginOption[] = [
   dataInjectPlugin(),
-  photosStaticPlugin(),
+  photosStaticPlugin({
+    provider: env.PHOTO_STORAGE_PROVIDER,
+    localPhotosPath: env.LOCAL_PHOTOS_PATH,
+    baseUrl: env.LOCAL_PHOTOS_BASE_URL,
+  }),
 
-  createAfilmoryPwaPlugin(siteConfig),
+  createAfilmoryPwaPlugin(siteConfig, env.LOCAL_PHOTOS_BASE_URL),
 
   buildAssetsPlugin(
     {
@@ -110,7 +112,6 @@ export default defineConfig(async ({ command }) => {
         },
       }),
 
-      astPlugin,
       tsconfigPaths(),
       checker({
         typescript: true,
@@ -140,23 +141,8 @@ export default defineConfig(async ({ command }) => {
         errorRecovery: true,
       },
     },
-    define: {
-      APP_DEV_CWD: JSON.stringify(process.cwd()),
-      APP_NAME: JSON.stringify(PKG.name),
-      BUILT_DATE: JSON.stringify(new Date().toISOString()),
-      GIT_COMMIT_HASH: JSON.stringify(getGitHash()),
-    },
   };
 });
-
-function getGitHash() {
-  try {
-    return execSync("git rev-parse HEAD").toString().trim();
-  } catch (e) {
-    console.error("Failed to get git hash", e);
-    return "";
-  }
-}
 
 // process.noDeprecation is a real Node API that @types/node 24 doesn't declare.
 const proc = process as NodeJS.Process & { noDeprecation?: boolean };

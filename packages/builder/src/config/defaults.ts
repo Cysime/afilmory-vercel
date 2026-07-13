@@ -21,8 +21,8 @@ export function createDefaultBuilderConfig(): BuilderConfig {
         },
         performance: {
           worker: {
-            workerCount: os.cpus().length * 2,
-            timeout: 30_000,
+            workerCount: Math.min(1024, Math.max(1, os.cpus().length * 2)),
+            timeout: 300_000,
             useClusterMode: true,
             workerConcurrency: 2,
           },

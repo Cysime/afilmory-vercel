@@ -181,6 +181,7 @@ export interface MasonryCellLayout {
 
 export interface MasonryGridLayout {
   cells: MasonryCellLayout[];
+  columns: MasonryCellLayout[][];
   totalHeight: number;
   columnCount: number;
 }
@@ -251,6 +252,10 @@ export function computeMasonryLayout<Item>({
   // 消除长滚动层里的小数 y 坐标（iOS WebKit 分块光栅化的 hairline 缝根源）。
   const cellWidth = Math.max(1, Math.round(columnWidth));
   const columnHeights = Array.from({ length: safeColumnCount }, () => 0);
+  const columns = Array.from(
+    { length: safeColumnCount },
+    (): MasonryCellLayout[] => [],
+  );
   const cells: MasonryCellLayout[] = items.map((item, index) => {
     const rawHeight = getItemHeight(item, index);
     const height =
@@ -259,7 +264,9 @@ export function computeMasonryLayout<Item>({
     const left = Math.round(column * (columnWidth + columnGutter));
     const top = columnHeights[column] ?? 0;
     columnHeights[column] = top + height + rowGutter;
-    return { index, column, left, top, width: cellWidth, height };
+    const cell = { index, column, left, top, width: cellWidth, height };
+    columns[column]?.push(cell);
+    return cell;
   });
   const maxColumnHeight = columnHeights.reduce(
     (max, height) => Math.max(max, height),
@@ -267,20 +274,23 @@ export function computeMasonryLayout<Item>({
   );
   // 末尾多加了一个 rowGutter，减回去得到真实内容高度。
   const totalHeight = Math.max(0, Math.ceil(maxColumnHeight - rowGutter));
-  return { cells, totalHeight, columnCount: safeColumnCount };
+  return { cells, columns, totalHeight, columnCount: safeColumnCount };
 }
 
 /**
  * 虚拟化：从已算好的布局里挑出与可视区（含 overscan 上下缓冲）相交的 cell。
- * O(n) 线性扫描；n 是照片总数（百量级），每帧执行成本可忽略。
+ * With the optional per-column index, selection is O(columns × log n +
+ * visible), instead of scanning the entire library on every scroll frame.
  */
 export function selectVisibleMasonryCells({
   cells,
+  columns,
   scrollTop,
   viewportHeight,
   overscanPx,
 }: {
   cells: MasonryCellLayout[];
+  columns?: readonly (readonly MasonryCellLayout[])[];
   scrollTop: number;
   viewportHeight: number;
   overscanPx: number;
@@ -291,11 +301,36 @@ export function selectVisibleMasonryCells({
   let startIndex = -1;
   let stopIndex = -1;
 
-  for (const cell of cells) {
-    if (cell.top + cell.height < top || cell.top > bottom) continue;
+  const addCell = (cell: MasonryCellLayout) => {
     visible.push(cell);
     if (startIndex === -1 || cell.index < startIndex) startIndex = cell.index;
     if (cell.index > stopIndex) stopIndex = cell.index;
+  };
+
+  if (columns) {
+    for (const column of columns) {
+      let low = 0;
+      let high = column.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        const cell = column[middle];
+        if (cell && cell.top + cell.height < top) low = middle + 1;
+        else high = middle;
+      }
+
+      for (let index = low; index < column.length; index += 1) {
+        const cell = column[index];
+        if (!cell || cell.top > bottom) break;
+        addCell(cell);
+      }
+    }
+    // Keep DOM/tab order aligned with manifest order across columns.
+    visible.sort((left, right) => left.index - right.index);
+  } else {
+    for (const cell of cells) {
+      if (cell.top + cell.height < top || cell.top > bottom) continue;
+      addCell(cell);
+    }
   }
 
   return {

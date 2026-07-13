@@ -265,7 +265,7 @@ export const SharePanel = ({ photo, trigger, blobSrc }: SharePanelProps) => {
                       >
                         <div
                           className={clsxm(
-                            "flex size-12 items-center justify-center rounded-full transition-all duration-200",
+                            "flex size-12 items-center justify-center rounded-full transition-transform duration-200",
                             option.bgColor,
                             "group-hover:scale-110 group-active:scale-95",
                             "shadow-lg",
@@ -277,6 +277,7 @@ export const SharePanel = ({ photo, trigger, blobSrc }: SharePanelProps) => {
                               "size-5",
                               option.color,
                             )}
+                            aria-hidden="true"
                           />
                         </div>
                         <span className="text-text-secondary text-xs font-medium">
@@ -299,7 +300,7 @@ export const SharePanel = ({ photo, trigger, blobSrc }: SharePanelProps) => {
                       <button
                         key={option.id}
                         type="button"
-                        className="glassmorphic-btn focus-visible:ring-accent/45 group relative flex cursor-pointer items-center rounded-lg px-2 py-2 text-sm transition-[background-color,box-shadow,color,transform] duration-200 outline-none select-none focus-visible:ring-2"
+                        className="glassmorphic-btn focus-visible:ring-accent/45 group relative flex min-h-11 cursor-pointer items-center rounded-lg px-2 py-2 text-sm transition-[background-color,box-shadow,color,transform] duration-200 outline-none select-none focus-visible:ring-2"
                         onClick={() => option.action()}
                       >
                         <div className="flex items-center gap-2">
@@ -310,6 +311,7 @@ export const SharePanel = ({ photo, trigger, blobSrc }: SharePanelProps) => {
                                 "size-3.5",
                                 option.color || "text-text-secondary",
                               )}
+                              aria-hidden="true"
                             />
                           </div>
                           <span className="text-text text-xs font-medium">

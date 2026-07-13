@@ -13,20 +13,25 @@ import {
 } from "@aws-sdk/client-s3";
 
 import { logger } from "../../logger/index.js";
-import { createS3Client } from "../../s3/client.js";
+import { createS3Client, resolveForcePathStyle } from "../../s3/client.js";
 import { backoffDelay, sleep } from "../../utils/backoff.js";
 import { Semaphore } from "../../utils/semaphore.js";
 import { compileExcludeRegex } from "../exclude-regex.js";
 import type {
   ProgressCallback,
   S3Config,
+  StorageListing,
   StorageObject,
   StorageProvider,
   StorageUploadOptions,
 } from "../interfaces";
+import {
+  DEFAULT_DOWNLOAD_MEMORY_BUDGET_BYTES,
+  DEFAULT_MAX_DOWNLOAD_BYTES,
+} from "../interfaces.js";
 import { detectLivePhotoPairs } from "../live-photo.js";
 import { isSupportedImageKey } from "../supported-formats.js";
-import { encodeStorageKeyForUrl, joinPublicUrl } from "../url.js";
+import { assertSafeHttpBaseUrl, joinPublicUrl } from "../url.js";
 
 export interface S3SendOptions {
   abortSignal?: AbortSignal;
@@ -56,6 +61,132 @@ export interface S3ClientLike {
       options?: S3SendOptions,
     ): Promise<DeleteObjectCommandOutput>;
   };
+  destroy?: () => void;
+}
+
+class DownloadLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DownloadLimitError";
+  }
+}
+
+class S3BodyReadError extends Error {
+  constructor(message: string, cause: unknown) {
+    super(message, { cause });
+    this.name = "S3BodyReadError";
+  }
+}
+
+interface ByteBudgetWaiter {
+  bytes: number;
+  resolve: (release: () => void) => void;
+  reject: (error: Error) => void;
+  signal?: AbortSignal;
+  abortListener?: () => void;
+}
+
+/** Fair weighted semaphore used to cap provider-wide in-flight body buffers. */
+class ByteBudget {
+  private used = 0;
+  private readonly waiters: ByteBudgetWaiter[] = [];
+
+  constructor(private readonly limit: number) {}
+
+  async acquire(bytes: number, signal?: AbortSignal): Promise<() => void> {
+    if (bytes > this.limit) {
+      throw new DownloadLimitError(
+        `Download requires ${bytes} bytes, exceeding the global memory budget of ${this.limit} bytes`,
+      );
+    }
+    if (signal?.aborted) {
+      throw new Error("Download aborted while waiting for memory budget");
+    }
+    if (this.waiters.length === 0 && this.used + bytes <= this.limit) {
+      this.used += bytes;
+      return this.createRelease(bytes);
+    }
+
+    return await new Promise<() => void>((resolve, reject) => {
+      const waiter: ByteBudgetWaiter = { bytes, resolve, reject, signal };
+      if (signal) {
+        waiter.abortListener = () => {
+          const index = this.waiters.indexOf(waiter);
+          if (index !== -1) this.waiters.splice(index, 1);
+          reject(new Error("Download aborted while waiting for memory budget"));
+          this.drain();
+        };
+        signal.addEventListener("abort", waiter.abortListener, { once: true });
+      }
+      this.waiters.push(waiter);
+      this.drain();
+    });
+  }
+
+  private createRelease(bytes: number): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.used = Math.max(0, this.used - bytes);
+      this.drain();
+    };
+  }
+
+  private drain(): void {
+    while (this.waiters.length > 0) {
+      const waiter = this.waiters[0];
+      if (this.used + waiter.bytes > this.limit) return;
+      this.waiters.shift();
+      if (waiter.signal && waiter.abortListener) {
+        waiter.signal.removeEventListener("abort", waiter.abortListener);
+      }
+      this.used += waiter.bytes;
+      waiter.resolve(this.createRelease(waiter.bytes));
+    }
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as {
+    name?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  return (
+    candidate.name === "NoSuchKey" ||
+    candidate.name === "NotFound" ||
+    candidate.$metadata?.httpStatusCode === 404
+  );
+}
+
+function isNonRetryableS3Error(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const status = (error as { $metadata?: { httpStatusCode?: number } })
+    .$metadata?.httpStatusCode;
+  return (
+    status !== undefined &&
+    status >= 400 &&
+    status < 500 &&
+    status !== 408 &&
+    status !== 425 &&
+    status !== 429
+  );
+}
+
+function assertOptionalPositiveInteger(
+  name: string,
+  value: number | undefined,
+  max: number,
+): void {
+  if (value === undefined) return;
+  if (!Number.isSafeInteger(value) || value <= 0 || value > max) {
+    throw new Error(`${name} must be a positive integer <= ${max}`);
+  }
 }
 
 // 将 AWS S3 对象转换为通用存储对象
@@ -69,137 +200,310 @@ function convertS3ObjectToStorageObject(s3Object: _Object): StorageObject {
 }
 
 export class S3StorageProvider implements StorageProvider {
-  private config: S3Config;
-  private s3Client: S3ClientLike;
-  private limiter: Semaphore;
+  private readonly config: S3Config;
+  private readonly s3Client: S3ClientLike;
+  private readonly limiter: Semaphore;
+  private readonly byteBudget: ByteBudget;
+  private readonly maxDownloadBytes: number;
+  private readonly clientHandlesRetries: boolean;
+  private disposed = false;
 
-  constructor(config: S3Config, options: { s3Client?: S3ClientLike } = {}) {
+  constructor(
+    config: S3Config,
+    options: {
+      s3Client?: S3ClientLike;
+      /** Set true when an injected client already owns command-level retries. */
+      clientHandlesRetries?: boolean;
+    } = {},
+  ) {
+    if (!config.bucket?.trim()) {
+      throw new Error("S3 bucket must be a non-empty string");
+    }
+    if (config.endpoint) {
+      assertSafeHttpBaseUrl(config.endpoint, "S3 endpoint");
+    }
+    if (config.customDomain) {
+      assertSafeHttpBaseUrl(config.customDomain, "S3 customDomain");
+    }
+    assertOptionalPositiveInteger(
+      "downloadConcurrency",
+      config.downloadConcurrency,
+      1024,
+    );
+    assertOptionalPositiveInteger("maxAttempts", config.maxAttempts, 10);
+    assertOptionalPositiveInteger(
+      "maxFileLimit",
+      config.maxFileLimit,
+      10_000_000,
+    );
+    for (const [name, value] of [
+      ["requestTimeoutMs", config.requestTimeoutMs],
+      ["idleTimeoutMs", config.idleTimeoutMs],
+      ["totalTimeoutMs", config.totalTimeoutMs],
+    ] as const) {
+      assertOptionalPositiveInteger(name, value, 86_400_000);
+    }
+    assertOptionalPositiveInteger(
+      "maxDownloadBytes",
+      config.maxDownloadBytes,
+      Number.MAX_SAFE_INTEGER,
+    );
+    assertOptionalPositiveInteger(
+      "downloadMemoryBudgetBytes",
+      config.downloadMemoryBudgetBytes,
+      Number.MAX_SAFE_INTEGER,
+    );
     this.config = config;
     this.s3Client = options.s3Client ?? createS3Client(config);
+    this.clientHandlesRetries =
+      options.clientHandlesRetries ?? options.s3Client === undefined;
     this.limiter = new Semaphore(this.config.downloadConcurrency ?? 16);
+    this.maxDownloadBytes =
+      this.config.maxDownloadBytes ?? DEFAULT_MAX_DOWNLOAD_BYTES;
+    const memoryBudget =
+      this.config.downloadMemoryBudgetBytes ??
+      DEFAULT_DOWNLOAD_MEMORY_BUDGET_BYTES;
+    if (memoryBudget < this.maxDownloadBytes) {
+      throw new Error(
+        "downloadMemoryBudgetBytes must be greater than or equal to maxDownloadBytes",
+      );
+    }
+    this.byteBudget = new ByteBudget(memoryBudget);
   }
 
-  async getFile(key: string): Promise<Buffer | null> {
+  async getFile(key: string, signal?: AbortSignal): Promise<Buffer | null> {
+    signal?.throwIfAborted();
     return await this.limiter.run(async () => {
-      const maxAttempts = this.config.maxAttempts ?? 3;
-      const totalTimeoutMs = this.config.totalTimeoutMs ?? 60_000;
-      const idleTimeoutMs = this.config.idleTimeoutMs ?? 10_000;
-      const requestTimeoutMs = this.config.requestTimeoutMs ?? 20_000;
-
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        const startTime = Date.now();
-        const controller = new AbortController();
-        const totalTimer = setTimeout(() => controller.abort(), totalTimeoutMs);
-        let idleTimer: NodeJS.Timeout | null = null;
-        let firstByteAt: number | null = null;
-        const clearTimers = () => {
-          clearTimeout(totalTimer);
-          if (idleTimer) {
-            clearTimeout(idleTimer);
-            idleTimer = null;
-          }
-        };
-
-        try {
-          logger.s3.info(
-            `Download started: ${key} (attempt ${attempt}/${maxAttempts})`,
-          );
-
-          const command = new GetObjectCommand({
-            Bucket: this.config.bucket,
-            Key: key,
-          });
-
-          const response = await this.s3Client.send(command, {
-            abortSignal: controller.signal,
-            requestTimeout: requestTimeoutMs,
-          });
-
-          if (!response.Body) {
-            logger.s3.error(`No Body in S3 response: ${key}`);
-            return null;
-          }
-
-          // 如果 Body 已经是 Buffer
-          if (response.Body instanceof Buffer) {
-            const duration = Date.now() - startTime;
-            const sizeKB = Math.round(response.Body.length / 1024);
-            logger.s3.success(
-              `Download complete: ${key} (${sizeKB}KB, ${duration}ms, attempt ${attempt})`,
+      try {
+        return await this.executeWithRetry(
+          `download ${key}`,
+          async () => {
+            const totalTimeoutMs = this.config.totalTimeoutMs ?? 60_000;
+            const idleTimeoutMs = this.config.idleTimeoutMs ?? 10_000;
+            const requestTimeoutMs = this.config.requestTimeoutMs ?? 20_000;
+            const startTime = Date.now();
+            const controller = new AbortController();
+            const abortFromCaller = () => controller.abort(signal?.reason);
+            signal?.addEventListener("abort", abortFromCaller, { once: true });
+            if (signal?.aborted) abortFromCaller();
+            const totalTimer = setTimeout(
+              () => controller.abort(),
+              totalTimeoutMs,
             );
-            return response.Body;
-          }
+            let idleTimer: NodeJS.Timeout | null = null;
+            let firstByteAt: number | null = null;
+            let releaseBudget: (() => void) | undefined;
+            const clearTimers = () => {
+              clearTimeout(totalTimer);
+              if (idleTimer) {
+                clearTimeout(idleTimer);
+                idleTimer = null;
+              }
+            };
 
-          // 大文件内存压力警告
-          const contentLength = response.ContentLength;
-          const LARGE_FILE_THRESHOLD = 500 * 1024 * 1024; // 500MB
-          if (contentLength && contentLength > LARGE_FILE_THRESHOLD) {
-            logger.s3.warn(
-              `Large file download warning: ${key} (${Math.round(contentLength / 1024 / 1024)}MB), may cause memory pressure`,
-            );
-          }
+            try {
+              logger.s3.info(`Download started: ${key}`);
 
-          // 以流方式读取并监控首字节与空闲超时
-          const chunks: Uint8Array[] = [];
-          const stream = response.Body as NodeJS.ReadableStream;
+              const command = new GetObjectCommand({
+                Bucket: this.config.bucket,
+                Key: key,
+              });
 
-          const resetIdle = () => {
-            if (idleTimer) clearTimeout(idleTimer);
-            idleTimer = setTimeout(() => {
-              controller.abort();
-            }, idleTimeoutMs);
-          };
+              const response = await this.s3Client.send(command, {
+                abortSignal: controller.signal,
+                requestTimeout: requestTimeoutMs,
+              });
 
-          resetIdle();
+              if (!response.Body) {
+                logger.s3.error(`No Body in S3 response: ${key}`);
+                return null;
+              }
 
-          const buffer: Buffer = await new Promise((resolve, reject) => {
-            stream.on("data", (chunk: Uint8Array) => {
-              if (!firstByteAt) firstByteAt = Date.now();
-              chunks.push(chunk);
+              const declaredLength = response.ContentLength;
+              if (
+                declaredLength !== undefined &&
+                declaredLength > this.maxDownloadBytes
+              ) {
+                throw new DownloadLimitError(
+                  `Refusing to download ${key}: declared size ${declaredLength} exceeds maxDownloadBytes=${this.maxDownloadBytes}`,
+                );
+              }
+
+              // 如果 Body 已经是 Buffer
+              if (response.Body instanceof Buffer) {
+                if (response.Body.length > this.maxDownloadBytes) {
+                  throw new DownloadLimitError(
+                    `Refusing to download ${key}: body size ${response.Body.length} exceeds maxDownloadBytes=${this.maxDownloadBytes}`,
+                  );
+                }
+                releaseBudget = await this.byteBudget.acquire(
+                  Math.max(1, response.Body.length),
+                  controller.signal,
+                );
+                const duration = Date.now() - startTime;
+                const sizeKB = Math.round(response.Body.length / 1024);
+                logger.s3.success(
+                  `Download complete: ${key} (${sizeKB}KB, ${duration}ms)`,
+                );
+                return response.Body;
+              }
+
+              // 以流方式读取并监控首字节与空闲超时
+              const chunks: Uint8Array[] = [];
+              const stream = response.Body as NodeJS.ReadableStream;
+              const pausable = stream as NodeJS.ReadableStream & {
+                pause?: () => void;
+                resume?: () => void;
+                destroy?: (error?: Error) => void;
+              };
+              pausable.pause?.();
+              const reservedBytes = Math.max(
+                1,
+                declaredLength ?? this.maxDownloadBytes,
+              );
+              try {
+                releaseBudget = await this.byteBudget.acquire(
+                  reservedBytes,
+                  controller.signal,
+                );
+              } catch (error) {
+                pausable.destroy?.(
+                  error instanceof Error ? error : new Error(String(error)),
+                );
+                throw error;
+              }
+
+              const resetIdle = () => {
+                if (idleTimer) clearTimeout(idleTimer);
+                idleTimer = setTimeout(() => {
+                  controller.abort();
+                }, idleTimeoutMs);
+              };
+
               resetIdle();
-            });
 
-            stream.on("end", () => {
+              const buffer: Buffer = await new Promise((resolve, reject) => {
+                let receivedBytes = 0;
+                stream.on("data", (chunk: Uint8Array) => {
+                  if (!firstByteAt) firstByteAt = Date.now();
+                  receivedBytes += chunk.byteLength;
+                  if (
+                    receivedBytes > this.maxDownloadBytes ||
+                    receivedBytes > reservedBytes
+                  ) {
+                    const error = new DownloadLimitError(
+                      `Refusing to download ${key}: streamed body exceeded its ${Math.min(this.maxDownloadBytes, reservedBytes)} byte reservation`,
+                    );
+                    pausable.destroy?.(error);
+                    reject(error);
+                    return;
+                  }
+                  chunks.push(chunk);
+                  resetIdle();
+                });
+
+                const removeAbortListener = () =>
+                  controller.signal.removeEventListener("abort", onAbort);
+                const onAbort = () => {
+                  const error = new S3BodyReadError(
+                    `S3 response body was aborted while reading ${key}`,
+                    new Error("Request aborted"),
+                  );
+                  pausable.destroy?.(error);
+                  reject(error);
+                };
+                controller.signal.addEventListener("abort", onAbort, {
+                  once: true,
+                });
+
+                stream.on("end", () => {
+                  removeAbortListener();
+                  clearTimers();
+                  const buf = Buffer.concat(chunks);
+                  resolve(buf);
+                });
+
+                stream.on("error", (error) => {
+                  removeAbortListener();
+                  clearTimers();
+                  reject(
+                    error instanceof DownloadLimitError ||
+                      error instanceof S3BodyReadError
+                      ? error
+                      : new S3BodyReadError(
+                          `S3 response body failed while reading ${key}`,
+                          error,
+                        ),
+                  );
+                });
+                pausable.resume?.();
+              });
+
+              const duration = Date.now() - startTime;
+              const ttfb = firstByteAt ? firstByteAt - startTime : duration;
+              const sizeKB = Math.round(buffer.length / 1024);
+              logger.s3.success(
+                `Download complete: ${key} (${sizeKB}KB, ${duration}ms, TTFB ${ttfb}ms)`,
+              );
+              return buffer;
+            } finally {
               clearTimers();
-              const buf = Buffer.concat(chunks);
-              resolve(buf);
-            });
-
-            stream.on("error", (error) => {
-              clearTimers();
-              reject(error);
-            });
-          });
-
-          const duration = Date.now() - startTime;
-          const ttfb = firstByteAt ? firstByteAt - startTime : duration;
-          const sizeKB = Math.round(buffer.length / 1024);
-          logger.s3.success(
-            `Download complete: ${key} (${sizeKB}KB, ${duration}ms, TTFB ${ttfb}ms, attempt ${attempt})`,
+              signal?.removeEventListener("abort", abortFromCaller);
+              releaseBudget?.();
+            }
+          },
+          signal,
+        );
+      } catch (error) {
+        if (signal?.aborted) throw signal.reason;
+        if (isNotFoundError(error)) {
+          logger.s3.warn(`S3 object does not exist: ${key}`);
+        } else {
+          logger.s3.error(
+            `Download failed permanently: ${key}: ${errorMessage(error)}`,
           );
-          return buffer;
-        } catch (error) {
-          const elapsed = Date.now() - startTime;
-          logger.s3.warn(
-            `Download failed: ${key} (attempt ${attempt}/${maxAttempts}, ${elapsed}ms)`,
-            error,
-          );
-
-          if (attempt < maxAttempts) {
-            const delay = backoffDelay(attempt);
-            logger.s3.info(`Retrying after ${delay}ms: ${key}`);
-            await sleep(delay);
-            continue;
-          }
-          logger.s3.error(`Download failed permanently: ${key}`);
-          return null;
-        } finally {
-          clearTimers();
         }
+        return null;
       }
+    }, signal);
+  }
 
-      return null;
-    });
+  private async executeWithRetry<T>(
+    operation: string,
+    callback: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    if (this.disposed) {
+      throw new Error("S3 storage provider has already been disposed");
+    }
+
+    const maxAttempts = this.config.maxAttempts ?? 3;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      signal?.throwIfAborted();
+      try {
+        return await callback();
+      } catch (error) {
+        signal?.throwIfAborted();
+        lastError = error;
+        const canRetry =
+          attempt < maxAttempts &&
+          !(error instanceof DownloadLimitError) &&
+          !isNotFoundError(error) &&
+          !isNonRetryableS3Error(error) &&
+          (!this.clientHandlesRetries || error instanceof S3BodyReadError);
+        logger.s3.warn(
+          `${operation} failed (attempt ${attempt}/${maxAttempts}): ${errorMessage(error)}`,
+        );
+        if (!canRetry) break;
+        const delay = backoffDelay(attempt);
+        logger.s3.info(`Retrying ${operation} after ${delay}ms`);
+        await sleep(delay, signal);
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(`${operation} failed: ${String(lastError)}`);
   }
 
   // 编译并缓存 S3_EXCLUDE_REGEX。无效正则不应崩掉整个构建——记录告警并忽略。
@@ -229,7 +533,7 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   async listImages(): Promise<StorageObject[]> {
-    const objects = await this.listS3Objects();
+    const { objects } = await this.listS3ObjectsDetailed();
 
     // 过滤出图片文件并转换为通用格式
     const imageObjects = objects
@@ -243,59 +547,104 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   async listAllFiles(
-    _progressCallback?: ProgressCallback,
+    progressCallback?: ProgressCallback,
   ): Promise<StorageObject[]> {
-    const objects = await this.listS3Objects();
+    const listing = await this.listAllFilesDetailed(progressCallback);
+    return listing.objects;
+  }
+
+  async listAllFilesDetailed(
+    _progressCallback?: ProgressCallback,
+  ): Promise<StorageListing> {
+    const listing = await this.listS3ObjectsDetailed();
 
     // 同样应用 S3_EXCLUDE_REGEX，使其与 listImages 一致——否则被排除的文件仍会
     // 进入 Live Photo 检测和 afterAllFilesListed 插件载荷。
-    return objects
-      .filter((obj: _Object) => !this.isExcluded(obj.Key))
-      .map((obj) => convertS3ObjectToStorageObject(obj));
+    return {
+      ...listing,
+      objects: listing.objects
+        .filter((obj: _Object) => !this.isExcluded(obj.Key))
+        .map((obj) => convertS3ObjectToStorageObject(obj)),
+    };
   }
 
-  private async listS3Objects(): Promise<_Object[]> {
+  private async listS3ObjectsDetailed(): Promise<StorageListing<_Object>> {
     const objects: _Object[] = [];
     let continuationToken: string | undefined;
     let remaining = this.config.maxFileLimit;
+    const seenTokens = new Set<string>();
 
-    do {
-      const pageSize = remaining ? Math.min(remaining, 1000) : 1000;
-      const listCommand = new ListObjectsV2Command({
-        Bucket: this.config.bucket,
-        Prefix: this.config.prefix,
-        MaxKeys: pageSize,
-        ContinuationToken: continuationToken,
-      });
+    try {
+      do {
+        const pageSize = remaining ? Math.min(remaining, 1000) : 1000;
+        const listCommand = new ListObjectsV2Command({
+          Bucket: this.config.bucket,
+          Prefix: this.config.prefix,
+          MaxKeys: pageSize,
+          ContinuationToken: continuationToken,
+        });
 
-      const listResponse = await this.s3Client.send(listCommand);
-      const contents = listResponse.Contents || [];
-      const pageObjects = remaining ? contents.slice(0, remaining) : contents;
-      objects.push(...pageObjects);
+        const listResponse = await this.executeWithRetry(
+          "list S3 objects",
+          async () => await this.s3Client.send(listCommand),
+        );
+        const contents = listResponse.Contents || [];
+        const pageObjects = remaining ? contents.slice(0, remaining) : contents;
+        objects.push(...pageObjects);
 
-      if (remaining) {
-        remaining -= pageObjects.length;
-        if (remaining <= 0) {
-          // 不要静默截断：达到 maxFileLimit 时若仍有后续对象，明确告警，
-          // 否则超出上限的图片会被悄悄忽略。
-          if (
-            listResponse.IsTruncated ||
-            contents.length > pageObjects.length
-          ) {
-            logger.s3.warn(
-              `Reached maxFileLimit=${this.config.maxFileLimit}, object listing was truncated; objects beyond the limit (including images) will be ignored.`,
-            );
+        if (remaining) {
+          remaining -= pageObjects.length;
+          if (remaining <= 0) {
+            // Reaching the configured limit is incomplete only when the
+            // provider proves that more keys exist. An exact, final page is a
+            // complete snapshot.
+            if (
+              listResponse.IsTruncated ||
+              contents.length > pageObjects.length
+            ) {
+              const message = `Reached maxFileLimit=${this.config.maxFileLimit}; the storage snapshot is incomplete.`;
+              logger.s3.warn(message);
+              return {
+                objects,
+                complete: false,
+                reason: { code: "max-file-limit", message },
+              };
+            }
+            break;
           }
-          break;
         }
-      }
 
-      continuationToken = listResponse.IsTruncated
-        ? listResponse.NextContinuationToken
-        : undefined;
-    } while (continuationToken);
+        if (!listResponse.IsTruncated) {
+          continuationToken = undefined;
+          continue;
+        }
 
-    return objects;
+        const nextToken = listResponse.NextContinuationToken;
+        if (!nextToken || seenTokens.has(nextToken)) {
+          const message = !nextToken
+            ? "S3 returned IsTruncated=true without a continuation token."
+            : `S3 repeated continuation token ${JSON.stringify(nextToken)}.`;
+          logger.s3.error(message);
+          return {
+            objects,
+            complete: false,
+            reason: { code: "pagination-anomaly", message },
+          };
+        }
+        seenTokens.add(nextToken);
+        continuationToken = nextToken;
+      } while (continuationToken);
+
+      return { objects, complete: true };
+    } catch (error) {
+      const message = `S3 listing failed after ${objects.length} objects: ${errorMessage(error)}`;
+      logger.s3.error(message);
+      return {
+        objects,
+        complete: false,
+        reason: { code: "provider-error", message },
+      };
+    }
   }
 
   generatePublicUrl(key: string): string {
@@ -307,33 +656,18 @@ export class S3StorageProvider implements StorageProvider {
       return joinPublicUrl(this.config.customDomain, key);
     }
 
-    // 如果使用自定义端点，构建相应的 URL
-    const { endpoint } = this.config;
+    const forcePathStyle = resolveForcePathStyle(this.config);
+    const endpoint =
+      this.config.endpoint ??
+      `https://s3.${this.config.region ?? "us-east-1"}.amazonaws.com`;
 
-    if (!endpoint) {
-      // 默认 AWS S3 端点
-      return `https://${this.config.bucket}.s3.${this.config.region}.amazonaws.com/${encodeStorageKeyForUrl(key)}`;
+    if (forcePathStyle) {
+      return joinPublicUrl(joinPublicUrl(endpoint, this.config.bucket), key);
     }
 
-    // 检查是否是标准 AWS S3 端点
-    if (endpoint.includes("amazonaws.com")) {
-      return `https://${this.config.bucket}.s3.${this.config.region}.amazonaws.com/${encodeStorageKeyForUrl(key)}`;
-    }
-
-    const baseUrl = endpoint.replace(/\/$/, ""); // 移除末尾的斜杠
-
-    if (endpoint.includes("aliyuncs.com")) {
-      const protocolEndIndex = baseUrl.indexOf("//");
-      if (protocolEndIndex === -1) {
-        throw new Error("Invalid base URL format");
-      }
-      // 将 bucket 插入到 'https://` 之后，region 之前
-      const prefix = baseUrl.slice(0, protocolEndIndex + 2); // 包括 'https://'
-      const suffix = baseUrl.slice(protocolEndIndex + 2); // 剩余部分
-      return `${prefix}${this.config.bucket}.${suffix}/${encodeStorageKeyForUrl(key)}`;
-    }
-    // 对于自定义端点（如 MinIO 等）
-    return `${baseUrl}/${this.config.bucket}/${encodeStorageKeyForUrl(key)}`;
+    const publicEndpoint = new URL(endpoint);
+    publicEndpoint.hostname = `${this.config.bucket}.${publicEndpoint.hostname}`;
+    return joinPublicUrl(publicEndpoint.toString(), key);
   }
 
   detectLivePhotos(allObjects: StorageObject[]): Map<string, StorageObject> {
@@ -347,7 +681,10 @@ export class S3StorageProvider implements StorageProvider {
       Key: key,
     });
 
-    await this.s3Client.send(command);
+    await this.executeWithRetry(
+      `delete ${key}`,
+      async () => await this.s3Client.send(command),
+    );
   }
 
   async listObjectKeys(prefix: string): Promise<string[]> {
@@ -355,19 +692,36 @@ export class S3StorageProvider implements StorageProvider {
     let continuationToken: string | undefined;
 
     do {
-      const listResponse = await this.s3Client.send(
-        new ListObjectsV2Command({
-          Bucket: this.config.bucket,
-          Prefix: prefix,
-          MaxKeys: 1000,
-          ContinuationToken: continuationToken,
-        }),
+      const listResponse = await this.executeWithRetry(
+        `list objects under ${prefix}`,
+        async () =>
+          await this.s3Client.send(
+            new ListObjectsV2Command({
+              Bucket: this.config.bucket,
+              Prefix: prefix,
+              MaxKeys: 1000,
+              ContinuationToken: continuationToken,
+            }),
+          ),
       );
 
       for (const object of listResponse.Contents ?? []) {
         if (object.Key) keys.push(object.Key);
       }
 
+      if (listResponse.IsTruncated && !listResponse.NextContinuationToken) {
+        throw new Error(
+          "S3 returned IsTruncated=true without a continuation token while listing object keys",
+        );
+      }
+      if (
+        listResponse.NextContinuationToken &&
+        listResponse.NextContinuationToken === continuationToken
+      ) {
+        throw new Error(
+          `S3 repeated continuation token ${JSON.stringify(continuationToken)} while listing object keys`,
+        );
+      }
       continuationToken = listResponse.IsTruncated
         ? listResponse.NextContinuationToken
         : undefined;
@@ -389,7 +743,10 @@ export class S3StorageProvider implements StorageProvider {
       CacheControl: options?.cacheControl,
     });
 
-    const response = await this.s3Client.send(command);
+    const response = await this.executeWithRetry(
+      `upload ${key}`,
+      async () => await this.s3Client.send(command),
+    );
     const lastModified = new Date();
 
     return {
@@ -398,5 +755,11 @@ export class S3StorageProvider implements StorageProvider {
       lastModified,
       etag: response.ETag ?? undefined,
     };
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.s3Client.destroy?.();
   }
 }

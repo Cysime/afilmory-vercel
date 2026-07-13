@@ -157,11 +157,23 @@ describe("saveArtifacts", () => {
       repoUrl: "https://github.com/owner/cache.git",
       rootDir,
     };
-    // 只准备 geocoding cache（无 schema 校验），让至少一个产物被 staged。
+    // 成功路径准备完整的本地产物；缺失产物的告警由 restoreArtifacts 的
+    // 专门用例覆盖，不能作为这些安全/命令序列测试里的隐式噪声。
     await fs.mkdir(path.join(rootDir, "generated"), { recursive: true });
+    await fs.writeFile(
+      path.join(rootDir, "generated/photos-manifest.json"),
+      JSON.stringify(createEmptyManifest()),
+    );
     await fs.writeFile(
       path.join(rootDir, "generated/geocoding-cache.json"),
       "{}",
+    );
+    await fs.mkdir(path.join(rootDir, "apps/web/public/thumbnails"), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      path.join(rootDir, "apps/web/public/thumbnails/example.jpg"),
+      "jpeg-bytes",
     );
   });
 

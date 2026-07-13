@@ -9,7 +9,7 @@ function createPhoto(
   return {
     id: "test-1",
     title: "Test Photo",
-    dateTaken: "2024-01-15",
+    dateTaken: "",
     tags: [],
     description: "",
     originalUrl: "/photos/test.jpg",
@@ -29,6 +29,15 @@ function createPhoto(
 }
 
 describe("getPhotoDate", () => {
+  it("prefers the builder's canonical dateTaken field", () => {
+    const photo = createPhoto({
+      dateTaken: "2023-12-24T18:30:00Z",
+      lastModified: "2024-06-01T12:00:00Z",
+    });
+
+    expect(getPhotoDate(photo).toISOString()).toBe("2023-12-24T18:30:00.000Z");
+  });
+
   it("should return correct Date from EXIF DateTimeOriginal", () => {
     const photo = createPhoto({
       exif: {

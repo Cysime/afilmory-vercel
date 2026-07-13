@@ -7,7 +7,7 @@ English | [简体中文](./README.zh-CN.md)
 </p>
 
 <p align="center">
-  <strong>A fork of Afilmory optimized for S3-compatible photo storage and static deployment on Vercel</strong>
+  <strong>An S3-first photo gallery with a zero-credential local mode and static Vercel deployment</strong>
 </p>
 
 <p align="center">
@@ -27,11 +27,11 @@ English | [简体中文](./README.zh-CN.md)
 
 ## 📖 About This Project
 
-This repository is a customized fork of [Afilmory](https://github.com/Afilmory/afilmory), focused on S3-compatible photo storage and static site deployment. Photos stay in S3 or a compatible object store; the build produces a static web app, generated thumbnails, RSS, sitemap, Open Graph assets, and a JSON photo manifest.
+This repository is a customized fork of [Afilmory](https://github.com/Afilmory/afilmory), focused on static site deployment. Source photos can stay in S3-compatible object storage (the deployment default) or come from a local directory for a self-contained, zero-credential build. The build produces a static web app, generated thumbnails, RSS, sitemap, Open Graph assets, and a JSON photo manifest.
 
 ### Differences from the upstream project
 
-- ✅ **S3-first static deployment** - the default site configuration only uses S3-compatible storage for source photos.
+- ✅ **S3-first static deployment** - S3-compatible storage remains the default, with an explicit local-filesystem mode for self-contained builds.
 - ✅ **Vercel-ready build** - `vercel.json` runs `scripts/build-static.sh` and outputs `apps/web/dist`.
 - ✅ **Manifest-driven runtime** - the browser reads generated JSON data instead of calling a database or backend service.
 - ✅ **Optional remote metadata cache** - `REPO_URL` and `REPO_TOKEN` can persist generated manifest/thumbnails between CI builds.
@@ -54,7 +54,7 @@ Huge thanks to [Innei](https://innei.in) and the Afilmory team for creating this
 - 🎨 **Modern UI design** - glassmorphic interface built with Tailwind CSS 4, Radix UI primitives, and Motion.
 - ⚡ **Incremental builds** - existing manifest data, thumbnails, EXIF, and tone analysis are reused when source photos have not changed.
 - 🌐 **Internationalization** - bundled language resources from `locales/app/*.json`.
-- 🔗 **Static social assets** - build-time Open Graph image, `feed.xml`, and `sitemap.xml`.
+- 🔗 **Crawler-ready photo pages** - build-time home Open Graph image, per-photo canonical/OG/JSON-LD HTML shells, `feed.xml`, and `sitemap.xml`.
 
 ### Image processing
 
@@ -69,8 +69,9 @@ Huge thanks to [Innei](https://innei.in) and the Afilmory team for creating this
 ### Storage and runtime
 
 - ☁️ **S3-compatible source photos** - works with AWS S3, MinIO, Aliyun OSS, Tencent COS, and other S3-compatible services.
+- 💻 **Local-filesystem source photos** - set `PHOTO_STORAGE_PROVIDER=local` to build without object-storage credentials.
 - 🌍 **CDN-friendly URLs** - `S3_CUSTOM_DOMAIN` can be used for public photo URLs.
-- 📦 **Zero original photo bundling** - original photos remain in object storage; only generated thumbnails and web assets are deployed.
+- 📦 **Provider-aware static output** - S3 originals remain in object storage; local-mode originals are copied into the static output under their configured URL prefix.
 - 🚀 **Static SPA runtime** - production builds default to an external `assets/photos-manifest.<hash>.json` loaded through `window.__AFILMORY__.manifest`.
 
 ---
@@ -109,9 +110,9 @@ Click the button below and follow the prompts to configure S3-related environmen
 
 1. Click the deploy button above.
 2. Sign in to Vercel and fork/import the repository.
-3. Configure the required S3 variables.
+3. Configure the S3 bucket and either an explicit key pair or another supported AWS credential source.
 4. Click **Deploy**.
-5. The Vercel build runs `scripts/build-static.sh`, which runs `pnpm build`; precheck refreshes the manifest from S3 when credentials are available.
+5. The Vercel build runs `scripts/build-static.sh`, which runs `pnpm build`; precheck refreshes the manifest when the bucket and credential source are valid.
 
 ---
 
@@ -119,15 +120,41 @@ Click the button below and follow the prompts to configure S3-related environmen
 
 Environment overrides are merged into `site.config.ts` by `site.config.build.ts` during build. Client-side code receives the final config through `window.__AFILMORY__.config`; it does not read `process.env` at runtime.
 
-### Required for S3 source photos
+### Photo source selection
 
-The default static site configuration only supports S3-compatible source photos. These variables are required when the builder refreshes the manifest:
+| Variable                 | Description                                       | Default      |
+| ------------------------ | ------------------------------------------------- | ------------ |
+| `PHOTO_STORAGE_PROVIDER` | Source adapter: `s3` or `local`                   | `s3`         |
+| `LOCAL_PHOTOS_PATH`      | Local source directory, relative to the repo root | `photos`     |
+| `LOCAL_PHOTOS_BASE_URL`  | URL prefix used for local originals               | `/originals` |
 
-| Variable               | Description          | Example                                    |
-| ---------------------- | -------------------- | ------------------------------------------ |
-| `S3_BUCKET_NAME`       | S3 bucket name       | `my-photos`                                |
-| `S3_ACCESS_KEY_ID`     | S3 access key ID     | `AKIAIOSFODNN7EXAMPLE`                     |
-| `S3_SECRET_ACCESS_KEY` | S3 access key secret | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` |
+Local mode needs no S3 credentials:
+
+```bash
+PHOTO_STORAGE_PROVIDER=local
+LOCAL_PHOTOS_PATH=photos
+LOCAL_PHOTOS_BASE_URL=/originals
+```
+
+Put source images under `LOCAL_PHOTOS_PATH`. The dev server serves them at
+`LOCAL_PHOTOS_BASE_URL`; production builds copy them into `apps/web/dist` at
+the matching path. Keep the reserved-route-safe `/originals` default unless
+your static host is configured for another non-reserved public path; `/photos`,
+`/assets`, `/thumbnails`, and `/vendor` belong to the application.
+
+### S3 source configuration
+
+When `PHOTO_STORAGE_PROVIDER=s3`, only the bucket name is always required:
+
+| Variable         | Description    | Example     |
+| ---------------- | -------------- | ----------- |
+| `S3_BUCKET_NAME` | S3 bucket name | `my-photos` |
+
+`S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` are an optional pair. Set both
+when using explicit credentials; setting only one is a configuration error. If
+both are omitted, the AWS SDK default credential chain is used (shared
+config/SSO, Web Identity, ECS/EC2 roles, and other supported sources). Most
+non-AWS S3-compatible services still require the explicit pair.
 
 ### Optional S3 settings
 
@@ -158,7 +185,7 @@ The default static site configuration only supports S3-compatible source photos.
 | `BUILDER_REPO_URL` | Backward-compatible alias for `REPO_URL`                                     |
 | `GIT_TOKEN`        | Backward-compatible alias for `REPO_TOKEN`                                   |
 
-This cache is not a photo storage backend. Source photos still come from S3.
+This cache is not a photo storage backend. Source photos still come from the configured S3 or local provider.
 
 ### Site configuration
 
@@ -213,6 +240,7 @@ cp .env.template .env
 Example:
 
 ```bash
+PHOTO_STORAGE_PROVIDER=s3
 S3_BUCKET_NAME=my-photos
 S3_REGION=us-east-1
 S3_ACCESS_KEY_ID=your-access-key-id
@@ -231,6 +259,9 @@ SOCIAL_GITHUB=your-github-username
 SOCIAL_RSS=true
 ```
 
+For a zero-credential local setup, replace the S3 block with the three local
+variables shown under [Photo source selection](#photo-source-selection).
+
 ---
 
 ## 💻 Local Development
@@ -239,7 +270,7 @@ SOCIAL_RSS=true
 
 - Node.js `^20.19.0 || >=22.12.0` (Vite 7 requirement)
 - pnpm 10.19.0
-- S3-compatible object storage for manifest refreshes
+- Either S3-compatible object storage or a local photo directory
 
 ### Install dependencies
 
@@ -249,11 +280,11 @@ cd afilmory-vercel
 pnpm install
 ```
 
-### Prepare S3 and upload photos
+### Prepare source photos
 
-Upload your photos to an S3-compatible object storage. Supported image extensions are `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.tiff`, `.tif`, `.heic`, `.heif`, and `.hif`.
+Use an S3-compatible object store, or set `PHOTO_STORAGE_PROVIDER=local` and put photos under `LOCAL_PHOTOS_PATH`. Supported image extensions are `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.tiff`, `.tif`, `.heic`, `.heif`, and `.hif`.
 
-Original photos are not bundled into `apps/web/dist`; the manifest points to S3/CDN URLs and the build output contains generated thumbnails.
+In S3 mode the manifest points to S3/CDN URLs and originals are not bundled. In local mode the build copies originals into `apps/web/dist` under `LOCAL_PHOTOS_BASE_URL` so the resulting site remains self-contained.
 
 ### Build and preview
 
@@ -286,9 +317,10 @@ Open http://localhost:4173 after `pnpm preview`.
 ### Manifest build behavior
 
 - `pnpm dev` and `pnpm build` run `apps/web/scripts/precheck.ts` first.
-- If S3 credentials are complete, precheck refreshes the manifest through the builder.
-- If S3 credentials are missing but `generated/photos-manifest.json` exists, precheck reuses the existing manifest.
-- If the builder fails but an existing manifest is present, precheck falls back to that manifest and prints a warning.
+- In local mode, precheck runs the builder directly and does not require S3 credentials.
+- If the S3 bucket and a valid credential source are available, precheck refreshes the manifest through the builder.
+- If required S3 configuration is missing but `generated/photos-manifest.json` exists, precheck reuses the existing manifest.
+- If the builder fails, preview builds continue only when the manifest currently on disk still passes strict validation. Precheck never rolls back the JSON file by itself, because a late builder failure may occur after the new manifest was atomically committed and old content-addressed thumbnails were collected.
 - `SKIP_MANIFEST_BUILD=true pnpm build` intentionally skips builder refresh.
 - Production web builds emit an external hashed manifest asset by default; set `AFILMORY_EMBED_MANIFEST=true` to inline it or `false` to force external loading.
 
@@ -313,7 +345,11 @@ Vercel uses:
 
 When `REPO_URL` and `REPO_TOKEN` are configured, `scripts/build-static.sh` restores cached manifest, geocoding cache, and thumbnails before running the build. After a successful build it pushes the refreshed artifacts back to the cache repository.
 
-`scripts/build-static.sh` always runs `pnpm build`; all freshness and fallback decisions live in `apps/web/scripts/precheck.ts`. When S3 credentials are missing but a reusable `generated/photos-manifest.json` exists, precheck reuses it so preview deployments still succeed. Production deploys (`VERCEL_ENV=production`, or `REQUIRE_FRESH_BUILD=true` on other platforms) fail instead of publishing a stale manifest.
+`scripts/build-static.sh` always runs `pnpm build`; all freshness and fallback decisions live in `apps/web/scripts/precheck.ts`. When required S3 configuration is missing but a reusable `generated/photos-manifest.json` exists, precheck reuses it so preview deployments still succeed. Production deploys (`VERCEL_ENV=production`, or `REQUIRE_FRESH_BUILD=true` on other platforms) fail instead of publishing a stale manifest.
+
+For local-provider deployments, make `LOCAL_PHOTOS_PATH` available in the build
+workspace. The build copies those originals into the static output; do not add
+private photos to a public repository by accident.
 
 ### Other static hosts
 
@@ -330,7 +366,7 @@ Use `pnpm build` as the build command.
 
 ## 🔄 Updating Photos
 
-1. Upload new or changed photos to your S3 bucket.
+1. Upload new or changed photos to your S3 bucket, or update `LOCAL_PHOTOS_PATH` in local mode.
 2. Trigger a new deployment or run `pnpm build:manifest`.
 3. The builder compares source object metadata with the existing manifest and processes only changed work when possible.
 
@@ -347,7 +383,6 @@ Use `pnpm build` as the build command.
 - Radix UI
 - Motion
 - Jotai
-- TanStack Query
 - React Router 7
 - i18next and react-i18next
 - MapLibre GL and react-map-gl

@@ -7,12 +7,14 @@ import {
 } from "@afilmory/ui";
 import type { SetStateAction } from "jotai";
 import { useSetAtom } from "jotai";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Drawer } from "vaul";
 
 import type { GallerySetting } from "~/atoms/app";
 import { gallerySettingAtom } from "~/atoms/app";
+import { useDialogFocusManagement } from "~/hooks/useDialogFocusManagement";
 import { useMobile } from "~/hooks/useMobile";
+import { useModalIsolation } from "~/hooks/useModalIsolation";
 
 // 通用的操作按钮组件
 export const ActionButton = ({
@@ -27,7 +29,7 @@ export const ActionButton = ({
   title: string;
   badge?: number | string;
   onClick: () => void;
-  ref?: React.RefObject<HTMLButtonElement>;
+  ref?: React.Ref<HTMLButtonElement>;
 }) => {
   return (
     <Button
@@ -40,7 +42,10 @@ export const ActionButton = ({
       ref={ref}
       {...props}
     >
-      <i className={clsxm(icon, "text-text-secondary text-base")} />
+      <i
+        className={clsxm(icon, "text-text-secondary text-base")}
+        aria-hidden="true"
+      />
       {badge && (
         <span className="bg-accent absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full text-xs font-medium text-white shadow-sm">
           {badge}
@@ -74,7 +79,7 @@ export const DesktopActionButton = ({
   const setGallerySetting = useSetAtom(gallerySettingAtom);
   return (
     <DropdownMenu
-      defaultOpen={open}
+      open={open}
       onOpenChange={(open) => {
         onOpenChange?.(open, setGallerySetting);
       }}
@@ -115,26 +120,50 @@ export const MobileActionButton = ({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) => {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  useModalIsolation(open);
+  useDialogFocusManagement({
+    dialogRef: contentRef,
+    isOpen: open,
+    returnFocusElement: triggerRef.current,
+  });
+
   return (
-    <>
-      <ActionButton
-        icon={icon}
-        title={title}
-        badge={badge}
-        onClick={() => onOpenChange(!open)}
-      />
-      <Drawer.Root open={open} onOpenChange={onOpenChange}>
-        <Drawer.Portal>
-          <Drawer.Overlay className="fixed inset-0 z-40 bg-black/30 backdrop-blur-xl" />
-          <Drawer.Content className="bg-material-thick border-fill-tertiary fixed right-0 bottom-0 left-0 z-50 flex max-h-[88vh] flex-col overflow-hidden rounded-t-[1.75rem] border-x border-t shadow-2xl backdrop-blur-2xl">
-            <div className="flex h-11 shrink-0 cursor-grab touch-none items-center justify-center active:cursor-grabbing">
-              <div className="bg-fill-tertiary h-1.5 w-12 rounded-full" />
-            </div>
-            {children}
-          </Drawer.Content>
-        </Drawer.Portal>
-      </Drawer.Root>
-    </>
+    <Drawer.Root autoFocus open={open} onOpenChange={onOpenChange}>
+      <Drawer.Trigger asChild>
+        <ActionButton
+          icon={icon}
+          title={title}
+          badge={badge}
+          onClick={() => {}}
+          ref={triggerRef}
+        />
+      </Drawer.Trigger>
+      <Drawer.Portal>
+        <Drawer.Overlay className="fixed inset-0 z-40 bg-black/30 backdrop-blur-xl" />
+        <Drawer.Content
+          ref={contentRef}
+          tabIndex={-1}
+          aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            triggerRef.current?.focus({ preventScroll: true });
+          }}
+          className="bg-material-thick border-fill-tertiary fixed right-0 bottom-0 left-0 z-50 flex max-h-[88vh] flex-col overflow-hidden overscroll-contain rounded-t-[1.75rem] border-x border-t shadow-2xl backdrop-blur-2xl"
+        >
+          <Drawer.Title className="sr-only">{title}</Drawer.Title>
+          <div className="flex h-11 shrink-0 cursor-grab touch-none items-center justify-center active:cursor-grabbing">
+            <div
+              className="bg-fill-tertiary h-1.5 w-12 rounded-full"
+              aria-hidden="true"
+            />
+          </div>
+          {children}
+        </Drawer.Content>
+      </Drawer.Portal>
+    </Drawer.Root>
   );
 };
 

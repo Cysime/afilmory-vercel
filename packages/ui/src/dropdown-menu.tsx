@@ -103,7 +103,7 @@ const DropdownMenuItem = ({
     ref={ref}
     className={clsxm(
       "cursor-menu relative flex select-none items-center rounded-lg px-2.5 py-1 outline-none data-disabled:pointer-events-none data-disabled:opacity-50",
-      "focus-within:outline-transparent text-sm my-0.5 transition-all duration-200",
+      "focus-within:outline-transparent text-sm my-0.5 transition-[background-color,color,opacity] duration-200",
       "data-highlighted:text-accent",
       "h-[28px]",
       inset && "pl-8",
@@ -141,7 +141,7 @@ const DropdownMenuCheckboxItem = ({
   <DropdownMenuPrimitive.CheckboxItem
     ref={ref}
     className={clsxm(
-      "cursor-menu relative flex select-none items-center rounded-lg py-1.5 pl-2 pr-2 text-sm outline-none transition-all duration-200",
+      "cursor-menu relative flex select-none items-center rounded-lg py-1.5 pl-2 pr-2 text-sm outline-none transition-[background-color,color,opacity] duration-200",
       "data-disabled:pointer-events-none data-disabled:opacity-50",
       "data-highlighted:text-accent",
       className,

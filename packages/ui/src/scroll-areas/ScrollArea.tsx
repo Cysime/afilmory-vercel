@@ -2,7 +2,7 @@ import * as ScrollAreaBase from "@radix-ui/react-scroll-area";
 import clsx from "clsx";
 import * as React from "react";
 
-import { clsxm } from "../utils/cn";
+import { clsxm, focusRing } from "../utils/cn";
 import { ScrollElementContext } from "./ctx";
 
 const Corner = ({
@@ -95,10 +95,11 @@ const Viewport = ({
     <ScrollAreaBase.Viewport
       {...rest}
       ref={ref}
-      tabIndex={focusable ? -1 : void 0}
+      tabIndex={focusable ? 0 : -1}
       className={clsxm(
         "block size-full",
-
+        "focus-visible:outline-none",
+        focusable && focusRing,
         className,
       )}
     />

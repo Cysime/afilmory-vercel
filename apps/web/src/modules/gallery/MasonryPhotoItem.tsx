@@ -152,12 +152,24 @@ export const MasonryPhotoItem = memo(
       openPhotoViewer();
     }, [data.id, index, openViewer, photos, store]);
 
-    const handleKeyDown = useCallback(
-      (e: React.KeyboardEvent) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          handleClick();
+    const photoHref = `${buildPhotoDetailPathname(data.id)}${buildGalleryFilterSearch(
+      store.get(routeAtom).location.search,
+      store.get(gallerySettingAtom),
+    )}`;
+    const handleLinkClick = useCallback(
+      (event: React.MouseEvent<HTMLAnchorElement>) => {
+        if (
+          event.defaultPrevented ||
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        ) {
+          return;
         }
+        event.preventDefault();
+        handleClick();
       },
       [handleClick],
     );
@@ -199,9 +211,8 @@ export const MasonryPhotoItem = memo(
     return (
       // 纯 div：入场动画由 MasonryRoot 的包裹层负责，这里不用任何 motion 能力。
       // m.div 会给每个虚拟格子实例化 visualElement/投影树（热路径的纯浪费）。
-      <div
-        role="button"
-        tabIndex={0}
+      <a
+        href={photoHref}
         aria-label={ariaLabel}
         // ring-inset：格子 overflow-hidden 且边贴边，外扩的 ring 会被裁掉/被相邻格子盖住
         className="bg-fill-quaternary focus-visible:ring-accent/45 group relative w-full cursor-pointer overflow-hidden focus-visible:ring-2 focus-visible:ring-inset"
@@ -210,8 +221,7 @@ export const MasonryPhotoItem = memo(
           height: calculatedHeight,
         }}
         data-photo-id={data.id}
-        onClick={handleClick}
-        onKeyDown={handleKeyDown}
+        onClick={handleLinkClick}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
@@ -222,6 +232,8 @@ export const MasonryPhotoItem = memo(
             photoId={data.id}
             src={data.thumbnailUrl}
             alt={data.title}
+            width={data.width}
+            height={data.height}
             thumbHash={data.thumbHash}
             loading={shouldLoadEagerly ? "eager" : "lazy"}
             fetchPriority={isPriorityThumbnail ? "high" : "low"}
@@ -254,7 +266,10 @@ export const MasonryPhotoItem = memo(
         {imageError && (
           <div className="bg-fill-quaternary text-text-tertiary absolute inset-0 flex items-center justify-center">
             <div className="text-center">
-              <i className="i-mingcute-image-line text-2xl" />
+              <i
+                className="i-mingcute-image-line text-2xl"
+                aria-hidden="true"
+              />
               <p className="mt-2 text-sm">{t("photo.error.loading")}</p>
             </div>
           </div>
@@ -264,7 +279,7 @@ export const MasonryPhotoItem = memo(
         {hasVideo && (
           <div
             className={clsx(
-              "absolute z-20 flex items-center space-x-1 rounded-xl bg-black/50 px-1 py-1 text-xs text-white transition-all duration-200 hover:bg-black/70",
+              "absolute z-20 flex items-center space-x-1 rounded-xl bg-black/50 px-1 py-1 text-xs text-white transition-[background-color,color,opacity] duration-200 hover:bg-black/70",
               "top-2 left-2",
               "flex-wrap gap-y-1",
             )}
@@ -276,21 +291,27 @@ export const MasonryPhotoItem = memo(
           >
             {isConvertingVideo ? (
               <div className="flex items-center gap-1 px-1">
-                <i className="i-mingcute-loading-line animate-spin" />
+                <i
+                  className="i-mingcute-loading-line animate-spin"
+                  aria-hidden="true"
+                />
                 <span>{t("loading.converting")}</span>
               </div>
             ) : (
               <Fragment>
-                <i className="i-mingcute-live-photo-line size-4 shrink-0" />
+                <i
+                  className="i-mingcute-live-photo-line size-4 shrink-0"
+                  aria-hidden="true"
+                />
                 <span className="mr-1 shrink-0">{t("photo.live.badge")}</span>
                 {videoConversionError ? (
                   <span className={"bg-warning/20 ml-0.5 rounded px-1 text-xs"}>
-                    <div
+                    <span
                       className="text-yellow w-3 text-center font-bold"
                       title={(videoConversionError as Error).message}
                     >
                       !
-                    </div>
+                    </span>
                   </span>
                 ) : null}
               </Fragment>
@@ -311,9 +332,9 @@ export const MasonryPhotoItem = memo(
             <div className="absolute inset-x-0 bottom-0 p-4 pb-0 text-white">
               {/* 基本信息和标签 section */}
               <div className="mb-3 [&_*]:duration-300">
-                <h3 className="mb-2 truncate text-sm font-medium opacity-0 group-hover:opacity-100">
+                <h2 className="mb-2 truncate text-sm font-medium opacity-0 group-hover:opacity-100">
                   {data.title}
-                </h3>
+                </h2>
                 {data.description && (
                   <p className="mb-2 line-clamp-2 text-sm text-white/80 opacity-0 group-hover:opacity-100">
                     {data.description}
@@ -385,7 +406,7 @@ export const MasonryPhotoItem = memo(
             </div>
           </div>
         )}
-      </div>
+      </a>
     );
   },
 );

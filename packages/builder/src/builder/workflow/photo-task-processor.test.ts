@@ -136,6 +136,7 @@ function createStorageManagerFixture(): BuildSessionStorageManager {
     ),
     getFile: vi.fn(async () => null),
     listAllFiles: vi.fn(async () => []),
+    listAllFilesDetailed: vi.fn(async () => ({ objects: [], complete: true })),
     listImages: vi.fn(async () => []),
     uploadFile: vi.fn(async (key: string, data: Buffer) => ({
       key,
@@ -274,6 +275,9 @@ describe("PhotoTaskProcessor", () => {
     expect(processorMocks.workerPoolInstances[0].options.logger).toBe(
       session.services.logger,
     );
+    expect(processorMocks.workerPoolInstances[0].options.timeoutMs).toBe(
+      300_000,
+    );
     expect(session.emitPluginEvent).toHaveBeenCalledWith(
       session.runState,
       "beforeProcessTasks",
@@ -351,8 +355,14 @@ describe("PhotoTaskProcessor", () => {
       { key: "c.jpg" },
       { key: "d.jpg" },
     ];
-    const existingManifestMap = new Map<string, PhotoManifestItem>();
-    const livePhotoMap = new Map<string, StorageObject>();
+    const existingManifestMap = new Map<string, PhotoManifestItem>([
+      ["a.jpg", createPhoto("a")],
+      ["outside.jpg", createPhoto("outside")],
+    ]);
+    const livePhotoMap = new Map<string, StorageObject>([
+      ["a.jpg", { key: "a.mov" }],
+      ["outside.jpg", { key: "outside.mov" }],
+    ]);
     processorMocks.clusterResults = [
       createResult("processed"),
       createResult("failed"),
@@ -387,14 +397,15 @@ describe("PhotoTaskProcessor", () => {
     expect(processorMocks.clusterPoolInstances[0].options).toMatchObject({
       concurrency: 2,
       totalTasks: tasks.length,
+      timeoutMs: 300_000,
       workerConcurrency: 3,
     });
     expect(processorMocks.clusterPoolInstances[0].options.sharedData).toEqual({
       builderConfig: session.getConfig(),
       builderOptions: session.options,
-      existingManifestMap,
+      existingManifestMap: new Map([["a.jpg", createPhoto("a")]]),
       imageObjects: tasks,
-      livePhotoMap,
+      livePhotoMap: new Map([["a.jpg", { key: "a.mov" }]]),
       photoIdCollisionKeys: ["collision.jpg"],
     });
   });

@@ -1,16 +1,14 @@
 import { expect, test } from "@playwright/test";
 
-import { stubGoogleFonts } from "./helpers";
-
 // 生产构建冒烟（webServer 见 scripts/e2e-prod-server.ts，经
 // `pnpm test:e2e:prod` 触发）：dev server 永远跑不到的产物形态——外部
 // manifest 资产 + index.html 内联 fetch 脚本、压缩/手动分块 bundle、PWA
 // Service Worker——只在这里于真实浏览器中验证。
 //
-// fixture 缩略图与空的 Speed Insights 脚本已由 e2e-prod-server 写进 dist，
-// 页面加载全程零 404，本站资源一律不用 route stub —— 这很关键：SW
+// fixture 缩略图已由 e2e-prod-server 写进 dist，Speed Insights 在 E2E
+// 环境显式关闭。页面加载全程零 404，本站资源一律不用 route stub —— 这很关键：SW
 // （clientsClaim + skipWaiting）激活后接管的请求 Playwright route 拦截不到，
-// 只有真实文件才能保证确定性（唯一例外是 Google Fonts，见测试内注释）。
+// 只有真实文件才能保证确定性。字体也来自仓库内的静态资源，不访问外网。
 // 原图域名是虚构的 .test 域，打开查看器后必然加载失败（降级回缩略图态），
 // 因此 console error 断言只覆盖首屏加载 + SW 注册阶段。
 
@@ -36,12 +34,6 @@ test("production bundle serves gallery, viewer route, and service worker", async
       manifestRequests.push(request.url());
     }
   });
-
-  // 唯一的例外 stub：index.html 的 Google Fonts（preload + stylesheet）是
-  // console error 断言窗口内仅剩的真实外网请求，网络抖动会产生
-  // ERR_CONNECTION_CLOSED / preload 警告等非确定噪声。字体 CSS 在 HTML 解析期
-  // 就发起、远早于 SW 激活，route 拦截可靠；回空 CSS 后也不再请求 gstatic。
-  await stubGoogleFonts(page);
 
   await page.goto("/");
 
@@ -78,6 +70,18 @@ test("production bundle serves gallery, viewer route, and service worker", async
       { timeout: 15_000 },
     )
     .toBe("activated");
+
+  // A controlled navigation to a real static document must bypass the SPA
+  // NavigationRoute. Without navigateFallbackDenylist Workbox serves
+  // index.html here, silently breaking feeds/originals/photo SEO shells.
+  const feedPage = await page.context().newPage();
+  const feedResponse = await feedPage.goto("/feed.xml");
+  expect(feedResponse?.headers()["content-type"]).toMatch(
+    /^(?:application|text)\/xml(?:;|$)/,
+  );
+  expect(await feedPage.content()).toContain("<rss");
+  expect(await feedPage.content()).toContain("Afilmory");
+  await feedPage.close();
 
   // 加载 + SW 注册全程无 error 级 console 输出。
   expect(consoleErrors).toEqual([]);

@@ -214,6 +214,7 @@ export const WebGLImageViewer = ({
     >
       <canvas
         ref={canvasRef}
+        aria-hidden="true"
         className={className}
         style={{
           display: "block",

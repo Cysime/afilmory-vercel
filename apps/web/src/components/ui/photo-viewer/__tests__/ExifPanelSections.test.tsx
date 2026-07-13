@@ -1,5 +1,5 @@
 import type { PhotoManifestItem, PickedExif } from "@afilmory/schema";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import type { ComponentPropsWithoutRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -12,12 +12,6 @@ vi.mock("@afilmory/ui", () => ({
     children,
     ...props
   }: ComponentPropsWithoutRef<"span">) => <span {...props}>{children}</span>,
-  MotionButtonBase: ({
-    children,
-    ...props
-  }: ComponentPropsWithoutRef<"button">) => (
-    <button {...props}>{children}</button>
-  ),
 }));
 
 const testTranslator: ExifTranslationAdapter = {
@@ -72,8 +66,7 @@ describe("ExifPanel sections", () => {
     });
   });
 
-  it("renders basic rows and delegates tag clicks to the injected callback", async () => {
-    const onTagClick = vi.fn();
+  it("renders basic rows and exposes tags as shareable links", async () => {
     const currentPhoto = createPhoto();
     const viewModel = createExifPanelViewModel({
       currentPhoto,
@@ -84,7 +77,6 @@ describe("ExifPanel sections", () => {
     render(
       <BasicExifSection
         currentPhoto={currentPhoto}
-        onTagClick={onTagClick}
         t={t}
         viewModel={viewModel}
       />,
@@ -92,7 +84,8 @@ describe("ExifPanel sections", () => {
 
     expect(screen.getByText("A7C0001")).toBeTruthy();
     expect(screen.getByText("HEIC")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "street" }));
-    expect(onTagClick).toHaveBeenCalledWith("street");
+    expect(
+      screen.getByRole("link", { name: "street" }).getAttribute("href"),
+    ).toBe("/?tags=street");
   });
 });

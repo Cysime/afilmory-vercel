@@ -40,7 +40,7 @@ const DialogPortal = ({
 
   return (
     <DialogPrimitive.Portal container={to} forceMount {...props}>
-      <AnimatePresence mode="wait">{open && children}</AnimatePresence>
+      <AnimatePresence>{open && children}</AnimatePresence>
     </DialogPrimitive.Portal>
   );
 };
@@ -82,8 +82,9 @@ const DialogContent = ({
   > | null>;
 }) => (
   <DialogPortal>
-    <DialogOverlay />
+    <DialogOverlay key="dialog-overlay" />
     <DialogPrimitive.Content
+      key="dialog-content"
       ref={ref}
       className={clsxm(
         "fixed left-[50%] top-[50%] z-100000000 w-full max-w-lg",

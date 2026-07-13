@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { GeocodingProviderError } from "./geocoding.js";
 import {
   createGeocodingProvider,
+  MapboxGeocodingProvider,
   NominatimGeocodingProvider,
+  resetGeocodingRateLimitersForTests,
 } from "./geocoding.js";
 
 const locationLogger = vi.hoisted(() => ({
@@ -20,6 +23,7 @@ describe("NominatimGeocodingProvider", () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    resetGeocodingRateLimitersForTests();
   });
 
   it("maps Nominatim address fields to structured admin location data", async () => {
@@ -128,10 +132,67 @@ describe("NominatimGeocodingProvider", () => {
   });
 });
 
+describe("geocoding request failures", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    resetGeocodingRateLimitersForTests();
+  });
+
+  it("classifies authentication errors as non-retryable", async () => {
+    const fetchMock = vi.fn<typeof fetch>(
+      async () =>
+        new Response("unauthorized", {
+          status: 401,
+          statusText: "Unauthorized",
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new MapboxGeocodingProvider("auth-test-token", "en");
+
+    await expect(provider.reverseGeocode(1, 2)).rejects.toMatchObject({
+      kind: "authentication",
+      retryable: false,
+      status: 401,
+    } satisfies Partial<GeocodingProviderError>);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts a request at the configured network timeout", async () => {
+    const fetchMock = vi.fn<typeof fetch>(
+      async () => await new Promise<Response>(() => {}),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new MapboxGeocodingProvider("timeout-test-token", "en", 5);
+    // Isolate timeout classification from retry timing; retry behavior is
+    // covered independently by the provider's existing retry tests.
+    Object.assign(provider, { maxRetries: 1 });
+
+    await expect(provider.reverseGeocode(1, 2)).rejects.toMatchObject({
+      kind: "timeout",
+      retryable: true,
+    } satisfies Partial<GeocodingProviderError>);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("returns null only for a confirmed no-result response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(
+        async () =>
+          new Response(JSON.stringify({ features: [] }), { status: 200 }),
+      ),
+    );
+    const provider = new MapboxGeocodingProvider("not-found-test-token", "en");
+    await expect(provider.reverseGeocode(1, 2)).resolves.toBeNull();
+  });
+});
+
 describe("createGeocodingProvider", () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    resetGeocodingRateLimitersForTests();
   });
 
   it("uses Mapbox in auto mode when a token is configured", async () => {

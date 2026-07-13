@@ -1,20 +1,13 @@
 /* eslint-disable no-console */
 
 import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import type { PhotoManifestItem } from "@afilmory/schema";
 import { assertManifest } from "@afilmory/schema";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// packages/build-assets/src -> 仓库根需要上跳三层（原先在根 scripts/ 时是一层）
-const monorepoRoot = path.resolve(__dirname, "../../..");
-const manifestPath = path.join(
-  monorepoRoot,
-  "generated",
-  "photos-manifest.json",
-);
+import { resolveBuildManifestPath } from "./manifest-path.ts";
+
+const manifestPath = resolveBuildManifestPath();
 
 class BuildTimePhotoLoader {
   private photoMap: Map<string, PhotoManifestItem> | null = null;

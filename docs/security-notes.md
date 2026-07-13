@@ -1,6 +1,6 @@
 # Security Notes
 
-Working notes for security-relevant configuration that is intentionally *not*
+Working notes for security-relevant configuration that is intentionally _not_
 in its ideal end state yet. Each section explains what the current state is,
 why it is that way, and what a verified path forward looks like.
 
@@ -19,14 +19,14 @@ be done blind.
 ```
 Content-Security-Policy:
   default-src 'self';
-  script-src 'self' 'unsafe-inline' 'unsafe-eval'
-             https://static.cloudflareinsights.com https://va.vercel-scripts.com;
+  script-src 'self' 'unsafe-inline' 'unsafe-eval';
   worker-src 'self' blob:;
-  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
-  font-src 'self' https://fonts.gstatic.com;
+  style-src 'self' 'unsafe-inline';
+  font-src 'self';
   img-src 'self' blob: data: https:;
   connect-src 'self' blob: https:;
   media-src 'self' blob: https:;
+  manifest-src 'self'; frame-src 'none'; frame-ancestors 'none';
   object-src 'none'; base-uri 'self'; form-action 'self';
 ```
 
@@ -35,13 +35,12 @@ Content-Security-Policy:
 The production `index.html` deliberately carries inline `<script>` content
 (see `apps/web/index.html` and `apps/web/plugins/vite/data-inject.ts`):
 
-| Inline content | Source | Stable across builds? |
-| --- | --- | --- |
-| `#startup-metrics` script | authored in `index.html` | yes (changes only when the file is edited) |
-| `#config` script | authored in `index.html` | yes |
-| `#config-runtime` script | injected at build from `site.config.build.ts` | no — embeds site config JSON, which can derive from env (`SITE_URL`, …) |
-| `#manifest` script | injected at build (`manifest-inline-snippet.ts`) | **no — embeds the per-build hashed manifest URL** `/assets/photos-manifest.<sha256-prefix>.json` |
-| `onload="this.onload=null;this.rel='stylesheet'"` on the Google Fonts preload `<link>` | authored in `index.html` | yes, but it is an inline *event handler*, see below |
+| Inline content            | Source                                           | Stable across builds?                                                                            |
+| ------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `#startup-metrics` script | authored in `index.html`                         | yes (changes only when the file is edited)                                                       |
+| `#config` script          | authored in `index.html`                         | yes                                                                                              |
+| `#config-runtime` script  | injected at build from `site.config.build.ts`    | no — embeds site config JSON, which can derive from env (`SITE_URL`, …)                          |
+| `#manifest` script        | injected at build (`manifest-inline-snippet.ts`) | **no — embeds the per-build hashed manifest URL** `/assets/photos-manifest.<sha256-prefix>.json` |
 
 The `#manifest` script is the important one: it is the manifest
 early-discovery mechanism. It starts a `fetch()` for the manifest while the
@@ -51,7 +50,7 @@ download (~86 KB twice — the request parameters of a preload cannot match the
 runtime `fetch`). Removing the inline script means either giving up early
 discovery or paying an extra render-blocking request (option C below).
 
-Because the manifest URL contains a hash of the manifest *content*, and the
+Because the manifest URL contains a hash of the manifest _content_, and the
 manifest is produced by the photo builder at build time, the exact bytes of
 this inline script are unknowable before the build runs.
 
@@ -74,15 +73,11 @@ but not a pristine CSP.
    inline scripts change per build. Their `sha256-…` hashes cannot be
    pre-committed; they exist only after `pnpm build` has run.
 2. **Hashes are all-or-nothing per directive.** In CSP2+, the presence of any
-   hash or nonce in `script-src` makes browsers *ignore* `'unsafe-inline'`.
+   hash or nonce in `script-src` makes browsers _ignore_ `'unsafe-inline'`.
    There is no incremental migration: the moment one hash is added, every
    inline script that is not hashed stops executing. A partial rollout would
    take down the manifest bootstrap in production.
-3. **Inline event handlers are not covered by hashes.** Script hashes
-   authorize inline `<script>` *elements* only. The fonts-preload
-   `onload="…"` attribute would additionally need `'unsafe-hashes'` (weaker,
-   and still hash-maintenance) or a refactor to remove the inline handler.
-4. **`style-src 'unsafe-inline'` is a separate problem.** The splash screen
+3. **`style-src 'unsafe-inline'` is a separate problem.** The splash screen
    uses inline `<style>` blocks and `style=""` attributes, and React sets
    style attributes at runtime; those are unaffected by script hashes and are
    out of scope here.
@@ -104,8 +99,8 @@ The inline scripts are not raw string concatenation:
   (`manifest-inline-snippet.ts`) hard-fails the build if the bundled output
   contains `</script` or `<!--`.
 - Defense-in-depth headers in `vercel.json`: `X-Content-Type-Options:
-  nosniff`, `X-Frame-Options: DENY`, HSTS with preload, `Referrer-Policy:
-  strict-origin-when-cross-origin`, `Permissions-Policy`, and CSP
+nosniff`, `X-Frame-Options: DENY`, HSTS with preload, `Referrer-Policy:
+strict-origin-when-cross-origin`, `Permissions-Policy`, and CSP
   `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`.
 - `index.html` is served with `no-cache, no-store, must-revalidate`, so a
   future CSP/HTML change propagates immediately (no stale-hash window from
@@ -118,7 +113,7 @@ The inline scripts are not raw string concatenation:
 compute `sha256` of every inline script in `apps/web/dist/index.html` and
 patch the CSP header value in `vercel.json`.
 
-*Timing caveat — needs deploy verification.* `vercel.json` necessarily gets
+_Timing caveat — needs deploy verification._ `vercel.json` necessarily gets
 parsed **before** the build (it defines `buildCommand` itself). What is not
 documented is whether Vercel re-reads `headers`/`routes` from the workspace
 copy of `vercel.json` **after** `buildCommand` finishes, or whether the whole
@@ -129,7 +124,7 @@ verify with a throwaway deploy** (patch the header to a marker value during
 build, then inspect the response header). If the snapshot interpretation is
 correct, this approach is dead on arrival.
 
-**B. Build Output API (`.vercel/output/config.json`).** This *is* the
+**B. Build Output API (`.vercel/output/config.json`).** This _is_ the
 documented mechanism for build-time-generated routing and headers: the build
 emits `.vercel/output/config.json` (routes with `headers`) plus
 `.vercel/output/static/`, and Vercel reads that config after the build by
@@ -145,13 +140,12 @@ of course.
 as regular assets; then `script-src 'self' …` covers them with **no hashes
 in the header at all**, and `'unsafe-inline'` can be dropped from
 `script-src` without touching `vercel.json` at deploy time. Costs:
+
 - the manifest early-discovery fetch now starts only after an extra
   round-trip for the bootstrap script (mitigated on repeat visits by
   immutable caching, but the first-visit win of the inline script is
   reduced — measure before/after with the startup marks);
-- `startup-metrics` loses its earliest-possible measurement point;
-- the fonts-preload inline `onload` handler must still be removed
-  (external hashed files do nothing for event handler attributes).
+- `startup-metrics` loses its earliest-possible measurement point.
 
 **D. Nonces: not possible.** This is a fully static deployment; `index.html`
 is a cached static file, and there is no per-request server to mint nonces.
@@ -164,10 +158,11 @@ startup latency and should be judged against the startup-metrics marks.
 Option B is the correct choice if we ever need other build-time-computed
 headers. Option A should only be attempted after the marker-value experiment
 described above. In every option, the final `script-src` keeps
-`'unsafe-eval'` (HEIC wasm) and the third-party analytics hosts, and the
-fonts-preload `onload` attribute must be refactored away first.
+`'unsafe-eval'` for the current HEIC wasm decoder. Analytics are currently
+loaded from same-origin endpoints; any future external script origin must be
+added deliberately instead of widening the policy generically.
 
 Any change here **must** be validated on a real Vercel deployment:
 load a gallery with HEIC originals (exercises `'unsafe-eval'`), confirm the
 manifest bootstrap runs (no CSP violations in the console), and check the
-fonts swap.
+bundled Geist font loads from the same origin.

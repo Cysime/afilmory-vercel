@@ -1,6 +1,7 @@
 import { thumbnailExists } from "../../image/thumbnail.js";
 import { logger } from "../../logger/index.js";
 import { findPhotoIdCollisionKeys } from "../../photo/id.js";
+import { getStorageObjectVersion } from "../../photo/live-photo-handler.js";
 import { decidePhotoWork } from "../../photo/work-decision.js";
 import type { StorageObject } from "../../storage/interfaces.js";
 import type { PhotoManifestItem } from "../../types/photo.js";
@@ -16,6 +17,7 @@ export class DiffPlanner {
     session: BuildSession,
     imageObjects: StorageObject[],
     existingManifestMap: Map<string, PhotoManifestItem>,
+    livePhotoMap: Map<string, StorageObject> = new Map<string, StorageObject>(),
   ): Promise<DiffPlan> {
     const { options } = session;
 
@@ -37,7 +39,12 @@ export class DiffPlanner {
 
     const s3ImageKeys = new Set(imageObjects.map((obj) => obj.key));
     const tasksToProcess = this.sortByWorkCost(
-      await this.filterTaskImages(session, imageObjects, existingManifestMap),
+      await this.filterTaskImages(
+        session,
+        imageObjects,
+        existingManifestMap,
+        livePhotoMap,
+      ),
     );
 
     await session.emit("afterTasksPrepared", {
@@ -60,10 +67,13 @@ export class DiffPlanner {
     session: BuildSession,
     imageObjects: StorageObject[],
     existingManifestMap: Map<string, PhotoManifestItem>,
+    livePhotoMap: Map<string, StorageObject>,
   ): Promise<StorageObject[]> {
     const { options } = session;
 
     const tasksToProcess: StorageObject[] = [];
+    const reprocessKeys = new Set(options.reprocessKeys ?? []);
+    let addedLivePhotoReprocessKey = false;
 
     // 与 worker 侧的 shouldProcessPhoto 共享同一判定实现（decidePhotoWork），
     // 避免两处级联漂移导致增量构建静默出错。
@@ -80,12 +90,37 @@ export class DiffPlanner {
           thumbnailExists(
             session.getPhotoIdForKey(key, existingItem),
             session.config.output.thumbnailsDir,
+            existingItem?.thumbnailUrl,
           ),
       );
 
-      if (shouldProcess) {
+      const currentLivePhoto = livePhotoMap.get(key);
+      const existingLivePhoto =
+        existingItem?.video?.type === "live-photo"
+          ? existingItem.video
+          : undefined;
+      const livePhotoChanged = currentLivePhoto
+        ? !existingLivePhoto ||
+          existingLivePhoto.s3Key !== currentLivePhoto.key ||
+          existingLivePhoto.version !==
+            getStorageObjectVersion(currentLivePhoto)
+        : Boolean(existingLivePhoto);
+
+      // Live Photo 的视频旁路对象不参与图片本身的 needsUpdate 判定。
+      // 将对应图片显式加入 reprocessKeys，确保 worker 二次检查时不会把
+      // DiffPlanner 已经排入队列的任务再次当作“未变化”跳过。
+      if (livePhotoChanged && !reprocessKeys.has(key)) {
+        reprocessKeys.add(key);
+        addedLivePhotoReprocessKey = true;
+      }
+
+      if (shouldProcess || livePhotoChanged) {
         tasksToProcess.push(obj);
       }
+    }
+
+    if (addedLivePhotoReprocessKey) {
+      options.reprocessKeys = [...reprocessKeys];
     }
 
     return tasksToProcess;

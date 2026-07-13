@@ -1,5 +1,4 @@
 import type { PhotoManifestItem } from "@afilmory/schema";
-import { MotionButtonBase } from "@afilmory/ui";
 import { isNil } from "es-toolkit/compat";
 import type { ReactNode } from "react";
 import { Fragment, lazy, Suspense } from "react";
@@ -11,6 +10,7 @@ import {
   StreamlineImageAccessoriesLensesPhotosCameraShutterPicturePhotographyPicturesPhotoLens as LensIcon,
   TablerAperture,
 } from "~/icons";
+import { buildSingleTagFilterSearch } from "~/lib/gallery-filter-url";
 
 import type { ExifPanelViewModel } from "./exif-panel-view-model";
 import { ExifRow as Row } from "./ExifRow";
@@ -24,12 +24,10 @@ type ExifPanelTranslation = (key: string) => string;
 
 export function BasicExifSection({
   currentPhoto,
-  onTagClick,
   t,
   viewModel,
 }: {
   currentPhoto: PhotoManifestItem;
-  onTagClick?: (tag: string) => void;
   t: ExifPanelTranslation;
   viewModel: ExifPanelViewModel;
 }) {
@@ -88,7 +86,7 @@ export function BasicExifSection({
       </div>
 
       <CaptureParameterBadges t={t} viewModel={viewModel} />
-      <TagSection currentPhoto={currentPhoto} onTagClick={onTagClick} t={t} />
+      <TagSection currentPhoto={currentPhoto} t={t} />
     </div>
   );
 }
@@ -172,11 +170,9 @@ function ExifBadge({
 
 function TagSection({
   currentPhoto,
-  onTagClick,
   t,
 }: {
   currentPhoto: PhotoManifestItem;
-  onTagClick?: (tag: string) => void;
   t: ExifPanelTranslation;
 }) {
   if (!currentPhoto.tags || currentPhoto.tags.length === 0) {
@@ -190,14 +186,15 @@ function TagSection({
       </h4>
       <div className="-ml-1 flex flex-wrap gap-1.5">
         {currentPhoto.tags.map((tag) => (
-          <MotionButtonBase
-            type="button"
-            onClick={() => onTagClick?.(tag)}
+          <a
+            href={`/${buildSingleTagFilterSearch(tag)}`}
+            target="_blank"
+            rel="noopener noreferrer"
             key={tag}
-            className="glassmorphic-btn border-accent/20 bg-accent/10 focus-visible:ring-accent/45 inline-flex cursor-pointer items-center rounded-full border px-2 py-1 text-xs text-white/90 backdrop-blur-sm focus-visible:ring-2"
+            className="glassmorphic-btn border-accent/20 bg-accent/10 focus-visible:ring-accent/45 inline-flex min-h-11 cursor-pointer items-center rounded-full border px-3 py-1 text-xs text-white/90 backdrop-blur-sm focus-visible:ring-2"
           >
             {tag}
-          </MotionButtonBase>
+          </a>
         ))}
       </div>
     </div>

@@ -16,10 +16,10 @@ import {
 import { useTranslation } from "react-i18next";
 import type { Swiper as SwiperType } from "swiper";
 
+import { useDialogFocusManagement } from "~/hooks/useDialogFocusManagement";
 import { useExifPanel } from "~/hooks/useExifPanel";
 import { useMobile } from "~/hooks/useMobile";
 import { usePhotoNavigation } from "~/hooks/usePhotoNavigation";
-import { buildSingleTagFilterSearch } from "~/lib/gallery-filter-url";
 import type { PhotoManifest } from "~/types/photo";
 
 import { PhotoViewerTransitionPreview } from "./animations/PhotoViewerTransitionPreview";
@@ -189,19 +189,18 @@ export const PhotoViewer = ({
     [onIndexChange],
   );
 
-  const handleTagClick = useCallback((tag: string) => {
-    window.open(
-      `/${buildSingleTagFilterSearch(tag)}`,
-      "_blank",
-      "noopener,noreferrer",
-    );
-  }, []);
-
   usePhotoViewerKeyboard({
     isOpen,
     onClose,
     onNext: handleNext,
     onPrevious: handlePrevious,
+  });
+
+  useDialogFocusManagement({
+    dialogRef: containerRef,
+    initialFocusSelector: "[data-photo-viewer-close]",
+    isOpen,
+    returnFocusElement: triggerElement,
   });
 
   if (!currentPhoto) return null;
@@ -346,7 +345,6 @@ export const PhotoViewer = ({
                       exifData={currentPhoto.exif}
                       visible={isViewerContentVisible}
                       onClose={isMobile ? closeExifPanel : undefined}
-                      onTagClick={handleTagClick}
                     />
                   )}
                 </AnimatePresenceOnlyMobile>

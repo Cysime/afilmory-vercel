@@ -51,12 +51,49 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const isString = (value: unknown): value is string => typeof value === "string";
 
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.trim().length > 0;
+
+const isPortablePhotoId = (value: unknown): value is string => {
+  if (!isNonEmptyString(value) || value.normalize("NFC") !== value)
+    return false;
+  if (new TextEncoder().encode(value).length > 170) return false;
+  if (
+    /[<>:"/\\|?*]/.test(value) ||
+    [...value].some((character) => (character.codePointAt(0) ?? 0) <= 0x1f) ||
+    /[. ]$/.test(value)
+  ) {
+    return false;
+  }
+  return !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(value);
+};
+
+const isDateString = (value: unknown): value is string =>
+  isNonEmptyString(value) && Number.isFinite(Date.parse(value));
+
 const isBoolean = (value: unknown): value is boolean =>
   typeof value === "boolean";
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
+
+const isPositiveNumber = (value: unknown): value is number =>
+  isFiniteNumber(value) && value > 0;
+
+const isPositiveInteger = (value: unknown): value is number =>
+  Number.isSafeInteger(value) &&
+  (value as number) > 0 &&
+  (value as number) <= 1_000_000;
+
+const isNonNegativeNumber = (value: unknown): value is number =>
+  isFiniteNumber(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER;
+
+const isPercentage = (value: unknown): value is number =>
+  isFiniteNumber(value) && value >= 0 && value <= 100;
+
+const isRatio = (value: unknown): value is number =>
+  isFiniteNumber(value) && value >= 0 && value <= 1;
 
 function isStringArray(value: unknown): value is string[] {
   return (
@@ -178,9 +215,10 @@ function arrayField<T>(shape: Shape): Field<T[]> {
 
 // 常用字段的简写工厂（文案与历史 issue 逐字一致）
 const str = () => field(isString, "must be a string", "");
-const num = (fallback: number) =>
-  field(isFiniteNumber, "must be a number", fallback);
-const requiredStr = () => requiredField(isString, "must be a string");
+const requiredStr = () =>
+  requiredField(isNonEmptyString, "must be a non-empty string");
+const nonEmptyStr = () =>
+  requiredField(isNonEmptyString, "must be a non-empty string");
 const optStr = (message = "must be a string") =>
   optionalField(isString, message);
 const presentStr = () => optStr("must be a string when present");
@@ -280,10 +318,10 @@ const isToneType = (value: unknown): value is ToneType =>
 
 const toneAnalysisShape: Shape = {
   toneType: field(isToneType, "is invalid", "normal" as ToneType),
-  brightness: num(0),
-  contrast: num(0),
-  shadowRatio: num(0),
-  highlightRatio: num(0),
+  brightness: field(isPercentage, "must be between 0 and 100", 0),
+  contrast: field(isPercentage, "must be between 0 and 100", 0),
+  shadowRatio: field(isRatio, "must be between 0 and 1", 0),
+  highlightRatio: field(isRatio, "must be between 0 and 1", 0),
 } satisfies ShapeFor<ToneAnalysis>;
 
 const toneAnalysisField = nullableObjectField<ToneAnalysis>(toneAnalysisShape);
@@ -291,8 +329,18 @@ const toneAnalysisField = nullableObjectField<ToneAnalysis>(toneAnalysisShape);
 // Omit 列出的键不进 shape，由 locationField.normalize 手工抢救（见下）；
 // LocationInfo 新增字段会在这里编译失败，倒逼作者显式选择两种归属之一。
 const locationShape: Shape = {
-  latitude: num(0),
-  longitude: num(0),
+  latitude: field(
+    (value): value is number =>
+      isFiniteNumber(value) && value >= -90 && value <= 90,
+    "must be between -90 and 90",
+    0,
+  ),
+  longitude: field(
+    (value): value is number =>
+      isFiniteNumber(value) && value >= -180 && value <= 180,
+    "must be between -180 and 180",
+    0,
+  ),
 } satisfies ShapeFor<
   Omit<
     LocationInfo,
@@ -372,14 +420,18 @@ type LivePhoto = Extract<VideoSource, { type: "live-photo" }>;
 type MotionPhoto = Extract<VideoSource, { type: "motion-photo" }>;
 
 const livePhotoShape: Shape = {
-  videoUrl: requiredStr(),
-  s3Key: requiredStr(),
+  videoUrl: nonEmptyStr(),
+  s3Key: nonEmptyStr(),
+  version: presentStr(),
 } satisfies ShapeFor<Omit<LivePhoto, "type">>;
 
 const motionPhotoShape: Shape = {
-  offset: requiredField(isFiniteNumber, "must be a number"),
-  size: optionalField(isFiniteNumber, "must be a number"),
-  presentationTimestamp: optionalField(isFiniteNumber, "must be a number"),
+  offset: requiredField(isNonNegativeNumber, "must be a non-negative number"),
+  size: optionalField(isNonNegativeNumber, "must be a non-negative number"),
+  presentationTimestamp: optionalField(
+    isNonNegativeNumber,
+    "must be a non-negative number",
+  ),
 } satisfies ShapeFor<Omit<MotionPhoto, "type">>;
 
 const videoField: Field<VideoSource | undefined> = {
@@ -447,21 +499,32 @@ function normalizeExif(value: unknown): PickedExif | null {
 // 键顺序即历史上 item 字面量的构造顺序，保证归一化输出的 JSON 键序不变。
 
 const photoShape: Shape = {
-  id: str(),
-  originalUrl: str(),
-  thumbnailUrl: str(),
+  id: requiredField(
+    isPortablePhotoId,
+    "must be a non-empty portable identifier",
+  ),
+  originalUrl: nonEmptyStr(),
+  thumbnailUrl: nonEmptyStr(),
   thumbHash: field(
     (value): value is string | null =>
-      value === null || typeof value === "string",
-    "must be null or a string",
+      value === null ||
+      (typeof value === "string" &&
+        value.length > 0 &&
+        value.length % 2 === 0 &&
+        /^[\da-f]+$/i.test(value)),
+    "must be null or a non-empty even-length hexadecimal string",
     null,
   ),
-  width: num(0),
-  height: num(0),
-  aspectRatio: num(1),
-  s3Key: str(),
-  lastModified: str(),
-  size: num(0),
+  width: field(isPositiveInteger, "must be a positive integer", 1),
+  height: field(isPositiveInteger, "must be a positive integer", 1),
+  aspectRatio: field(isPositiveNumber, "must be a positive number", 1),
+  s3Key: nonEmptyStr(),
+  lastModified: field(
+    isDateString,
+    "must be a non-empty valid date string",
+    "1970-01-01T00:00:00.000Z",
+  ),
+  size: field(isNonNegativeNumber, "must be a non-negative number", 0),
   // etag 历史上从不参与校验（严格模式也放行任意类型），仅归一化
   etag: {
     check: () => [],
@@ -475,7 +538,11 @@ const photoShape: Shape = {
   toneAnalysis: toneAnalysisField,
   location: locationField,
   title: str(),
-  dateTaken: str(),
+  dateTaken: field(
+    isDateString,
+    "must be a non-empty valid date string",
+    "1970-01-01T00:00:00.000Z",
+  ),
   tags: {
     check: (value) => (isStringArray(value) ? [] : [" must be a string array"]),
     // 每次返回新数组，避免共享的 fallback 实例被调用方原地修改后串扰
@@ -499,12 +566,21 @@ function validatePhoto(
   const issues = checkShape(photoShape, value).map(
     (message) => `${path}${message}`,
   );
-  // photoShape 没有 required 字段：任何对象都能归一化出 item；
-  // 是否保留由宽松入口按寻址字段（id/originalUrl/s3Key）另行判定。
-  const item = normalizeShape<PhotoManifestItem>(
-    photoShape,
-    value,
-  ) as PhotoManifestItem;
+  const item = normalizeShape<PhotoManifestItem>(photoShape, value);
+  if (item) {
+    const expectedAspectRatio = item.width / item.height;
+    const tolerance = Math.max(0.000_001, expectedAspectRatio * 0.01);
+    if (Math.abs(item.aspectRatio - expectedAspectRatio) > tolerance) {
+      issues.push(`${path}.aspectRatio must match width / height`);
+      // Lenient output must itself satisfy the invariant so a failed repair can
+      // still be used as a safe recovery baseline.
+      item.aspectRatio = expectedAspectRatio;
+    }
+    if (item.video?.type === "live-photo" && item.video.s3Key === item.s3Key) {
+      issues.push(`${path}.video.s3Key must reference a different object`);
+      delete item.video;
+    }
+  }
   return { item, issues };
 }
 
@@ -563,8 +639,8 @@ function validateEnvelope(
   if (input.version !== CURRENT_MANIFEST_VERSION) {
     issues.push(`version must be ${CURRENT_MANIFEST_VERSION}`);
   }
-  if (typeof input.generatedAt !== "string") {
-    issues.push("generatedAt must be a string");
+  if (!isDateString(input.generatedAt)) {
+    issues.push("generatedAt must be a non-empty valid date string");
   }
   if (strictSource) {
     issues.push(
@@ -600,13 +676,74 @@ export function validateManifest(input: unknown): ManifestValidationResult {
   });
 
   const photos: PhotoManifestItem[] = [];
+  const idIndexes = new Map<string, number>();
+  const keyIndexes = new Map<string, number>();
   if (Array.isArray(input.photos)) {
     for (const [index, photo] of input.photos.entries()) {
       const { item, issues: photoIssues } = validatePhoto(photo, index);
       issues.push(...photoIssues);
       if (item) {
+        const canonicalId = item.id.normalize("NFC").toLowerCase();
+        const previousIdIndex = idIndexes.get(canonicalId);
+        if (previousIdIndex !== undefined) {
+          issues.push(
+            `photos[${index}].id duplicates photos[${previousIdIndex}].id`,
+          );
+        } else {
+          idIndexes.set(canonicalId, index);
+        }
+        const previousKeyIndex = keyIndexes.get(item.s3Key);
+        if (previousKeyIndex !== undefined) {
+          issues.push(
+            `photos[${index}].s3Key duplicates photos[${previousKeyIndex}].s3Key`,
+          );
+        } else {
+          keyIndexes.set(item.s3Key, index);
+        }
         photos.push(item);
       }
+    }
+  }
+
+  const normalizedIndexes = normalizeIndexes(input.indexes);
+  const cameraNames = new Set<string>();
+  for (const [index, camera] of normalizedIndexes.cameras.entries()) {
+    if (cameraNames.has(camera.displayName)) {
+      issues.push(`indexes.cameras[${index}].displayName must be unique`);
+    }
+    cameraNames.add(camera.displayName);
+    const referenced = photos.some((photo) => {
+      const make = photo.exif?.Make;
+      const model = photo.exif?.Model;
+      return (
+        typeof make === "string" &&
+        typeof model === "string" &&
+        make.trim() === camera.make &&
+        model.trim() === camera.model
+      );
+    });
+    if (!referenced) {
+      issues.push(`indexes.cameras[${index}] must reference a photo`);
+    }
+  }
+  const lensNames = new Set<string>();
+  for (const [index, lens] of normalizedIndexes.lenses.entries()) {
+    if (lensNames.has(lens.displayName)) {
+      issues.push(`indexes.lenses[${index}].displayName must be unique`);
+    }
+    lensNames.add(lens.displayName);
+    const referenced = photos.some((photo) => {
+      const model = photo.exif?.LensModel;
+      const make = photo.exif?.LensMake;
+      return (
+        typeof model === "string" &&
+        model.trim() === lens.model &&
+        (lens.make === undefined ||
+          (typeof make === "string" && make.trim() === lens.make))
+      );
+    });
+    if (!referenced) {
+      issues.push(`indexes.lenses[${index}] must reference a photo`);
     }
   }
 
@@ -623,7 +760,7 @@ export function validateManifest(input: unknown): ManifestValidationResult {
       generatedAt: input.generatedAt as string,
       source: sourceField.normalize(input.source),
       photos,
-      indexes: normalizeIndexes(input.indexes),
+      indexes: normalizedIndexes,
     }),
   };
 }
@@ -646,9 +783,16 @@ export interface SkippedPhoto {
   issues: string[];
 }
 
+export interface RepairedPhoto extends SkippedPhoto {
+  /** Normalized key used by the builder to force this cached item through the pipeline. */
+  s3Key: string;
+}
+
 export interface LenientManifestParseResult {
   manifest: AfilmoryManifest;
   skipped: SkippedPhoto[];
+  /** Photos retained after normalization but not safe to reuse as clean cache entries. */
+  repaired: RepairedPhoto[];
 }
 
 /**
@@ -684,17 +828,63 @@ export function parseManifestLenient(
 
   const photos: PhotoManifestItem[] = [];
   const skipped: SkippedPhoto[] = [];
+  const repairedByIndex = new Map<number, RepairedPhoto>();
+  const idIndexes = new Map<string, number>();
+  const keyIndexes = new Map<string, number>();
+
+  const markRepaired = (
+    index: number,
+    s3Key: string,
+    repairIssues: string[],
+  ) => {
+    const previous = repairedByIndex.get(index);
+    if (previous) {
+      previous.issues.push(
+        ...repairIssues.filter((issue) => !previous.issues.includes(issue)),
+      );
+    } else {
+      repairedByIndex.set(index, { index, s3Key, issues: [...repairIssues] });
+    }
+  };
+
   for (const [index, photo] of (input.photos as unknown[]).entries()) {
     const { item, issues } = validatePhoto(photo, index);
     // 致命：无法构造照片对象，或缺少用于寻址/路由/查看的核心字段。其余问题
     // （损坏的可选字段、可默认的数值）已被 normalizer 抢救，照片仍能正常渲染，
     // 予以保留——只有真正无法使用的照片才丢弃并记入 `skipped`。
-    const isFatal =
-      item === null || !item.id || !item.originalUrl || !item.s3Key;
-    if (isFatal) {
+    if (!item) {
       skipped.push({ index, issues });
     } else {
+      const duplicateIssues: string[] = [];
+      const canonicalId = item.id.normalize("NFC").toLowerCase();
+      const previousIdIndex = idIndexes.get(canonicalId);
+      if (previousIdIndex !== undefined) {
+        const issue = `photos[${index}].id duplicates photos[${previousIdIndex}].id`;
+        duplicateIssues.push(issue);
+        const previous = photos.find(
+          (candidate) =>
+            candidate.id.normalize("NFC").toLowerCase() === canonicalId,
+        );
+        if (previous) markRepaired(previousIdIndex, previous.s3Key, [issue]);
+      }
+      const previousKeyIndex = keyIndexes.get(item.s3Key);
+      if (previousKeyIndex !== undefined) {
+        const issue = `photos[${index}].s3Key duplicates photos[${previousKeyIndex}].s3Key`;
+        duplicateIssues.push(issue);
+        const previous = photos.find(
+          (candidate) => candidate.s3Key === item.s3Key,
+        );
+        if (previous) markRepaired(previousKeyIndex, previous.s3Key, [issue]);
+      }
+      if (duplicateIssues.length > 0) {
+        skipped.push({ index, issues: [...issues, ...duplicateIssues] });
+        continue;
+      }
+
+      idIndexes.set(canonicalId, index);
+      keyIndexes.set(item.s3Key, index);
       photos.push(item);
+      if (issues.length > 0) markRepaired(index, item.s3Key, issues);
     }
   }
 
@@ -706,5 +896,6 @@ export function parseManifestLenient(
       indexes,
     }),
     skipped,
+    repaired: [...repairedByIndex.values()].sort((a, b) => a.index - b.index),
   };
 }

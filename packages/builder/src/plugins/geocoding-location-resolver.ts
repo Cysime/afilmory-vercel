@@ -2,11 +2,12 @@ import { normalizeLocationInfoAdminAliases } from "@afilmory/schema/geo";
 
 import type { GeocodingProvider } from "../photo/geocoding.js";
 import {
-  extractLocationFromGPS,
+  lookupLocationFromGPS,
   parseGPSCoordinates,
 } from "../photo/geocoding.js";
 import type { PhotoManifestItem, PickedExif } from "../types/photo.js";
 import type {
+  GeocodingCacheDelta,
   GeocodingCacheLogger,
   GeocodingCacheState,
 } from "./geocoding-cache.js";
@@ -15,6 +16,7 @@ import {
   composeLocalizedLocation,
   ensurePersistentCacheLoaded,
   hasRequiredLocalizedLocation,
+  isFreshNegativeCacheEntry,
   normalizeCachePath,
   seedCacheEntryFromExistingLocation,
 } from "./geocoding-cache.js";
@@ -23,6 +25,7 @@ import type { ResolvedGeocodingSettings } from "./geocoding-options.js";
 export interface LocationResolutionResult {
   attempted: boolean;
   updated: boolean;
+  cacheDelta?: GeocodingCacheDelta;
 }
 
 export type GeocodingProviderResolver = (
@@ -80,6 +83,8 @@ export async function resolveLocationForItem({
     latitude,
     longitude,
   );
+  let cacheChanged = seededFromExisting;
+  const deletedLocales: string[] = [];
   if (seededFromExisting) {
     cacheEntry.updatedAt ??= new Date().toISOString();
     state.cacheDirty = true;
@@ -88,7 +93,21 @@ export async function resolveLocationForItem({
   let attempted = false;
   for (const locale of settings.locales) {
     if (locale in cacheEntry.locales) {
-      continue;
+      if (
+        cacheEntry.locales[locale] !== null ||
+        isFreshNegativeCacheEntry(cacheEntry, locale)
+      ) {
+        continue;
+      }
+      // Legacy null entries had no TTL and stale negative entries must be
+      // retried. Never let a temporary outage become a permanent no-result.
+      delete cacheEntry.locales[locale];
+      deletedLocales.push(locale);
+      if (cacheEntry.notFoundExpiresAt) {
+        delete cacheEntry.notFoundExpiresAt[locale];
+      }
+      cacheChanged = true;
+      state.cacheDirty = true;
     }
 
     const provider = getProvider(locale);
@@ -97,17 +116,33 @@ export async function resolveLocationForItem({
     }
 
     attempted = true;
-    const location = await extractLocationFromGPS(
+    const lookup = await lookupLocationFromGPS(
       latitude,
       longitude,
       provider,
       logger,
     );
-    cacheEntry.locales[locale] = location
-      ? normalizeLocationInfoAdminAliases(location, locale)
-      : null;
+    if (lookup.status === "error" || lookup.status === "invalid") {
+      continue;
+    }
+    if (lookup.status === "found") {
+      cacheEntry.locales[locale] = normalizeLocationInfoAdminAliases(
+        lookup.location,
+        locale,
+      );
+      if (cacheEntry.notFoundExpiresAt) {
+        delete cacheEntry.notFoundExpiresAt[locale];
+      }
+    } else {
+      cacheEntry.locales[locale] = null;
+      cacheEntry.notFoundExpiresAt ??= {};
+      cacheEntry.notFoundExpiresAt[locale] = new Date(
+        Date.now() + settings.negativeCacheTtlMs,
+      ).toISOString();
+    }
     cacheEntry.updatedAt = new Date().toISOString();
     state.cacheDirty = true;
+    cacheChanged = true;
   }
 
   state.cache.set(cacheKey, cacheEntry);
@@ -122,6 +157,15 @@ export async function resolveLocationForItem({
     return {
       attempted: attempted || !wasComplete,
       updated: true,
+      ...(cacheChanged
+        ? {
+            cacheDelta: {
+              key: cacheKey,
+              entry: cacheEntry,
+              ...(deletedLocales.length > 0 ? { deletedLocales } : {}),
+            },
+          }
+        : {}),
     };
   }
 
@@ -132,5 +176,14 @@ export async function resolveLocationForItem({
   return {
     attempted,
     updated: false,
+    ...(cacheChanged
+      ? {
+          cacheDelta: {
+            key: cacheKey,
+            entry: cacheEntry,
+            ...(deletedLocales.length > 0 ? { deletedLocales } : {}),
+          },
+        }
+      : {}),
   };
 }

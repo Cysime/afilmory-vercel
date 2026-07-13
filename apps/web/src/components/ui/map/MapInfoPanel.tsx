@@ -103,7 +103,10 @@ export const MapInfoPanel = ({
           >
             {/* Icon container with enhanced styling */}
             <div className="bg-blue/10 ring-blue/20 flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl ring-1 ring-inset">
-              <i className="i-mingcute-map-line text-blue text-lg" />
+              <i
+                className="i-mingcute-map-line text-blue text-lg"
+                aria-hidden="true"
+              />
             </div>
 
             <div className="min-w-0 flex-1">
@@ -165,7 +168,7 @@ export const MapInfoPanel = ({
                   title={mode.label}
                   onClick={() => onDisplayModeChange(mode.value)}
                 >
-                  <i className={`${mode.icon} text-sm`} />
+                  <i className={`${mode.icon} text-sm`} aria-hidden="true" />
                   <span className="truncate">{mode.label}</span>
                 </button>
               );
@@ -187,7 +190,10 @@ export const MapInfoPanel = ({
             <div className="border-fill-secondary border-t px-5 pt-4 pb-5">
               {/* Section header */}
               <div className="mb-4 flex items-center gap-2.5">
-                <i className="i-mingcute-location-line text-text-secondary" />
+                <i
+                  className="i-mingcute-location-line text-text-secondary"
+                  aria-hidden="true"
+                />
                 <span className="text-text text-sm font-medium tracking-tight">
                   {t("explore.region.range")}
                 </span>
@@ -198,7 +204,10 @@ export const MapInfoPanel = ({
                 {/* Min coordinates */}
                 <div className="bg-fill-vibrant-quinary border-fill-tertiary rounded-xl border p-4">
                   <div className="text-text-secondary mb-2 flex items-center gap-2 text-xs font-medium tracking-wide uppercase">
-                    <i className="i-mingcute-arrow-left-down-line text-sm" />
+                    <i
+                      className="i-mingcute-arrow-left-down-line text-sm"
+                      aria-hidden="true"
+                    />
                     {t("explore.bounds.southwest")}
                   </div>
                   <div className="space-y-1">
@@ -224,7 +233,10 @@ export const MapInfoPanel = ({
                 {/* Max coordinates */}
                 <div className="bg-fill-vibrant-quinary border-fill-tertiary rounded-xl border p-4">
                   <div className="text-text-secondary mb-2 flex items-center gap-2 text-xs font-medium tracking-wide uppercase">
-                    <i className="i-mingcute-arrow-right-up-line text-sm" />
+                    <i
+                      className="i-mingcute-arrow-right-up-line text-sm"
+                      aria-hidden="true"
+                    />
                     {t("explore.bounds.northeast")}
                   </div>
                   <div className="space-y-1">
@@ -251,7 +263,7 @@ export const MapInfoPanel = ({
               {/* Coverage area calculation */}
               <div className="bg-fill-vibrant-quinary border-fill-tertiary mt-4 rounded-xl border p-3">
                 <div className="text-text-secondary flex items-center gap-2 text-xs">
-                  <i className="i-mingcute-grid-line" />
+                  <i className="i-mingcute-grid-line" aria-hidden="true" />
                   <span className="font-medium">
                     {t("explore.coverage.approx", { area: areaLabel })}
                   </span>

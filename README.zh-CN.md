@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <strong>专为 S3 兼容照片存储和 Vercel 静态部署优化的 Afilmory 分支</strong>
+  <strong>S3 优先、支持零凭据本地模式并面向 Vercel 静态部署的照片画廊</strong>
 </p>
 
 <p align="center">
@@ -27,11 +27,11 @@
 
 ## 📖 关于本项目
 
-本项目基于 [Afilmory](https://github.com/Afilmory/afilmory) 修改，聚焦 S3 兼容照片存储和静态站点部署。原图保留在 S3 或兼容对象存储中；构建过程生成静态 Web 应用、缩略图、RSS、sitemap、Open Graph 图片和 JSON 照片 manifest。
+本项目基于 [Afilmory](https://github.com/Afilmory/afilmory) 修改，聚焦静态站点部署。原图既可来自 S3 兼容对象存储（部署默认值），也可来自本地目录，以便完成零凭据、自包含构建。构建过程生成静态 Web 应用、缩略图、RSS、sitemap、Open Graph 图片和 JSON 照片 manifest。
 
 ### 与上游项目的区别
 
-- ✅ **S3 优先的静态部署** - 默认站点配置只使用 S3 兼容存储作为照片来源。
+- ✅ **S3 优先的静态部署** - 默认使用 S3 兼容存储，同时提供显式的本地文件系统模式。
 - ✅ **面向 Vercel 的构建** - `vercel.json` 运行 `scripts/build-static.sh`，输出目录为 `apps/web/dist`。
 - ✅ **Manifest 驱动运行时** - 浏览器读取构建生成的 JSON 数据，不需要数据库或后端服务。
 - ✅ **可选远程元数据缓存** - `REPO_URL` 和 `REPO_TOKEN` 可在 CI 构建之间复用 manifest 与缩略图。
@@ -54,7 +54,7 @@
 - 🎨 **现代 UI 设计** - 使用 Tailwind CSS 4、Radix UI 和 Motion 构建毛玻璃风格界面。
 - ⚡ **增量构建** - 未变化照片会复用已有 manifest 数据、缩略图、EXIF 和影调分析。
 - 🌐 **国际化** - 语言资源来自 `locales/app/*.json`。
-- 🔗 **静态社交资源** - 构建时生成 Open Graph 图片、`feed.xml` 和 `sitemap.xml`。
+- 🔗 **可抓取的照片页** - 构建时生成首页 Open Graph 图片、每张照片独立的 canonical/OG/JSON-LD HTML shell、`feed.xml` 和 `sitemap.xml`。
 
 ### 图片处理
 
@@ -69,8 +69,9 @@
 ### 存储与运行时
 
 - ☁️ **S3 兼容照片源** - 支持 AWS S3、MinIO、阿里云 OSS、腾讯云 COS 等 S3 兼容服务。
+- 💻 **本地文件系统照片源** - 设置 `PHOTO_STORAGE_PROVIDER=local` 即可在没有对象存储凭据时构建。
 - 🌍 **CDN 友好 URL** - 可通过 `S3_CUSTOM_DOMAIN` 生成公开照片 URL。
-- 📦 **原图不打包** - 原图保留在对象存储中，部署产物只包含生成缩略图和 Web 资源。
+- 📦 **按 provider 生成静态产物** - S3 原图保留在对象存储中；本地模式会把原图复制到静态产物的配置路径。
 - 🚀 **静态 SPA 运行时** - 生产构建默认输出外置 `assets/photos-manifest.<hash>.json`，通过 `window.__AFILMORY__.manifest` 加载。
 
 ---
@@ -109,9 +110,9 @@
 
 1. 点击上方部署按钮。
 2. 登录 Vercel，并 fork/import 仓库。
-3. 配置必需的 S3 变量。
+3. 配置 S3 bucket，并提供显式密钥对或其他受支持的 AWS 凭据来源。
 4. 点击 **Deploy**。
-5. Vercel 构建会运行 `scripts/build-static.sh`，其内部执行 `pnpm build`；S3 凭据完整时由 precheck 刷新 manifest。
+5. Vercel 构建会运行 `scripts/build-static.sh`，其内部执行 `pnpm build`；bucket 与凭据来源有效时由 precheck 刷新 manifest。
 
 ---
 
@@ -119,15 +120,36 @@
 
 构建时，`site.config.build.ts` 会把环境变量覆盖合并到 `site.config.ts` 默认值中。浏览器端通过 `window.__AFILMORY__.config` 获取最终配置，不在运行时读取 `process.env`。
 
-### S3 照片源必填项
+### 选择照片源
 
-默认静态站点配置只支持 S3 兼容照片源。Builder 刷新 manifest 时需要以下变量：
+| 环境变量                 | 说明                           | 默认值       |
+| ------------------------ | ------------------------------ | ------------ |
+| `PHOTO_STORAGE_PROVIDER` | 照片源适配器：`s3` 或 `local`  | `s3`         |
+| `LOCAL_PHOTOS_PATH`      | 本地照片目录（相对仓库根目录） | `photos`     |
+| `LOCAL_PHOTOS_BASE_URL`  | 本地原图使用的公开 URL 前缀    | `/originals` |
 
-| 环境变量               | 说明               | 示例                                       |
-| ---------------------- | ------------------ | ------------------------------------------ |
-| `S3_BUCKET_NAME`       | S3 存储桶名称      | `my-photos`                                |
-| `S3_ACCESS_KEY_ID`     | S3 访问密钥 ID     | `AKIAIOSFODNN7EXAMPLE`                     |
-| `S3_SECRET_ACCESS_KEY` | S3 访问密钥 Secret | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` |
+本地模式不需要任何 S3 凭据：
+
+```bash
+PHOTO_STORAGE_PROVIDER=local
+LOCAL_PHOTOS_PATH=photos
+LOCAL_PHOTOS_BASE_URL=/originals
+```
+
+把原图放入 `LOCAL_PHOTOS_PATH`。开发服务器会通过
+`LOCAL_PHOTOS_BASE_URL` 提供这些文件；生产构建会把它们复制到
+`apps/web/dist` 对应路径。建议保留不会与应用路由冲突的 `/originals` 默认值；
+`/photos`、`/assets`、`/thumbnails` 和 `/vendor` 是应用保留命名空间。
+
+### S3 照片源配置
+
+当 `PHOTO_STORAGE_PROVIDER=s3` 时，只有 bucket 名称始终必填：
+
+| 环境变量         | 说明          | 示例        |
+| ---------------- | ------------- | ----------- |
+| `S3_BUCKET_NAME` | S3 存储桶名称 | `my-photos` |
+
+`S3_ACCESS_KEY_ID` 与 `S3_SECRET_ACCESS_KEY` 是可选的一对：显式配置时必须同时提供，只设置其中一个会被视为配置错误。两者都省略时使用 AWS SDK 默认凭据链（shared config/SSO、Web Identity、ECS/EC2 role 等）。大多数非 AWS 的 S3 兼容服务仍需要显式密钥对。
 
 ### S3 可选项
 
@@ -156,7 +178,7 @@
 | `BUILDER_REPO_URL` | `REPO_URL` 的兼容别名                                         |
 | `GIT_TOKEN`        | `REPO_TOKEN` 的兼容别名                                       |
 
-这个缓存不是照片存储后端，原始照片仍来自 S3。
+这个缓存不是照片存储后端，原始照片仍来自所配置的 S3 或本地 provider。
 
 ### 站点配置
 
@@ -203,6 +225,7 @@ cp .env.template .env
 示例：
 
 ```bash
+PHOTO_STORAGE_PROVIDER=s3
 S3_BUCKET_NAME=my-photos
 S3_REGION=us-east-1
 S3_ACCESS_KEY_ID=your-access-key-id
@@ -221,6 +244,8 @@ SOCIAL_GITHUB=your-github-username
 SOCIAL_RSS=true
 ```
 
+如需零凭据本地配置，请用[选择照片源](#选择照片源)中的三个本地变量替换 S3 配置块。
+
 ---
 
 ## 💻 本地开发
@@ -229,7 +254,7 @@ SOCIAL_RSS=true
 
 - Node.js `^20.19.0 || >=22.12.0`（Vite 7 要求）
 - pnpm 10.19.0
-- 用于刷新 manifest 的 S3 兼容对象存储
+- S3 兼容对象存储或一个本地照片目录
 
 ### 安装依赖
 
@@ -239,11 +264,11 @@ cd afilmory-vercel
 pnpm install
 ```
 
-### 准备 S3 并上传照片
+### 准备照片源
 
-将照片上传到 S3 兼容对象存储。支持的图片扩展名包括 `.jpg`、`.jpeg`、`.png`、`.webp`、`.bmp`、`.tiff`、`.tif`、`.heic`、`.heif` 和 `.hif`。
+可以把照片上传到 S3 兼容对象存储，也可以设置 `PHOTO_STORAGE_PROVIDER=local` 并把照片放入 `LOCAL_PHOTOS_PATH`。支持的图片扩展名包括 `.jpg`、`.jpeg`、`.png`、`.webp`、`.bmp`、`.tiff`、`.tif`、`.heic`、`.heif` 和 `.hif`。
 
-原始照片不会被打包进 `apps/web/dist`；manifest 指向 S3/CDN URL，构建产物包含生成的缩略图。
+S3 模式下 manifest 指向 S3/CDN URL，原图不会打包；本地模式会把原图复制到 `apps/web/dist` 的 `LOCAL_PHOTOS_BASE_URL` 对应路径，产物可以自包含运行。
 
 ### 构建和预览
 
@@ -275,9 +300,10 @@ pnpm generate:favicon
 ### Manifest 构建行为
 
 - `pnpm dev` 和 `pnpm build` 会先运行 `apps/web/scripts/precheck.ts`。
-- S3 凭据完整时，precheck 会通过 builder 刷新 manifest。
-- 缺少 S3 凭据但存在 `generated/photos-manifest.json` 时，precheck 会复用已有 manifest。
-- builder 失败但已有 manifest 存在时，precheck 会降级复用该 manifest 并输出警告。
+- 本地模式会直接运行 builder，不需要 S3 凭据。
+- S3 bucket 和有效凭据来源可用时，precheck 会通过 builder 刷新 manifest。
+- 缺少必需的 S3 配置但存在 `generated/photos-manifest.json` 时，precheck 会复用已有 manifest。
+- builder 失败时，Preview 仅在当前磁盘 manifest 仍通过严格校验时继续并输出警告。precheck 不会单独回滚 JSON，因为晚期失败可能发生在新 manifest 已原子提交、旧内容寻址缩略图已清理之后。
 - `SKIP_MANIFEST_BUILD=true pnpm build` 会显式跳过 builder 刷新。
 - 生产 Web 构建默认输出外置带 hash 的 manifest 资产；可用 `AFILMORY_EMBED_MANIFEST=true` 强制内联，或用 `false` 强制外置。
 
@@ -302,7 +328,9 @@ Vercel 使用：
 
 配置了 `REPO_URL` 和 `REPO_TOKEN` 时，`scripts/build-static.sh` 会先恢复缓存中的 manifest、geocoding cache 和缩略图，再执行构建。构建成功后，它会把最新构建产物同步回缓存仓库。
 
-`scripts/build-static.sh` 始终运行 `pnpm build`；所有新鲜度与降级决策统一由 `apps/web/scripts/precheck.ts` 负责。缺少 S3 凭据但存在可复用 `generated/photos-manifest.json` 时，precheck 会复用它，让 Preview 部署仍可成功。生产部署（`VERCEL_ENV=production`，其他平台可用 `REQUIRE_FRESH_BUILD=true`）则会失败，拒绝发布陈旧 manifest。
+`scripts/build-static.sh` 始终运行 `pnpm build`；所有新鲜度与降级决策统一由 `apps/web/scripts/precheck.ts` 负责。缺少必需的 S3 配置但存在可复用 `generated/photos-manifest.json` 时，precheck 会复用它，让 Preview 部署仍可成功。生产部署（`VERCEL_ENV=production`，其他平台可用 `REQUIRE_FRESH_BUILD=true`）则会失败，拒绝发布陈旧 manifest。
+
+部署本地 provider 时，构建工作区必须能访问 `LOCAL_PHOTOS_PATH`。构建会把这些原图复制进静态产物；请勿误把私密照片提交到公开仓库。
 
 ### 其他静态托管平台
 
@@ -319,7 +347,7 @@ Vercel 使用：
 
 ## 🔄 更新照片
 
-1. 将新增或修改后的照片上传到 S3 bucket。
+1. 将新增或修改后的照片上传到 S3 bucket；本地模式则更新 `LOCAL_PHOTOS_PATH`。
 2. 触发一次新部署，或运行 `pnpm build:manifest`。
 3. Builder 会对比源对象元数据和已有 manifest，尽量只处理变化部分。
 
@@ -336,7 +364,6 @@ Vercel 使用：
 - Radix UI
 - Motion
 - Jotai
-- TanStack Query
 - React Router 7
 - i18next 与 react-i18next
 - MapLibre GL 与 react-map-gl

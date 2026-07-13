@@ -29,7 +29,7 @@ export type ManifestSource =
       provider: "local";
       /** 照片源目录（本地文件系统路径） */
       basePath?: string;
-      /** 生成 originalUrl 时的公共 URL 前缀（builder 默认 "/photos"） */
+      /** 生成 originalUrl 时的公共 URL 前缀（builder 默认 "/originals"） */
       baseUrl?: string;
     }
   | {
@@ -81,7 +81,7 @@ export interface ToneAnalysis {
 }
 
 export type VideoSource =
-  | { type: "live-photo"; videoUrl: string; s3Key: string }
+  | { type: "live-photo"; videoUrl: string; s3Key: string; version?: string }
   | {
       type: "motion-photo";
       offset: number;

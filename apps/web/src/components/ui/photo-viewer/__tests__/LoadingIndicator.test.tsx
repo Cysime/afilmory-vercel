@@ -76,4 +76,22 @@ describe("LoadingIndicator", () => {
 
     expect(screen.getByRole("status").textContent).not.toContain("unknown");
   });
+
+  it("announces a persistent error without contradictory loading text", () => {
+    const ref = renderIndicator();
+
+    act(() => {
+      ref.current!.updateLoadingState({
+        isVisible: true,
+        isError: true,
+        errorMessage: "photo.error.loading",
+      });
+    });
+
+    const alert = screen.getByRole("alert");
+    expect(alert.getAttribute("aria-live")).toBe("assertive");
+    expect(alert.getAttribute("aria-atomic")).toBe("true");
+    expect(alert.textContent).toContain("photo.error.loading");
+    expect(alert.textContent).not.toContain("loading.default");
+  });
 });

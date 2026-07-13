@@ -3,17 +3,66 @@ import "dotenv-expand/config";
 import { createEnv } from "@t3-oss/env-core";
 import { z } from "zod";
 
+const hasNoEncodedParentSegments = (value: string): boolean => {
+  try {
+    return !decodeURIComponent(value).split("/").includes("..");
+  } catch {
+    return false;
+  }
+};
+
+const safePublicUrl = z.url().refine((value) => {
+  const url = new URL(value);
+  return (
+    (url.protocol === "http:" || url.protocol === "https:") &&
+    !url.username &&
+    !url.password &&
+    !url.search &&
+    !url.hash
+  );
+}, "must be an http(s) URL without credentials, query parameters, or a fragment");
+
 export const env = createEnv({
   server: {
-    // S3 storage config (required; this project only supports S3 storage)
+    // Photo source. S3 remains the deployment default; local is a first-class
+    // zero-credential mode for self-contained/static builds.
+    PHOTO_STORAGE_PROVIDER: z.enum(["s3", "local"]).default("s3"),
+    LOCAL_PHOTOS_PATH: z.string().trim().min(1).default("photos"),
+    LOCAL_PHOTOS_BASE_URL: z
+      .string()
+      .trim()
+      .regex(/^\/(?!\/)[^?#\\]+$/)
+      .refine((value) => !value.split("/").includes(".."), {
+        message: "LOCAL_PHOTOS_BASE_URL cannot contain parent path segments",
+      })
+      .refine(hasNoEncodedParentSegments, {
+        message:
+          "LOCAL_PHOTOS_BASE_URL cannot contain encoded parent path segments",
+      })
+      .refine((value) => value !== "/", {
+        message: "LOCAL_PHOTOS_BASE_URL must name a path below the site root",
+      })
+      .refine(
+        (value) =>
+          !["assets", "photos", "thumbnails", "vendor"].includes(
+            value.split("/").find((segment) => segment.length > 0) ?? "",
+          ),
+        {
+          message:
+            "LOCAL_PHOTOS_BASE_URL conflicts with a reserved application path",
+        },
+      )
+      .default("/originals"),
+
+    // S3 storage config (required when PHOTO_STORAGE_PROVIDER=s3)
     S3_REGION: z.string().default("us-east-1"),
     // May be empty when building the frontend; the builder validates strictly at runtime
     S3_ACCESS_KEY_ID: z.string().default(""),
     S3_SECRET_ACCESS_KEY: z.string().default(""),
-    S3_ENDPOINT: z.string().default("https://s3.us-east-1.amazonaws.com"),
+    S3_ENDPOINT: safePublicUrl.default("https://s3.us-east-1.amazonaws.com"),
     S3_BUCKET_NAME: z.string().default(""),
     S3_PREFIX: z.string().default(""),
-    S3_CUSTOM_DOMAIN: z.string().default(""),
+    S3_CUSTOM_DOMAIN: z.union([z.literal(""), safePublicUrl]).default(""),
     S3_EXCLUDE_REGEX: z.string().optional(),
 
     // Remote repository cache config (optional)
@@ -26,14 +75,19 @@ export const env = createEnv({
     SITE_NAME: z.string().optional(),
     SITE_TITLE: z.string().optional(),
     SITE_DESCRIPTION: z.string().optional(),
-    SITE_URL: z.string().optional(),
-    SITE_ACCENT_COLOR: z.string().optional(),
-    SITE_LANGUAGE: z.string().optional(),
+    SITE_URL: safePublicUrl.optional(),
+    SITE_ACCENT_COLOR: z
+      .string()
+      .regex(/^#(?:[\da-f]{3}|[\da-f]{6}|[\da-f]{8})$/i)
+      .optional(),
+    SITE_LANGUAGE: z
+      .enum(["en", "ja", "ko", "zh-CN", "zh-HK", "zh-TW"])
+      .optional(),
 
     // Author info (optional)
     AUTHOR_NAME: z.string().optional(),
-    AUTHOR_URL: z.string().optional(),
-    AUTHOR_AVATAR: z.string().optional(),
+    AUTHOR_URL: z.url().optional(),
+    AUTHOR_AVATAR: z.url().optional(),
 
     // Social media (optional)
     SOCIAL_GITHUB: z.string().optional(),
@@ -58,7 +112,7 @@ export const env = createEnv({
     GEOCODING_USER_AGENT: z.string().optional(),
     GEOCODING_CACHE_PATH: z.string().optional(),
     GEOCODING_CACHE_PRECISION: z.coerce.number().optional(),
-    GEOCODING_NOMINATIM_BASE_URL: z.string().optional(),
+    GEOCODING_NOMINATIM_BASE_URL: z.url().optional(),
     MAPBOX_TOKEN: z.string().optional(),
 
     // Builder performance config (optional)

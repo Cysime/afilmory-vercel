@@ -84,7 +84,7 @@ export function useMeasure({
   useEffect(() => {
     mounted.current = true;
     return () => void (mounted.current = false);
-  });
+  }, []);
 
   // memoize handlers, so event-listeners know when they should update
   const [forceRefresh, resizeChange, scrollChange] = useMemo(() => {
@@ -139,7 +139,7 @@ export function useMeasure({
   // add scroll-listeners / observers
   const addListeners = useCallback(() => {
     if (!state.current.element) return;
-    state.current.resizeObserver = new ResizeObserver(scrollChange);
+    state.current.resizeObserver = new ResizeObserver(resizeChange);
     state.current.resizeObserver!.observe(state.current.element);
     if (scroll && state.current.scrollContainers) {
       state.current.scrollContainers.forEach((scrollContainer) =>
@@ -149,16 +149,18 @@ export function useMeasure({
         }),
       );
     }
-  }, [scroll, scrollChange]);
+  }, [resizeChange, scroll, scrollChange]);
 
   // the ref we expose to the user
   const ref = useCallback(
     (node: HTMLOrSVGElement | null) => {
-      if (!node || node === state.current.element) return;
+      if (node === state.current.element) return;
       removeListeners();
       state.current.element = node;
-      state.current.scrollContainers = findScrollContainers(node);
-      addListeners();
+      state.current.scrollContainers = node ? findScrollContainers(node) : null;
+      if (node) {
+        addListeners();
+      }
     },
     [addListeners, removeListeners],
   );
@@ -175,7 +177,26 @@ export function useMeasure({
 
   // remove all listeners when the components unmounts
   useEffect(() => removeListeners, [removeListeners]);
+  useEffect(
+    () => () => {
+      cancelDebounced(resizeChange);
+      if (scrollChange !== resizeChange) {
+        cancelDebounced(scrollChange);
+      }
+    },
+    [resizeChange, scrollChange],
+  );
   return [ref, bounds, forceRefresh];
+}
+
+function cancelDebounced(callback: () => void): void {
+  if (
+    "cancel" in callback &&
+    typeof (callback as typeof callback & { cancel?: unknown }).cancel ===
+      "function"
+  ) {
+    (callback as typeof callback & { cancel: () => void }).cancel();
+  }
 }
 
 // Adds native resize listener to window

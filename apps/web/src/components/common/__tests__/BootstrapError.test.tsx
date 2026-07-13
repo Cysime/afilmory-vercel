@@ -33,7 +33,7 @@ describe("BootstrapError", () => {
 
     render(<BootstrapError error={new Error("Manifest Load Failed")} />);
 
-    expect(screen.getByRole("button", { name: "Retry" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Reload" })).not.toBeNull();
     expect(recovery.recoverFromStaleRuntimeError).not.toHaveBeenCalled();
   });
 
@@ -57,7 +57,7 @@ describe("BootstrapError", () => {
       expect(recovery.recoverFromStaleRuntimeError).toHaveBeenCalledTimes(1);
     });
     await waitFor(() => {
-      expect(screen.queryAllByText("Manifest Load Failed")).toHaveLength(0);
+      expect(screen.getByRole("status")).not.toBeNull();
     });
   });
 
@@ -66,7 +66,7 @@ describe("BootstrapError", () => {
     recovery.recoverStaleRuntime.mockResolvedValue({ reloadRequested: true });
 
     render(<BootstrapError error={new Error("Manifest Load Failed")} />);
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
 
     expect(recovery.recoverStaleRuntime).toHaveBeenCalledWith({ force: true });
   });

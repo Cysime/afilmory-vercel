@@ -1,4 +1,9 @@
 import type { StorageConfig } from "../storage/interfaces.js";
+import {
+  DEFAULT_DOWNLOAD_MEMORY_BUDGET_BYTES,
+  DEFAULT_MAX_DOWNLOAD_BYTES,
+} from "../storage/interfaces.js";
+import { isSafeHttpBaseUrl } from "../storage/url.js";
 import type {
   BuilderConfig,
   BuilderConfigInput,
@@ -20,10 +25,16 @@ import type {
  */
 
 type LeafSpec =
-  | { kind: "number" }
+  | {
+      kind: "number";
+      integer?: boolean;
+      min?: number;
+      max?: number;
+    }
   | { kind: "boolean" }
   /** ignoreEmpty: an empty string is treated as unset (keeps the old behavior: an empty output path falls back to the default) */
   | { kind: "string"; ignoreEmpty?: boolean }
+  | { kind: "public-url"; ignoreEmpty?: boolean }
   | { kind: "enum"; values: readonly string[] }
   /** Set<string> or string[]; always copied into a new Set when merging */
   | { kind: "string-set" };
@@ -44,10 +55,10 @@ type LeafSpecMap = Readonly<Record<string, LeafSpec>>;
  * this release and only emits a deprecation warning.
  */
 const WORKER_FIELDS: LeafSpecMap = {
-  timeout: { kind: "number" },
+  timeout: { kind: "number", integer: true, min: 1, max: 86_400_000 },
   useClusterMode: { kind: "boolean" },
-  workerConcurrency: { kind: "number" },
-  workerCount: { kind: "number" },
+  workerConcurrency: { kind: "number", integer: true, min: 1, max: 1024 },
+  workerCount: { kind: "number", integer: true, min: 1, max: 1024 },
 };
 
 const WORKER_INPUT_PATH = "system.processing.worker";
@@ -61,10 +72,10 @@ const SYSTEM_FIELDS: FieldSpecMap = {
       // programmatically without options.concurrencyLimit. The CLI always
       // passes worker.workerCount as concurrencyLimit, so this knob has no
       // effect on CLI builds — tune worker.workerCount instead.
-      defaultConcurrency: { kind: "number" },
+      defaultConcurrency: { kind: "number", integer: true, min: 1, max: 1024 },
       enableLivePhotoDetection: { kind: "boolean" },
       supportedFormats: { kind: "string-set" },
-      digestSuffixLength: { kind: "number" },
+      digestSuffixLength: { kind: "number", integer: true, min: 0, max: 64 },
       // Registered here for unknown-key suggestions; the actual merge is
       // routed by mergeSystemSection (see WORKER_FIELDS above).
       worker: { kind: "section", fields: WORKER_FIELDS },
@@ -99,23 +110,61 @@ const OUTPUT_FIELDS: FieldSpecMap = {
 const S3_STORAGE_FIELDS: LeafSpecMap = {
   bucket: { kind: "string" },
   region: { kind: "string" },
-  endpoint: { kind: "string" },
+  endpoint: { kind: "public-url", ignoreEmpty: true },
   accessKeyId: { kind: "string" },
   secretAccessKey: { kind: "string" },
   prefix: { kind: "string" },
-  customDomain: { kind: "string" },
+  customDomain: { kind: "public-url", ignoreEmpty: true },
   excludeRegex: { kind: "string" },
-  maxFileLimit: { kind: "number" },
+  maxFileLimit: { kind: "number", integer: true, min: 1, max: 10_000_000 },
+  forcePathStyle: { kind: "boolean" },
   keepAlive: { kind: "boolean" },
-  maxSockets: { kind: "number" },
-  connectionTimeoutMs: { kind: "number" },
-  socketTimeoutMs: { kind: "number" },
-  requestTimeoutMs: { kind: "number" },
-  idleTimeoutMs: { kind: "number" },
-  totalTimeoutMs: { kind: "number" },
+  maxSockets: { kind: "number", integer: true, min: 1, max: 10_000 },
+  connectionTimeoutMs: {
+    kind: "number",
+    integer: true,
+    min: 1,
+    max: 86_400_000,
+  },
+  socketTimeoutMs: {
+    kind: "number",
+    integer: true,
+    min: 1,
+    max: 86_400_000,
+  },
+  requestTimeoutMs: {
+    kind: "number",
+    integer: true,
+    min: 1,
+    max: 86_400_000,
+  },
+  idleTimeoutMs: {
+    kind: "number",
+    integer: true,
+    min: 1,
+    max: 86_400_000,
+  },
+  totalTimeoutMs: {
+    kind: "number",
+    integer: true,
+    min: 1,
+    max: 86_400_000,
+  },
   retryMode: { kind: "enum", values: ["standard", "adaptive", "legacy"] },
-  maxAttempts: { kind: "number" },
-  downloadConcurrency: { kind: "number" },
+  maxAttempts: { kind: "number", integer: true, min: 1, max: 10 },
+  downloadConcurrency: { kind: "number", integer: true, min: 1, max: 1024 },
+  maxDownloadBytes: {
+    kind: "number",
+    integer: true,
+    min: 1,
+    max: Number.MAX_SAFE_INTEGER,
+  },
+  downloadMemoryBudgetBytes: {
+    kind: "number",
+    integer: true,
+    min: 1,
+    max: Number.MAX_SAFE_INTEGER,
+  },
 };
 
 const LOCAL_STORAGE_FIELDS: LeafSpecMap = {
@@ -231,6 +280,15 @@ function checkLeafValue(spec: LeafSpec, value: unknown, path: string): unknown {
       if (typeof value !== "number" || !Number.isFinite(value)) {
         throw invalidValueError(path, "a finite number", value);
       }
+      if (spec.integer && !Number.isSafeInteger(value)) {
+        throw invalidValueError(path, "a safe integer", value);
+      }
+      if (spec.min !== undefined && value < spec.min) {
+        throw invalidValueError(path, `a number >= ${spec.min}`, value);
+      }
+      if (spec.max !== undefined && value > spec.max) {
+        throw invalidValueError(path, `a number <= ${spec.max}`, value);
+      }
       return value;
     }
     case "boolean": {
@@ -242,6 +300,16 @@ function checkLeafValue(spec: LeafSpec, value: unknown, path: string): unknown {
     case "string": {
       if (typeof value !== "string") {
         throw invalidValueError(path, "a string", value);
+      }
+      return value;
+    }
+    case "public-url": {
+      if (typeof value !== "string" || !isSafeHttpBaseUrl(value)) {
+        throw invalidValueError(
+          path,
+          "an http(s) URL without credentials, query parameters, or a fragment",
+          value,
+        );
       }
       return value;
     }
@@ -302,7 +370,11 @@ function mergeSection(
       );
       continue;
     }
-    if (spec.kind === "string" && spec.ignoreEmpty && value === "") {
+    if (
+      (spec.kind === "string" || spec.kind === "public-url") &&
+      spec.ignoreEmpty &&
+      value === ""
+    ) {
       // 保留旧行为：空字符串视为未设置，回退默认路径
       continue;
     }
@@ -339,7 +411,44 @@ function validateStorageConfig(
       continue;
     }
     if (fieldValue === undefined || fieldValue === null) continue;
+    if (
+      (spec.kind === "string" || spec.kind === "public-url") &&
+      spec.ignoreEmpty &&
+      fieldValue === ""
+    ) {
+      continue;
+    }
     checkLeafValue(spec, fieldValue, keyPath);
+  }
+  if (provider !== "local") {
+    if (typeof value.bucket !== "string" || value.bucket.trim().length === 0) {
+      throw new Error(
+        `[config] Invalid value for "${path}.bucket": provider "s3" requires a non-empty string bucket, got ${describeValue(value.bucket)}`,
+      );
+    }
+    const hasAccessKey =
+      typeof value.accessKeyId === "string" && value.accessKeyId.length > 0;
+    const hasSecretKey =
+      typeof value.secretAccessKey === "string" &&
+      value.secretAccessKey.length > 0;
+    if (hasAccessKey !== hasSecretKey) {
+      throw new Error(
+        `[config] Invalid value for "${path}": accessKeyId and secretAccessKey must either both be provided or both be omitted (omitting both uses the AWS default credential chain)`,
+      );
+    }
+    const maxDownloadBytes =
+      typeof value.maxDownloadBytes === "number"
+        ? value.maxDownloadBytes
+        : DEFAULT_MAX_DOWNLOAD_BYTES;
+    const downloadMemoryBudgetBytes =
+      typeof value.downloadMemoryBudgetBytes === "number"
+        ? value.downloadMemoryBudgetBytes
+        : DEFAULT_DOWNLOAD_MEMORY_BUDGET_BYTES;
+    if (downloadMemoryBudgetBytes < maxDownloadBytes) {
+      throw new Error(
+        `[config] Invalid value for "${path}.downloadMemoryBudgetBytes": must be >= maxDownloadBytes`,
+      );
+    }
   }
   if (provider === "local") {
     const { basePath } = value;
@@ -570,7 +679,52 @@ export function redactConfigSecrets(config: BuilderConfig): BuilderConfig {
   for (const secretPath of SECRET_CONFIG_PATHS) {
     sanitized = redactPath(sanitized, secretPath.split("."));
   }
+  const redactedPlugins = redactSecretKeysDeep(sanitized.plugins);
+  if (redactedPlugins !== sanitized.plugins) {
+    sanitized = { ...sanitized, plugins: redactedPlugins };
+  }
   return sanitized;
+}
+
+const SECRET_KEY_PATTERN =
+  /(?:^|_)(?:api[-_]?key|access[-_]?key|secret|password|authorization|token)$/i;
+
+/**
+ * Plugin options are intentionally open-ended, so a fixed path allow-list
+ * cannot protect DEBUG logs from newly-added provider tokens. Traverse only
+ * plain config data (never invoke plugin functions) and redact common
+ * secret key names, including camelCase names such as `mapboxToken`.
+ */
+function redactSecretKeysDeep<T>(value: T, ancestors = new Set<object>()): T {
+  if (Array.isArray(value)) {
+    if (ancestors.has(value)) return value;
+    const nextAncestors = new Set(ancestors).add(value);
+    let changed = false;
+    const items = value.map((item) => {
+      const redacted = redactSecretKeysDeep(item, nextAncestors);
+      if (redacted !== item) changed = true;
+      return redacted;
+    });
+    return (changed ? items : value) as T;
+  }
+  if (!isPlainObject(value)) return value;
+  if (ancestors.has(value)) return value;
+
+  const nextAncestors = new Set(ancestors).add(value);
+  let changed = false;
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    const normalizedKey = key.replaceAll(/([a-z])([A-Z])/g, "$1_$2");
+    if (SECRET_KEY_PATTERN.test(normalizedKey)) {
+      result[key] = "***";
+      changed = true;
+      continue;
+    }
+    const redacted = redactSecretKeysDeep(child, nextAncestors);
+    result[key] = redacted;
+    if (redacted !== child) changed = true;
+  }
+  return (changed ? result : value) as T;
 }
 
 function redactPath(root: BuilderConfig, segments: string[]): BuilderConfig {

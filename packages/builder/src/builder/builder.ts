@@ -1,9 +1,13 @@
 import type { BuilderServices } from "../core/contracts/services.js";
 import { createBuilderServices } from "../core/services/index.js";
 import { ExifService } from "../image/exif.js";
+import {
+  isThumbnailEncodingStale,
+  THUMBNAIL_ENCODING_SIGNATURE,
+  writeThumbnailEncodingMarker,
+} from "../image/thumbnail.js";
 import { logger } from "../logger/index.js";
-import { loadExistingManifest } from "../manifest/manager.js";
-import { CURRENT_MANIFEST_VERSION } from "../manifest/version.js";
+import { loadExistingManifestWithDiagnostics } from "../manifest/manager.js";
 import { normalizeBuilderOutputSettings } from "../output-paths.js";
 import { createPhotoId } from "../photo/id.js";
 import type { PluginRunState } from "../plugins/manager.js";
@@ -15,7 +19,7 @@ import type {
 import type { StorageConfig } from "../storage/index.js";
 import { normalizeStorageConfig, StorageManager } from "../storage/index.js";
 import type { BuilderConfig, UserBuilderSettings } from "../types/config.js";
-import type { AfilmoryManifest, ManifestSource } from "../types/manifest.js";
+import type { ManifestSource } from "../types/manifest.js";
 import type { BuilderOptions, BuilderResult } from "../types/options.js";
 import type { PhotoManifestItem, ProcessPhotoResult } from "../types/photo.js";
 import { ArtifactWriter } from "./workflow/artifact-writer.js";
@@ -35,8 +39,8 @@ export type {
 } from "../types/options.js";
 
 /**
- * 构建成功后 CLI 是否应当落盘缩略图编码签名标记（.encoding）。
- * 纯函数放在这里而不是 cli.ts：cli.ts 顶层即执行 main()，无法被测试导入。
+ * 构建成功后 Builder 是否应当落盘缩略图编码签名标记（.encoding）。
+ * CLI 与程序化调用都走这个判断，避免两条入口产生不同的缓存兼容行为。
  *
  * - 零照片构建从未评估过任何缩略图：瞬时空列举（存储抖动/前缀误配）撞上
  *   编码参数变更时 failedCount 恰好为 0，此时盖新标记会让旧参数缩略图被
@@ -57,6 +61,20 @@ export interface AfilmoryBuilderRuntime {
   ownsExifService?: boolean;
 }
 
+export class SourceListingIncompleteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SourceListingIncompleteError";
+  }
+}
+
+export class EmptySourceListingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EmptySourceListingError";
+  }
+}
+
 export class AfilmoryBuilder {
   private storageManager: StorageManager | null = null;
   private config: BuilderConfig;
@@ -66,6 +84,7 @@ export class AfilmoryBuilder {
   private readonly servicesInstance: BuilderServices;
   private readonly exifService: ExifService;
   private readonly ownsExifService: boolean;
+  private buildInProgress = false;
 
   constructor(config: BuilderConfig, runtime: AfilmoryBuilderRuntime = {}) {
     // resolveBuilderConfig 已归一化过；这里再归一一次（幂等）覆盖绕过 resolve
@@ -100,20 +119,60 @@ export class AfilmoryBuilder {
   }
 
   dispose(): void {
+    const { storageManager } = this;
+    this.storageManager = null;
+    void storageManager?.dispose().catch((error: unknown) => {
+      logger.main.warn("Failed to dispose the storage manager", error);
+    });
     if (this.ownsExifService) {
       this.exifService.close();
     }
   }
 
   async buildManifest(options: BuilderOptions): Promise<BuilderResult> {
+    if (this.buildInProgress) {
+      throw new Error(
+        "AfilmoryBuilder.buildManifest() cannot run concurrently on the same instance",
+      );
+    }
+    this.buildInProgress = true;
+    this.photoIdCollisionKeys.clear();
+
     try {
       await this.ensurePluginsReady();
       this.ensureStorageManager();
-      return await this.#buildManifest(options);
+      const effectiveOptions =
+        await this.resolveThumbnailEncodingOptions(options);
+      return await this.#buildManifest(effectiveOptions);
     } catch (error) {
       logger.main.error("❌ Failed to build manifest:", error);
       throw error;
+    } finally {
+      const { storageManager } = this;
+      this.storageManager = null;
+      try {
+        await storageManager?.dispose();
+      } finally {
+        this.buildInProgress = false;
+      }
     }
+  }
+
+  private async resolveThumbnailEncodingOptions(
+    options: BuilderOptions,
+  ): Promise<BuilderOptions> {
+    if (
+      options.isForceMode ||
+      options.isForceThumbnails ||
+      !(await isThumbnailEncodingStale(this.config.output.thumbnailsDir))
+    ) {
+      return { ...options };
+    }
+
+    logger.main.info(
+      `🧾 Thumbnail encoding signature marker mismatch (current: ${THUMBNAIL_ENCODING_SIGNATURE}); force-regenerating all thumbnails this run`,
+    );
+    return { ...options, isForceThumbnails: true };
   }
   /**
    * 构建照片清单
@@ -154,11 +213,23 @@ export class AfilmoryBuilder {
 
       this.logBuildStart();
 
-      const existingManifest = await this.loadExistingManifest(options);
+      // Force flags change the work plan, never the recovery baseline. Keeping
+      // the last successful manifest lets a failed force rebuild preserve the
+      // previous photo instead of shrinking the published gallery.
+      const {
+        manifest: existingManifest,
+        repairedPhotoKeys,
+        requiresRewrite: existingManifestRequiresRewrite,
+      } = await loadExistingManifestWithDiagnostics(this.config.output);
       const existingManifestItems = existingManifest.photos;
       const existingManifestMap = new Map(
         existingManifestItems.map((item) => [item.s3Key, item]),
       );
+      if (repairedPhotoKeys.size > 0) {
+        options.reprocessKeys = [
+          ...new Set([...(options.reprocessKeys ?? []), ...repairedPhotoKeys]),
+        ];
+      }
 
       await session.emit("afterManifestLoad", {
         options,
@@ -174,37 +245,26 @@ export class AfilmoryBuilder {
       logger.main.info("Using storage provider:", storageConfig.provider);
 
       const sourceScan = await new SourceScanner().scan(session);
-      const { imageObjects, livePhotoMap } = sourceScan;
+      const { complete: scanComplete, imageObjects, livePhotoMap } = sourceScan;
 
-      // 列举成功但得到 0 张照片：默认视作疑似误配或瞬时故障（前缀写错、存储
-      // 抖动返回空列表），保留现有 manifest 与缩略图原样早退——否则一次空列举
-      // 就会清空全部产物并被 artifact-cache 持久化。只有 --force 才把「空图库」
-      // 当作用户意图，继续走正常管道：写出空 manifest 并清理孤儿缩略图。
-      if (imageObjects.length === 0 && !options.isForceMode) {
-        if (existingManifestItems.length > 0) {
-          logger.main.warn(
-            `⚠️ Storage returned zero photos but the existing manifest has ${existingManifestItems.length}; keeping it untouched. Pass --force to publish an empty gallery, or check your storage prefix.`,
-          );
-        } else {
-          logger.main.error("❌ No photos found to process");
-        }
-        const result: BuilderResult = {
-          hasUpdates: false,
-          newCount: 0,
-          processedCount: 0,
-          skippedCount: 0,
-          failedCount: 0,
-          deletedCount: 0,
-          totalPhotos: 0,
-        };
+      if (!scanComplete) {
+        const message = `Refusing to publish from an incomplete storage listing; the previous ${existingManifestItems.length}-photo gallery remains untouched.${sourceScan.incompleteReason ? ` ${sourceScan.incompleteReason.message}` : ""}`;
+        logger.main.error(`❌ ${message}`);
+        throw new SourceListingIncompleteError(message);
+      }
 
-        await session.emit("afterBuild", {
-          options,
-          result,
-          manifest,
-        });
-
-        return result;
+      // 列举成功但从非空图库骤降到 0 张：视作疑似误配或瞬时故障（前缀写错、
+      // 存储抖动），以错误结束并保留现有产物。这样 production fresh build 不会
+      // 把旧图库误报成刷新成功。只有 --force 才明确授权发布空图库并清理产物；
+      // 首次构建/既有空图库没有数据可丢，可正常收敛为空 manifest。
+      if (
+        imageObjects.length === 0 &&
+        !options.isForceMode &&
+        existingManifestItems.length > 0
+      ) {
+        const message = `Storage returned zero photos while the existing manifest has ${existingManifestItems.length}; the gallery remains untouched. Pass --force to publish an empty gallery, or check the storage path/prefix.`;
+        logger.main.error(`❌ ${message}`);
+        throw new EmptySourceListingError(message);
       }
 
       if (imageObjects.length === 0) {
@@ -217,6 +277,7 @@ export class AfilmoryBuilder {
         session,
         imageObjects,
         existingManifestMap,
+        livePhotoMap,
       );
       const { s3ImageKeys, tasksToProcess } = diffPlan;
       const taskProcessor = new PhotoTaskProcessor();
@@ -286,11 +347,12 @@ export class AfilmoryBuilder {
         );
       }
 
-      const { deletedCount } = await new ArtifactWriter().write(
-        session,
-        manifest,
-        { keepPhotoIds },
-      );
+      const { deletedCount, manifestChanged } =
+        await new ArtifactWriter().write(session, manifest, {
+          forceManifestRewrite: existingManifestRequiresRewrite,
+          keepPhotoIds,
+          previousManifest: existingManifest,
+        });
 
       if (this.config.system.observability.showDetailedStats) {
         this.logBuildResults(
@@ -313,10 +375,7 @@ export class AfilmoryBuilder {
         );
       }
 
-      const hasUpdates =
-        processingStats.newCount > 0 ||
-        processingStats.processedCount > 0 ||
-        deletedCount > 0;
+      const hasUpdates = manifestChanged || deletedCount > 0;
       const result: BuilderResult = {
         hasUpdates,
         newCount: processingStats.newCount,
@@ -333,6 +392,19 @@ export class AfilmoryBuilder {
         manifest,
       });
 
+      const wasThumbnailForce =
+        options.isForceMode || options.isForceThumbnails;
+      if (
+        wasThumbnailForce &&
+        shouldWriteThumbnailEncodingMarker(result, wasThumbnailForce)
+      ) {
+        await writeThumbnailEncodingMarker(this.config.output.thumbnailsDir);
+      } else if (wasThumbnailForce && result.failedCount > 0) {
+        logger.main.warn(
+          "⚠️ Some photos failed during this force-regeneration; keeping the previous encoding marker so the next build retries them.",
+        );
+      }
+
       return result;
     } catch (error) {
       options.progressListener?.onError?.(error);
@@ -342,21 +414,6 @@ export class AfilmoryBuilder {
       });
       throw error;
     }
-  }
-
-  private async loadExistingManifest(
-    options: BuilderOptions,
-  ): Promise<AfilmoryManifest> {
-    return options.isForceMode || options.isForceManifest
-      ? {
-          schema: "afilmory.manifest",
-          version: CURRENT_MANIFEST_VERSION,
-          generatedAt: new Date().toISOString(),
-          source: this.getManifestSource(),
-          photos: [],
-          indexes: { cameras: [], lenses: [] },
-        }
-      : await loadExistingManifest(this.config.output);
   }
 
   private getManifestSource(): ManifestSource {
@@ -373,11 +430,10 @@ export class AfilmoryBuilder {
         };
       }
       case "local": {
-        // schema 的 ManifestSource 已有 local 变体：如实记录本地文件系统源，
-        // 而不是像旧代码那样归一成 unknown 或谎报成 s3。
+        // A manifest is a public browser asset. Never publish the build
+        // machine's absolute source path (user name, mount points, CI layout).
         return {
           provider: "local",
-          basePath: storage.basePath,
           baseUrl: storage.baseUrl,
         };
       }
@@ -406,7 +462,7 @@ export class AfilmoryBuilder {
         );
         logger.main.info(`📂 Photo directory: ${storage.basePath}`);
         logger.main.info(
-          `🌐 Public URL prefix: ${storage.baseUrl ?? "/photos"}`,
+          `🌐 Public URL prefix: ${storage.baseUrl ?? "/originals"}`,
         );
         break;
       }
@@ -471,7 +527,8 @@ export class AfilmoryBuilder {
     if (
       existingItem?.id &&
       digestSuffixLength <= 0 &&
-      !this.hasPhotoIdCollision(key)
+      !this.hasPhotoIdCollision(key) &&
+      existingItem.id === createPhotoId(key)
     ) {
       return existingItem.id;
     }

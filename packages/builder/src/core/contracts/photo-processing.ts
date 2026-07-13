@@ -5,6 +5,7 @@ export interface PhotoProcessorOptions {
   isForceMode: boolean;
   isForceManifest: boolean;
   isForceThumbnails: boolean;
+  reprocessKeys?: readonly string[];
 }
 
 export interface PhotoProcessingContext {
@@ -14,4 +15,5 @@ export interface PhotoProcessingContext {
   livePhotoMap: Map<string, StorageObject>;
   options: PhotoProcessorOptions;
   pluginData: Record<string, unknown>;
+  signal?: AbortSignal;
 }

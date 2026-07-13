@@ -15,6 +15,7 @@ interface ComputedRangeKey {
   end: number;
   items: unknown;
   lang: string;
+  visibleIndices: unknown;
 }
 
 /**
@@ -80,6 +81,7 @@ export const useVisiblePhotosDateRange = () => {
       startIndex: number,
       endIndex: number,
       items: (PhotoManifest | { id?: never })[],
+      visibleIndices?: number[],
     ) => {
       // 输入（区间 + items 引用 + 语言）与上次一致 → 结果必然一致，直接早退。
       const last = lastComputedRef.current;
@@ -88,6 +90,7 @@ export const useVisiblePhotosDateRange = () => {
         last.start === startIndex &&
         last.end === endIndex &&
         last.items === items &&
+        last.visibleIndices === visibleIndices &&
         last.lang === i18n.language
       ) {
         return;
@@ -97,6 +100,7 @@ export const useVisiblePhotosDateRange = () => {
         end: endIndex,
         items,
         lang: i18n.language,
+        visibleIndices,
       };
 
       if (!items || items.length === 0) {
@@ -109,12 +113,13 @@ export const useVisiblePhotosDateRange = () => {
       }
 
       // 过滤出照片类型的items (排除header等)
-      const visiblePhotos = items
-        .slice(startIndex, endIndex + 1)
-        .filter(
-          (item): item is PhotoManifest =>
-            item && typeof item === "object" && "id" in item,
-        );
+      const visibleItems = visibleIndices
+        ? visibleIndices.map((index) => items[index])
+        : items.slice(startIndex, endIndex + 1);
+      const visiblePhotos = visibleItems.filter(
+        (item): item is PhotoManifest =>
+          item && typeof item === "object" && "id" in item,
+      );
 
       if (visiblePhotos.length === 0) {
         setDateRange({
@@ -128,6 +133,7 @@ export const useVisiblePhotosDateRange = () => {
       // 计算日期范围
       const dates = visiblePhotos
         .map((photo) => getPhotoDate(photo))
+        .filter((date) => !Number.isNaN(date.getTime()))
         .sort((a, b) => a.getTime() - b.getTime());
 
       const startDate = dates[0];
@@ -162,8 +168,9 @@ export const useVisiblePhotosDateRange = () => {
       startIndex: number,
       stopIndex: number,
       items: (PhotoManifest | { id?: never })[],
+      visibleIndices?: number[],
     ) => {
-      calculateDateRange(startIndex, stopIndex, items);
+      calculateDateRange(startIndex, stopIndex, items, visibleIndices);
     },
     [calculateDateRange],
   );

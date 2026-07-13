@@ -1,5 +1,7 @@
 import process from "node:process";
 
+import type { BuilderServices } from "../../core/contracts/services.js";
+import { getThumbnailFileNameFromUrl } from "../../image/thumbnail.js";
 import type { StorageManager } from "../../storage/index.js";
 import type { S3Config } from "../../storage/interfaces.js";
 import type { BuilderPlugin } from "../types.js";
@@ -78,6 +80,25 @@ export default function thumbnailStoragePlugin(
   let resolved: ResolvedPluginConfig | null = null;
   let externalStorageManager: StorageManager | null = null;
 
+  const getStorageManager = (
+    services: BuilderServices,
+    config: ResolvedPluginConfig,
+  ): StorageManager | null => {
+    if (config.useDefaultStorage) return services.storage.getManager();
+    if (!externalStorageManager && config.storageConfig) {
+      externalStorageManager = services.storage.createManager(
+        config.storageConfig,
+      );
+    }
+    return externalStorageManager;
+  };
+
+  const disposeExternalStorageManager = async () => {
+    const manager = externalStorageManager;
+    externalStorageManager = null;
+    await manager?.dispose();
+  };
+
   const plugin: BuilderPlugin & { [THUMBNAIL_PLUGIN_SYMBOL]: true } = {
     name: PLUGIN_NAME,
     [THUMBNAIL_PLUGIN_SYMBOL]: true,
@@ -100,12 +121,13 @@ export default function thumbnailStoragePlugin(
           storageConfig,
           enabled: true,
         };
-
-        if (!options.storageConfig) {
-          services.storage.getManager().addExcludePrefix(remotePrefix);
-        } else {
-          externalStorageManager =
-            services.storage.createManager(storageConfig);
+      },
+      // The builder uses a fresh default manager for every run. Reapply the
+      // plugin-owned dynamic exclusion when the same builder instance runs
+      // again, otherwise remote thumbnails can enter the source scan.
+      beforeBuild: ({ services }) => {
+        if (resolved?.useDefaultStorage) {
+          services.storage.getManager().addExcludePrefix(resolved.remotePrefix);
         }
       },
       afterPhotoProcess: async ({ services, payload, runShared, logger }) => {
@@ -128,9 +150,7 @@ export default function thumbnailStoragePlugin(
           return;
         }
 
-        const storageManager = resolved.useDefaultStorage
-          ? services.storage.getManager()
-          : externalStorageManager;
+        const storageManager = getStorageManager(services, resolved);
 
         if (!storageManager) {
           logger.main.warn(
@@ -177,76 +197,84 @@ export default function thumbnailStoragePlugin(
       },
       afterBuild: async ({ services, payload, logger }) => {
         const config = resolved;
-        if (!config || !config.enabled) return;
-
-        // 与 manifest/manager.ts 的本地孤儿判定同一条规则：孤儿 = "存储中已
-        // 不存在"，而不是"不在本次 manifest 里"。空扫描或有照片处理失败时
-        // manifest 是缩水的，据它清理会把仍然有效的远端缩略图连坐删除
-        // （本地路径靠 keepPhotoIds 防护；远端直接跳过本轮，下次健康构建再收敛）。
-        if (payload.manifest.length === 0 || payload.result.failedCount > 0) {
-          logger.thumbnail.warn(
-            payload.manifest.length === 0
-              ? "Skipping remote thumbnail orphan cleanup: this run's manifest is empty."
-              : `Skipping remote thumbnail orphan cleanup: ${payload.result.failedCount} photo(s) failed to process this run.`,
-          );
-          return;
-        }
-
-        const storageManager = config.useDefaultStorage
-          ? services.storage.getManager()
-          : externalStorageManager;
-        if (!storageManager) return;
-
-        // 期望存在的远端缩略图 key（来自最终 manifest）。
-        const expected = new Set(
-          payload.manifest.map((photo) =>
-            joinSegments(config.remotePrefix, `${photo.id}.jpg`),
-          ),
-        );
-
-        let remoteKeys: string[];
         try {
-          remoteKeys = await storageManager.listObjectKeys(
-            `${config.remotePrefix}/`,
-          );
-        } catch (error) {
-          logger.thumbnail.warn(
-            "Failed to list remote thumbnails; skipping orphan cleanup.",
-            error,
-          );
-          return;
-        }
+          if (!config || !config.enabled) return;
 
-        const orphans = remoteKeys.filter((key) => !expected.has(key));
-        if (orphans.length === 0) return;
+          // 与 manifest/manager.ts 的本地孤儿判定同一条规则：孤儿 = "存储中已
+          // 不存在"，而不是"不在本次 manifest 里"。空扫描或有照片处理失败时
+          // manifest 是缩水的，据它清理会把仍然有效的远端缩略图连坐删除
+          // （本地路径靠 keepPhotoIds 防护；远端直接跳过本轮，下次健康构建再收敛）。
+          if (payload.manifest.length === 0 || payload.result.failedCount > 0) {
+            logger.thumbnail.warn(
+              payload.manifest.length === 0
+                ? "Skipping remote thumbnail orphan cleanup: this run's manifest is empty."
+                : `Skipping remote thumbnail orphan cleanup: ${payload.result.failedCount} photo(s) failed to process this run.`,
+            );
+            return;
+          }
 
-        // 破坏性删除默认走 dry-run：仅当显式设置 THUMBNAIL_STORAGE_CLEANUP=true 时才真正删除。
-        if (process.env.THUMBNAIL_STORAGE_CLEANUP !== "true") {
-          logger.thumbnail.warn(
-            `Found ${orphans.length} remote thumbnail orphan(s) (dry-run, nothing deleted). ` +
-              `Set THUMBNAIL_STORAGE_CLEANUP=true to actually delete them. Examples: ${orphans
-                .slice(0, 5)
-                .join(", ")}`,
+          const storageManager = getStorageManager(services, config);
+          if (!storageManager) return;
+
+          // 期望存在的远端缩略图 key（来自最终 manifest）。
+          const expected = new Set(
+            payload.manifest.map((photo) => {
+              const fileName =
+                getThumbnailFileNameFromUrl(photo.thumbnailUrl) ??
+                `${photo.id}.jpg`;
+              return joinSegments(config.remotePrefix, fileName);
+            }),
           );
-          return;
-        }
 
-        let deleted = 0;
-        for (const key of orphans) {
+          let remoteKeys: string[];
           try {
-            await storageManager.deleteFile(key);
-            deleted++;
+            remoteKeys = await storageManager.listObjectKeys(
+              `${config.remotePrefix}/`,
+            );
           } catch (error) {
             logger.thumbnail.warn(
-              `Failed to delete remote thumbnail orphan: ${key}`,
+              "Failed to list remote thumbnails; skipping orphan cleanup.",
               error,
             );
+            return;
+          }
+
+          const orphans = remoteKeys.filter((key) => !expected.has(key));
+          if (orphans.length === 0) return;
+
+          // 破坏性删除默认走 dry-run：仅当显式设置 THUMBNAIL_STORAGE_CLEANUP=true 时才真正删除。
+          if (process.env.THUMBNAIL_STORAGE_CLEANUP !== "true") {
+            logger.thumbnail.warn(
+              `Found ${orphans.length} remote thumbnail orphan(s) (dry-run, nothing deleted). ` +
+                `Set THUMBNAIL_STORAGE_CLEANUP=true to actually delete them. Examples: ${orphans
+                  .slice(0, 5)
+                  .join(", ")}`,
+            );
+            return;
+          }
+
+          let deleted = 0;
+          for (const key of orphans) {
+            try {
+              await storageManager.deleteFile(key);
+              deleted++;
+            } catch (error) {
+              logger.thumbnail.warn(
+                `Failed to delete remote thumbnail orphan: ${key}`,
+                error,
+              );
+            }
+          }
+          logger.thumbnail.info(
+            `Cleaned up ${deleted}/${orphans.length} remote thumbnail orphan(s).`,
+          );
+        } finally {
+          if (!config?.useDefaultStorage) {
+            await disposeExternalStorageManager();
           }
         }
-        logger.thumbnail.info(
-          `Cleaned up ${deleted}/${orphans.length} remote thumbnail orphan(s).`,
-        );
       },
+      onError: disposeExternalStorageManager,
     },
   };
 

@@ -26,6 +26,7 @@ export interface PhotoTaskInput {
   index: number;
   workerId: number;
   totalImages: number;
+  signal?: AbortSignal;
 }
 
 /**
@@ -50,6 +51,9 @@ export function toProcessorOptions(
     isForceMode: builderOptions.isForceMode,
     isForceManifest: builderOptions.isForceManifest,
     isForceThumbnails: builderOptions.isForceThumbnails,
+    ...(builderOptions.reprocessKeys
+      ? { reprocessKeys: builderOptions.reprocessKeys }
+      : {}),
   };
 }
 
@@ -58,7 +62,8 @@ export async function processPhoto(
   task: PhotoTaskInput,
   runtime: PhotoTaskRuntime,
 ): Promise<ProcessPhotoResult> {
-  const { obj, index, workerId, totalImages } = task;
+  const { obj, index, workerId, totalImages, signal } = task;
+  signal?.throwIfAborted();
   const { key } = obj;
   if (!key) {
     logger.image.warn(`Skipping object without a key`);
@@ -75,6 +80,7 @@ export async function processPhoto(
     livePhotoMap: runtime.livePhotoMap,
     options: toProcessorOptions(runtime.builderOptions),
     pluginData: {},
+    signal,
   };
 
   const executionContext = createPhotoExecutionContext(
@@ -84,6 +90,7 @@ export async function processPhoto(
   );
 
   return await runWithPhotoExecutionContext(executionContext, async () => {
+    signal?.throwIfAborted();
     executionContext.loggers.image.info(
       `📸 [${index + 1}/${totalImages}] ${key}`,
     );

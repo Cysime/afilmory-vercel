@@ -137,7 +137,7 @@ const StatCard = ({
   value: string | number;
   icon: string;
 }) => (
-  <div className="group relative overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50 p-6 backdrop-blur-sm transition-all hover:border-zinc-700 hover:bg-zinc-900/80">
+  <div className="group relative overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50 p-6 backdrop-blur-sm transition-[background-color,border-color,box-shadow,transform] hover:border-zinc-700 hover:bg-zinc-900/80">
     <div className="absolute inset-0 bg-gradient-to-br from-zinc-800/0 via-zinc-800/5 to-zinc-800/10" />
     <div className="relative">
       <div className="flex items-center justify-between">
@@ -174,7 +174,7 @@ const PhotoCard = ({
   photo: PhotoManifest;
   index: number;
 }) => (
-  <div className="group relative overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/30 backdrop-blur-sm transition-all hover:border-zinc-700 hover:bg-zinc-900/50">
+  <div className="group relative overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/30 backdrop-blur-sm transition-[background-color,border-color,box-shadow,transform] hover:border-zinc-700 hover:bg-zinc-900/50">
     <div className="absolute inset-0 bg-gradient-to-br from-zinc-800/0 via-zinc-800/5 to-zinc-800/10 opacity-0 transition-opacity group-hover:opacity-100" />
 
     <div className="relative p-6">
@@ -323,7 +323,7 @@ const ManifestInspectorPage = () => {
                 <div className="relative">
                   <input
                     type="text"
-                    placeholder="Search photos, tags, cameras..."
+                    placeholder="Search photos, tags, cameras…"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="w-64 rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-2 text-sm text-zinc-100 placeholder-zinc-500 backdrop-blur-sm transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"

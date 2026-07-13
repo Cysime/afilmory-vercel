@@ -44,6 +44,8 @@ type MockS3Send = (
 ) => Promise<MockS3Response>;
 
 class MockS3Client implements S3ClientLike {
+  destroy?: () => void;
+
   constructor(private readonly sendMock: MockS3Send) {}
 
   send(
@@ -100,6 +102,30 @@ describe("S3StorageProvider.getFile", () => {
     vi.useRealTimers();
   });
 
+  it("rejects invalid direct download tuning instead of clamping it", () => {
+    expect(
+      () =>
+        new S3StorageProvider(
+          { ...config, downloadConcurrency: 0 },
+          { s3Client: new MockS3Client(vi.fn<MockS3Send>()) },
+        ),
+    ).toThrow(/downloadConcurrency must be a positive integer/);
+  });
+
+  it.each([
+    { endpoint: "https://user:secret@example.com" },
+    { endpoint: "https://example.com?token=secret" },
+    { customDomain: "javascript:alert(1)" },
+  ])("rejects unsafe public URL configuration", (override) => {
+    expect(
+      () =>
+        new S3StorageProvider(
+          { ...config, ...override },
+          { s3Client: new MockS3Client(vi.fn<MockS3Send>()) },
+        ),
+    ).toThrow(/http\(s\) URL without credentials/);
+  });
+
   it("clears the total timeout when the response body is already a Buffer", async () => {
     const send = vi.fn<MockS3Send>().mockResolvedValue(
       createGetObjectResponse({
@@ -131,6 +157,32 @@ describe("S3StorageProvider.getFile", () => {
 
     await expect(provider.getFile("image.jpg")).resolves.toBeNull();
     expect(clearTimeoutSpy).toHaveBeenCalled();
+  });
+
+  it("propagates caller cancellation into the active S3 request", async () => {
+    let requestSignal: AbortSignal | undefined;
+    const send = vi.fn<MockS3Send>(
+      async (_command, options) =>
+        await new Promise((_resolve, reject) => {
+          requestSignal = options?.abortSignal;
+          options?.abortSignal?.addEventListener(
+            "abort",
+            () => reject(options.abortSignal?.reason),
+            { once: true },
+          );
+        }),
+    );
+    const provider = new S3StorageProvider(config, {
+      s3Client: new MockS3Client(send),
+    });
+    const controller = new AbortController();
+    const download = provider.getFile("image.jpg", controller.signal);
+
+    await vi.waitFor(() => expect(requestSignal).toBeInstanceOf(AbortSignal));
+    controller.abort(new Error("cancel build"));
+
+    await expect(download).rejects.toThrow("cancel build");
+    expect(requestSignal?.aborted).toBe(true);
   });
 
   it("accumulates streamed body chunks into a single Buffer", async () => {
@@ -193,6 +245,19 @@ describe("S3StorageProvider.getFile", () => {
     expect(send).toHaveBeenCalledTimes(3);
     // Every attempt cleared its own total/idle timers on the way out.
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not retry deterministic client-side S3 errors", async () => {
+    const forbidden = Object.assign(new Error("forbidden"), {
+      $metadata: { httpStatusCode: 403 },
+    });
+    const send = vi.fn<MockS3Send>().mockRejectedValue(forbidden);
+    const provider = new S3StorageProvider(config, {
+      s3Client: new MockS3Client(send),
+    });
+
+    await expect(provider.getFile("private.jpg")).resolves.toBeNull();
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it("aborts a stalled stream via the idle timeout and retries with a clean slate", async () => {
@@ -306,6 +371,100 @@ describe("S3StorageProvider.getFile", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it("marks a maxFileLimit-truncated snapshot as incomplete", async () => {
+    const send = vi.fn<MockS3Send>().mockResolvedValue(
+      createListObjectsResponse({
+        Contents: [{ Key: "a.jpg", Size: 1 }],
+        IsTruncated: true,
+        NextContinuationToken: "more",
+      }),
+    );
+    const provider = new S3StorageProvider(
+      { ...config, maxFileLimit: 1 },
+      { s3Client: new MockS3Client(send) },
+    );
+
+    await expect(provider.listAllFilesDetailed()).resolves.toMatchObject({
+      complete: false,
+      objects: [expect.objectContaining({ key: "a.jpg" })],
+      reason: { code: "max-file-limit" },
+    });
+  });
+
+  it("marks malformed pagination as incomplete instead of publishing a partial snapshot", async () => {
+    const send = vi.fn<MockS3Send>().mockResolvedValue(
+      createListObjectsResponse({
+        Contents: [{ Key: "a.jpg", Size: 1 }],
+        IsTruncated: true,
+      }),
+    );
+    const provider = new S3StorageProvider(config, {
+      s3Client: new MockS3Client(send),
+    });
+
+    await expect(provider.listAllFilesDetailed()).resolves.toMatchObject({
+      complete: false,
+      reason: { code: "pagination-anomaly" },
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an oversized body without retrying the deterministic limit failure", async () => {
+    const send = vi.fn<MockS3Send>().mockResolvedValue(
+      createGetObjectResponse({
+        Body: Buffer.from("12345"),
+        ContentLength: 5,
+      }),
+    );
+    const provider = new S3StorageProvider(
+      {
+        ...config,
+        downloadMemoryBudgetBytes: 4,
+        maxDownloadBytes: 4,
+      },
+      { s3Client: new MockS3Client(send) },
+    );
+
+    await expect(provider.getFile("too-large.jpg")).resolves.toBeNull();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("serializes streamed buffers when the provider byte budget is exhausted", async () => {
+    const firstStream = new PassThrough();
+    const send = vi
+      .fn<MockS3Send>()
+      .mockResolvedValueOnce(
+        createGetObjectResponse({ Body: firstStream, ContentLength: 4 }),
+      )
+      .mockResolvedValueOnce(
+        createGetObjectResponse({
+          Body: Readable.from([Buffer.from("next")]),
+          ContentLength: 4,
+        }),
+      );
+    const provider = new S3StorageProvider(
+      {
+        ...config,
+        downloadMemoryBudgetBytes: 4,
+        maxDownloadBytes: 4,
+      },
+      { s3Client: new MockS3Client(send) },
+    );
+
+    const first = provider.getFile("first.jpg");
+    let secondSettled = false;
+    const second = provider.getFile("second.jpg").finally(() => {
+      secondSettled = true;
+    });
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+
+    firstStream.end(Buffer.from("one!"));
+    await expect(first).resolves.toEqual(Buffer.from("one!"));
+    await expect(second).resolves.toEqual(Buffer.from("next"));
+  });
+
   it("excludes keys matching S3_EXCLUDE_REGEX from both listImages and listAllFiles", async () => {
     const makeSend = () =>
       vi.fn<MockS3Send>().mockResolvedValue(
@@ -397,6 +556,27 @@ describe("S3StorageProvider.getFile", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it("applies the same retry policy to uploads", async () => {
+    vi.useFakeTimers();
+    const send = vi
+      .fn<MockS3Send>()
+      .mockRejectedValueOnce(new Error("temporary upload failure"))
+      .mockResolvedValueOnce({ $metadata: {}, ETag: '"etag"' });
+    const provider = new S3StorageProvider(
+      { ...config, maxAttempts: 2 },
+      { s3Client: new MockS3Client(send) },
+    );
+    const upload = provider.uploadFile("thumb.jpg", Buffer.from("jpeg"));
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await expect(upload).resolves.toMatchObject({
+      etag: '"etag"',
+      key: "thumb.jpg",
+      size: 4,
+    });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
   it("encodes object keys when generating public URLs", () => {
     const provider = new S3StorageProvider({
       ...config,
@@ -406,5 +586,37 @@ describe("S3StorageProvider.getFile", () => {
     expect(provider.generatePublicUrl("family/2024 #1?.jpg")).toBe(
       "https://cdn.example.com/family/2024%20%231%3F.jpg",
     );
+  });
+
+  it("keeps public URL addressing consistent with explicit forcePathStyle", () => {
+    const pathStyle = new S3StorageProvider({
+      ...config,
+      endpoint: "https://s3.us-east-1.amazonaws.com",
+      forcePathStyle: true,
+      region: "us-east-1",
+    });
+    expect(pathStyle.generatePublicUrl("folder/photo 1.jpg")).toBe(
+      "https://s3.us-east-1.amazonaws.com/bucket/folder/photo%201.jpg",
+    );
+
+    const virtualHosted = new S3StorageProvider({
+      ...config,
+      endpoint: "https://objects.example.com",
+      forcePathStyle: false,
+    });
+    expect(virtualHosted.generatePublicUrl("photo.jpg")).toBe(
+      "https://bucket.objects.example.com/photo.jpg",
+    );
+  });
+
+  it("disposes an owned client exactly once", async () => {
+    const client = new MockS3Client(vi.fn<MockS3Send>());
+    const destroy = vi.fn();
+    client.destroy = destroy;
+    const provider = new S3StorageProvider(config, { s3Client: client });
+
+    await provider.dispose();
+    await provider.dispose();
+    expect(destroy).toHaveBeenCalledTimes(1);
   });
 });

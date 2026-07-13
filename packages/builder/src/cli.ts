@@ -7,16 +7,18 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import type { BuildProgressListener } from "./builder/builder.js";
-import { shouldWriteThumbnailEncodingMarker } from "./builder/builder.js";
 import { AfilmoryBuilder } from "./builder/index.js";
 import { loadBuilderConfig } from "./config/index.js";
 import { ExifService } from "./image/exif.js";
 import {
   isThumbnailEncodingStale,
   THUMBNAIL_ENCODING_SIGNATURE,
-  writeThumbnailEncodingMarker,
 } from "./image/thumbnail.js";
-import { logger, setLogListener } from "./logger/index.js";
+import {
+  configureLoggerObservability,
+  logger,
+  setLogListener,
+} from "./logger/index.js";
 import { runAsWorker } from "./runAsWorker.js";
 
 type BuilderTUI = import("./cli/tui.js").BuilderTUI;
@@ -71,6 +73,7 @@ Configuration:
   const builderConfig = await loadBuilderConfig({
     cwd: join(fileURLToPath(import.meta.url), "../../../.."),
   });
+  configureLoggerObservability(builderConfig.system.observability.logging);
   const cliBuilder = new AfilmoryBuilder(builderConfig, {
     exifService: new ExifService({
       exiftoolPath: process.env.EXIFTOOL_PATH,
@@ -166,7 +169,10 @@ Configuration:
     ? "cluster"
     : "worker";
 
-  const useTui = process.stdout.isTTY && !disableUi;
+  const useTui =
+    config.system.observability.showProgress &&
+    process.stdout.isTTY &&
+    !disableUi;
   let tui: BuilderTUI | null = null;
   let progressListener: BuildProgressListener | undefined;
 
@@ -203,21 +209,6 @@ Configuration:
     });
 
     buildResult = result;
-    // 构建成功即落盘签名标记（会随 artifact-cache 同步）；中途异常不写。
-    // 零照片构建与强制重生成中有照片失败的运行也不写，
-    // 原因见 shouldWriteThumbnailEncodingMarker 的注释。
-    const wasThumbnailForce = isForceMode || isForceThumbnails;
-    if (shouldWriteThumbnailEncodingMarker(result, wasThumbnailForce)) {
-      await writeThumbnailEncodingMarker(thumbnailsDir);
-    } else if (wasThumbnailForce && result.failedCount > 0) {
-      logger.main.warn(
-        "⚠️ Some photos failed during this force-regeneration; keeping the previous encoding marker. The next build will keep force-regenerating until all succeed.",
-      );
-    } else {
-      logger.main.info(
-        "Skipping the thumbnail encoding marker: this build evaluated zero photos.",
-      );
-    }
     tui?.markSuccess(result);
   } catch (error) {
     tui?.markError(error);

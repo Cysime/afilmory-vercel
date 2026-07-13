@@ -99,4 +99,33 @@ describe("createS3Client", () => {
       client.destroy();
     }
   });
+
+  it("uses the AWS default credential chain when explicit keys are omitted", () => {
+    const client = createS3Client({
+      provider: "s3",
+      bucket: "bucket",
+      region: "us-east-1",
+    });
+    client.destroy();
+  });
+
+  it("rejects a partially configured explicit credential pair", () => {
+    expect(() =>
+      createS3Client({
+        provider: "s3",
+        bucket: "bucket",
+        region: "us-east-1",
+        accessKeyId: "key-only",
+      }),
+    ).toThrow(/must either both be provided or both be omitted/);
+  });
+
+  it("rejects invalid transport tuning in direct API usage", () => {
+    expect(() => createS3Client({ ...baseConfig, maxSockets: 0 })).toThrow(
+      /maxSockets must be a positive integer/,
+    );
+    expect(() => createS3Client({ ...baseConfig, maxAttempts: 1.5 })).toThrow(
+      /maxAttempts must be a positive integer/,
+    );
+  });
 });

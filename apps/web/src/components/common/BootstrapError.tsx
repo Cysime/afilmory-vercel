@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { getI18n } from "~/i18n";
+import { formatUnknownError } from "~/lib/format-error";
 import {
   isStaleRuntimeError,
   recoverFromStaleRuntimeError,
@@ -7,8 +9,8 @@ import {
 } from "~/lib/stale-runtime-recovery";
 
 export const BootstrapError = ({ error }: { error: unknown }) => {
-  const message =
-    error instanceof Error ? error.message : "Unknown startup error";
+  const i18n = getI18n();
+  const message = formatUnknownError(error);
   const recoveryRef = useRef(false);
   const [isRecovering, setIsRecovering] = useState(false);
 
@@ -35,34 +37,41 @@ export const BootstrapError = ({ error }: { error: unknown }) => {
   }, [error]);
 
   if (isRecovering) {
-    return null;
+    return (
+      <div
+        className="flex min-h-svh items-center justify-center bg-black text-white"
+        role="status"
+        aria-live="polite"
+      >
+        {i18n.t("loading.default")}…
+      </div>
+    );
   }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-black px-6 text-white">
       <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-white/5 p-8 backdrop-blur">
-        <p className="text-sm tracking-[0.2em] text-white/50 uppercase">
-          Manifest Load Failed
-        </p>
-        <h1 className="mt-3 text-3xl font-semibold">
-          The photo library could not be initialized.
+        <h1 className="text-3xl font-semibold text-pretty">
+          {i18n.t("error.title")}
         </h1>
+        <p className="mt-3 text-sm leading-6 text-pretty text-white/70">
+          {i18n.t("error.temporary.description")}
+        </p>
         <p className="mt-4 text-sm leading-6 text-white/70">{message}</p>
         <div className="mt-6 flex gap-3">
           <button
             type="button"
             onClick={() => void retryAfterCleanup()}
-            className="rounded-full bg-white px-4 py-2 text-sm font-medium text-black transition hover:bg-white/90"
+            className="min-h-11 rounded-full bg-white px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-white/90"
           >
-            Retry
+            {i18n.t("error.reload")}
           </button>
-          <button
-            type="button"
-            onClick={() => (window.location.href = "/")}
-            className="rounded-full border border-white/15 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10"
+          <a
+            href="/"
+            className="inline-flex min-h-11 items-center rounded-full border border-white/15 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-white/10"
           >
-            Go Home
-          </button>
+            {i18n.t("common.home")}
+          </a>
         </div>
       </div>
     </div>

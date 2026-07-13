@@ -6,9 +6,15 @@ import { AFILMORY_MANIFEST_SCHEMA } from "@afilmory/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  createThumbnailFileName,
+  getThumbnailPublicUrlForFileName,
+} from "../image/thumbnail.js";
+import {
   handleDeletedPhotos,
   loadExistingManifest,
+  loadExistingManifestWithDiagnostics,
   needsUpdate,
+  saveManifest,
 } from "../manifest/manager.js";
 import { CURRENT_MANIFEST_VERSION } from "../manifest/version.js";
 import type { BuilderOutputSettings } from "../output-paths.js";
@@ -117,6 +123,24 @@ describe("handleDeletedPhotos", () => {
       fs.readFile(path.join(thumbnailsDir, ".encoding"), "utf-8"),
     ).resolves.toBe("jpeg-w600-q80");
   });
+
+  it("keeps only the currently referenced content-addressed version", async () => {
+    await fs.mkdir(thumbnailsDir, { recursive: true });
+    const oldName = createThumbnailFileName("keep", Buffer.from("old"));
+    const newName = createThumbnailFileName("keep", Buffer.from("new"));
+    await fs.writeFile(path.join(thumbnailsDir, oldName), "old");
+    await fs.writeFile(path.join(thumbnailsDir, newName), "new");
+    const photo = createPhotoManifestItem("keep");
+    photo.thumbnailUrl = getThumbnailPublicUrlForFileName(newName);
+
+    await expect(handleDeletedPhotos(outputSettings, [photo])).resolves.toBe(1);
+    await expect(
+      fs.access(path.join(thumbnailsDir, oldName)),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      fs.access(path.join(thumbnailsDir, newName)),
+    ).resolves.toBeUndefined();
+  });
 });
 
 describe("loadExistingManifest", () => {
@@ -141,13 +165,15 @@ describe("loadExistingManifest", () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("creates a new manifest only when the file does not exist", async () => {
+  it("starts with an in-memory empty cache when the file does not exist", async () => {
     const manifest = await loadExistingManifest(outputSettings);
 
     expect(manifest.schema).toBe(AFILMORY_MANIFEST_SCHEMA);
     expect(manifest.version).toBe(CURRENT_MANIFEST_VERSION);
     expect(manifest.photos).toEqual([]);
-    await expect(fs.access(manifestPath)).resolves.toBeUndefined();
+    await expect(fs.access(manifestPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("discards a legacy manifest and rebuilds from scratch instead of throwing", async () => {
@@ -161,11 +187,12 @@ describe("loadExistingManifest", () => {
 
     expect(manifest.photos).toEqual([]);
     expect(manifest.version).toBe(CURRENT_MANIFEST_VERSION);
-    // 损坏的缓存文件被覆盖为有效的空 manifest，下一次读取不会再失败。
-    const rewritten = JSON.parse(await fs.readFile(manifestPath, "utf-8"));
-    expect(rewritten.schema).toBe(AFILMORY_MANIFEST_SCHEMA);
-    expect(rewritten.version).toBe(CURRENT_MANIFEST_VERSION);
-    expect(rewritten.photos).toEqual([]);
+    // Loading is read-only: only a fully scanned, strictly validated candidate
+    // may atomically replace the previous bytes later in ArtifactWriter.
+    expect(JSON.parse(await fs.readFile(manifestPath, "utf-8"))).toEqual({
+      version: "v10",
+      data: [{ id: "legacy" }],
+    });
   });
 
   it("discards an unreadable manifest and rebuilds from scratch instead of throwing", async () => {
@@ -174,9 +201,7 @@ describe("loadExistingManifest", () => {
     const manifest = await loadExistingManifest(outputSettings);
 
     expect(manifest.photos).toEqual([]);
-    const rewritten = JSON.parse(await fs.readFile(manifestPath, "utf-8"));
-    expect(rewritten.version).toBe(CURRENT_MANIFEST_VERSION);
-    expect(rewritten.photos).toEqual([]);
+    expect(await fs.readFile(manifestPath, "utf-8")).toBe("{ invalid json");
   });
 
   it("keeps salvageable photos and drops only those missing a core field", async () => {
@@ -212,7 +237,7 @@ describe("loadExistingManifest", () => {
         photos: [
           validPhoto,
           // 可恢复字段损坏（数值），由 normalizer 抢救后保留
-          { ...validPhoto, id: "soft", width: "oops" },
+          { ...validPhoto, id: "soft", s3Key: "soft.jpg", width: "oops" },
           // 核心寻址字段损坏，无法使用 → 跳过
           { ...validPhoto, id: "fatal", originalUrl: 123 },
         ],
@@ -222,6 +247,100 @@ describe("loadExistingManifest", () => {
     const manifest = await loadExistingManifest(outputSettings);
 
     expect(manifest.photos.map((photo) => photo.id)).toEqual(["good", "soft"]);
+  });
+
+  it("reports normalized records as repaired cache entries", async () => {
+    const photo = createPhotoManifestItem("repair-me");
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({
+        schema: AFILMORY_MANIFEST_SCHEMA,
+        version: CURRENT_MANIFEST_VERSION,
+        generatedAt: "2026-06-06T00:00:00.000Z",
+        source: { provider: "unknown" },
+        indexes: { cameras: [], lenses: [] },
+        photos: [{ ...photo, width: "broken" }],
+      }),
+    );
+
+    const loaded = await loadExistingManifestWithDiagnostics(outputSettings);
+
+    expect(loaded.manifest.photos[0]!.width).toBe(1);
+    expect(loaded.repairedPhotoKeys).toEqual(new Set([photo.s3Key]));
+    expect(loaded.requiresRewrite).toBe(true);
+  });
+
+  it("marks recoverable derived indexes for an on-disk rewrite", async () => {
+    const photo = createPhotoManifestItem("repair-indexes");
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({
+        schema: AFILMORY_MANIFEST_SCHEMA,
+        version: CURRENT_MANIFEST_VERSION,
+        generatedAt: "2026-06-06T00:00:00.000Z",
+        source: { provider: "unknown" },
+        photos: [photo],
+      }),
+    );
+
+    const loaded = await loadExistingManifestWithDiagnostics(outputSettings);
+
+    expect(loaded.manifest.indexes).toEqual({ cameras: [], lenses: [] });
+    expect(loaded.requiresRewrite).toBe(true);
+  });
+
+  it("preserves generatedAt and bytes when the candidate is unchanged", async () => {
+    const photo = createPhotoManifestItem("stable");
+    const first = await saveManifest(outputSettings, [photo]);
+    const firstBytes = await fs.readFile(manifestPath, "utf8");
+
+    const second = await saveManifest(
+      outputSettings,
+      [photo],
+      [],
+      [],
+      { provider: "unknown" },
+      { previousManifest: first.manifest },
+    );
+
+    expect(second.written).toBe(false);
+    expect(second.manifest.generatedAt).toBe(first.manifest.generatedAt);
+    expect(await fs.readFile(manifestPath, "utf8")).toBe(firstBytes);
+  });
+
+  it("rewrites a normalized manifest even when its semantic data is unchanged", async () => {
+    const photo = createPhotoManifestItem("normalized");
+    const first = await saveManifest(outputSettings, [photo]);
+
+    const rewritten = await saveManifest(
+      outputSettings,
+      [photo],
+      [],
+      [],
+      { provider: "unknown" },
+      { forceWrite: true, previousManifest: first.manifest },
+    );
+
+    expect(rewritten.written).toBe(true);
+    expect(rewritten.manifest.generatedAt).toBe(first.manifest.generatedAt);
+  });
+
+  it("validates before replacing the last successful manifest", async () => {
+    const valid = createPhotoManifestItem("valid");
+    const first = await saveManifest(outputSettings, [valid]);
+    const firstBytes = await fs.readFile(manifestPath, "utf8");
+
+    await expect(
+      saveManifest(
+        outputSettings,
+        [{ ...valid, id: "" }],
+        [],
+        [],
+        { provider: "unknown" },
+        { previousManifest: first.manifest },
+      ),
+    ).rejects.toThrow(/portable identifier/);
+    expect(await fs.readFile(manifestPath, "utf8")).toBe(firstBytes);
   });
 });
 

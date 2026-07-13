@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createDefaultBuilderConfig } from "../../config/defaults.js";
 import type { BuilderServices } from "../../core/contracts/services.js";
+import { thumbnailExists } from "../../image/thumbnail.js";
 import { logger } from "../../logger/index.js";
 import { StorageManager } from "../../storage/index.js";
 import type { StorageObject } from "../../storage/interfaces.js";
@@ -21,7 +22,25 @@ import { SourceScanner } from "./source-scanner.js";
 
 const manifestManagerMocks = vi.hoisted(() => ({
   handleDeletedPhotos: vi.fn(async () => 1),
-  saveManifest: vi.fn(async () => {}),
+  saveManifest: vi.fn(
+    async (
+      _output: unknown,
+      photos: PhotoManifestItem[],
+      cameras: unknown[],
+      lenses: unknown[],
+      source: unknown,
+    ) => ({
+      manifest: {
+        schema: "afilmory.manifest" as const,
+        version: 2 as const,
+        generatedAt: "2026-06-06T00:00:00.000Z",
+        source,
+        photos,
+        indexes: { cameras, lenses },
+      },
+      written: true,
+    }),
+  ),
 }));
 
 vi.mock("../../image/thumbnail.js", () => ({
@@ -78,6 +97,9 @@ function createStorageManagerFixture(
       vi.fn(async (key: string) => `https://example.com/${key}`),
     getFile: overrides.getFile ?? vi.fn(async () => null),
     listAllFiles: overrides.listAllFiles ?? vi.fn(async () => []),
+    listAllFilesDetailed:
+      overrides.listAllFilesDetailed ??
+      vi.fn(async () => ({ objects: [], complete: true })),
     listImages: overrides.listImages ?? vi.fn(async () => []),
     uploadFile:
       overrides.uploadFile ??
@@ -168,10 +190,15 @@ describe("builder workflow modules", () => {
     );
     const livePhotoMap = new Map([[allObjects[0].key, allObjects[1]]]);
     const listAllFiles = vi.fn(async () => allObjects);
+    const listAllFilesDetailed = vi.fn(async () => ({
+      objects: allObjects,
+      complete: true,
+    }));
     const listImages = vi.fn(async () => imageObjects);
     const session = createSession({
       storageManager: createStorageManagerFixture({
         listAllFiles,
+        listAllFilesDetailed,
         listImages,
         detectLivePhotos: vi.fn(async () => livePhotoMap),
       }),
@@ -181,12 +208,15 @@ describe("builder workflow modules", () => {
 
     expect(result).toEqual({
       allObjects,
+      complete: true,
+      incompleteReason: undefined,
       imageObjects,
       livePhotoMap,
     });
     // imageObjects 由 allObjects 本地派生：整次扫描只做一次存储列举，
     // 不再触发 listImages 的第二次 ListObjectsV2 分页。
-    expect(listAllFiles).toHaveBeenCalledTimes(1);
+    expect(listAllFilesDetailed).toHaveBeenCalledTimes(1);
+    expect(listAllFiles).not.toHaveBeenCalled();
     expect(listImages).not.toHaveBeenCalled();
     expect(session.emitPluginEvent).toHaveBeenCalledWith(
       session.runState,
@@ -215,10 +245,15 @@ describe("builder workflow modules", () => {
       { key: "photos/no-extension" },
     ];
     const listAllFiles = vi.fn(async () => allObjects);
+    const listAllFilesDetailed = vi.fn(async () => ({
+      objects: allObjects,
+      complete: true,
+    }));
     const listImages = vi.fn(async () => []);
     const session = createSession({
       storageManager: createStorageManagerFixture({
         listAllFiles,
+        listAllFilesDetailed,
         listImages,
       }),
     });
@@ -229,8 +264,33 @@ describe("builder workflow modules", () => {
       "photos/a.JPG",
       "photos/b.heic",
     ]);
-    expect(listAllFiles).toHaveBeenCalledTimes(1);
+    expect(listAllFilesDetailed).toHaveBeenCalledTimes(1);
+    expect(listAllFiles).not.toHaveBeenCalled();
     expect(listImages).not.toHaveBeenCalled();
+  });
+
+  it("does not emit source lifecycle hooks for an incomplete snapshot", async () => {
+    const allObjects: StorageObject[] = [{ key: "partial.jpg" }];
+    const session = createSession({
+      storageManager: createStorageManagerFixture({
+        listAllFilesDetailed: vi.fn(async () => ({
+          objects: allObjects,
+          complete: false,
+          reason: {
+            code: "pagination-anomaly" as const,
+            message: "missing continuation token",
+          },
+        })),
+      }),
+    });
+
+    await expect(new SourceScanner().scan(session)).resolves.toMatchObject({
+      allObjects,
+      complete: false,
+      imageObjects: [],
+      livePhotoMap: new Map(),
+    });
+    expect(session.emitPluginEvent).not.toHaveBeenCalled();
   });
 
   it("plans force-mode tasks without consulting thumbnail state", async () => {
@@ -257,6 +317,68 @@ describe("builder workflow modules", () => {
       "large.jpg",
       "small.jpg",
     ]);
+  });
+
+  it("forces worker reprocessing when a Live Photo sidecar changes", async () => {
+    vi.mocked(thumbnailExists).mockResolvedValueOnce(true);
+    const imageObject: StorageObject = {
+      key: "photo.jpg",
+      etag: "photo",
+      size: 100,
+      lastModified: new Date("2026-06-06T00:00:00.000Z"),
+    };
+    const livePhoto: StorageObject = {
+      key: "photo.mov",
+      etag: "new-video",
+      size: 200,
+    };
+    const existing = createPhoto("photo", {
+      video: {
+        type: "live-photo",
+        videoUrl: "https://example.com/photo.mov",
+        s3Key: "photo.mov",
+        version: "etag:old-video",
+      },
+    });
+    const session = createSession();
+
+    const result = await new DiffPlanner().plan(
+      session,
+      [imageObject],
+      new Map([[imageObject.key, existing]]),
+      new Map([[imageObject.key, livePhoto]]),
+    );
+
+    expect(result.tasksToProcess).toEqual([imageObject]);
+    expect(session.options.reprocessKeys).toContain(imageObject.key);
+  });
+
+  it("forces worker reprocessing when a Live Photo sidecar disappears", async () => {
+    vi.mocked(thumbnailExists).mockResolvedValueOnce(true);
+    const imageObject: StorageObject = {
+      key: "photo.jpg",
+      etag: "photo",
+      size: 100,
+      lastModified: new Date("2026-06-06T00:00:00.000Z"),
+    };
+    const existing = createPhoto("photo", {
+      video: {
+        type: "live-photo",
+        videoUrl: "https://example.com/photo.mov",
+        s3Key: "photo.mov",
+        version: "etag:video",
+      },
+    });
+    const session = createSession();
+
+    const result = await new DiffPlanner().plan(
+      session,
+      [imageObject],
+      new Map([[imageObject.key, existing]]),
+    );
+
+    expect(result.tasksToProcess).toEqual([imageObject]);
+    expect(session.options.reprocessKeys).toContain(imageObject.key);
   });
 
   it("merges existing and processed manifest items without duplicates", async () => {
@@ -317,7 +439,63 @@ describe("builder workflow modules", () => {
       [{ make: "Sony", model: "A7C", displayName: "Sony A7C" }],
       [{ make: "Sony", model: "FE 35mm", displayName: "Sony FE 35mm" }],
       { provider: "s3", bucket: "photos" },
+      { forceWrite: undefined, previousManifest: undefined },
     );
+    expect(
+      manifestManagerMocks.saveManifest.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      manifestManagerMocks.handleDeletedPhotos.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("rebuilds derived indexes after beforeSaveManifest mutations", async () => {
+    manifestManagerMocks.handleDeletedPhotos.mockClear();
+    manifestManagerMocks.saveManifest.mockClear();
+    const session = createSession();
+    const manifest = [createPhoto("photo")];
+    vi.mocked(session.emitPluginEvent).mockImplementation(
+      async (_runState, event, payload) => {
+        if (event !== "beforeSaveManifest") return;
+        const savePayload = payload as {
+          manifest: PhotoManifestItem[];
+        };
+        savePayload.manifest[0]!.exif = {
+          Make: "Leica",
+          Model: "M11",
+          LensModel: "Summilux 35",
+        };
+      },
+    );
+
+    await new ArtifactWriter().write(session, manifest);
+
+    expect(manifestManagerMocks.saveManifest).toHaveBeenCalledWith(
+      session.config.output,
+      manifest,
+      [{ make: "Leica", model: "M11", displayName: "Leica M11" }],
+      [
+        {
+          make: undefined,
+          model: "Summilux 35",
+          displayName: "Summilux 35",
+        },
+      ],
+      { provider: "s3", bucket: "photos" },
+      { forceWrite: undefined, previousManifest: undefined },
+    );
+  });
+
+  it("never cleans old assets when candidate validation/save fails", async () => {
+    manifestManagerMocks.handleDeletedPhotos.mockClear();
+    manifestManagerMocks.saveManifest.mockRejectedValueOnce(
+      new Error("candidate rejected"),
+    );
+    const session = createSession();
+
+    await expect(
+      new ArtifactWriter().write(session, [createPhoto("photo")]),
+    ).rejects.toThrow("candidate rejected");
+    expect(manifestManagerMocks.handleDeletedPhotos).not.toHaveBeenCalled();
   });
 
   it("forwards keepPhotoIds to handleDeletedPhotos so failed photos' thumbnails survive cleanup", async () => {

@@ -3,7 +3,6 @@ import { expect, test } from "@playwright/test";
 
 import {
   stubCartoBasemap,
-  stubGoogleFonts,
   stubLocalThumbnails,
   VIEWER_FIXTURE_IMAGE_PATH,
 } from "./helpers";
@@ -69,7 +68,9 @@ async function openGallery(page: Page) {
 
 async function openCommandPalette(page: Page) {
   await page.getByRole("button", { name: "Search & Filter" }).click();
-  const input = page.getByPlaceholder("Search photos...");
+  const input = page
+    .getByRole("dialog", { name: "Search & Filter" })
+    .getByRole("combobox");
   await expect(input).toBeVisible();
   return input;
 }
@@ -89,7 +90,6 @@ async function stubOriginalImages(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await stubGoogleFonts(page);
   await stubCartoBasemap(page);
   await stubLocalThumbnails(page);
 });

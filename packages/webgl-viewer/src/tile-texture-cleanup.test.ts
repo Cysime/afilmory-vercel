@@ -14,6 +14,7 @@ const createTile = (lastUsed: number, texture: WebGLTexture): TileInfo => ({
   texture,
   x: 0,
   y: 0,
+  byteSize: 512 * 512 * 4,
 });
 
 describe("cleanupTileTextures", () => {
@@ -38,6 +39,30 @@ describe("cleanupTileTextures", () => {
     expect(removed).toBe(1);
     expect(deleteTexture).toHaveBeenCalledWith(oldTexture);
     expect([...tileCache.keys()]).toEqual(["0-0-0"]);
+  });
+
+  it("evicts least-recently-used invisible textures to stay under byte budget", () => {
+    const oldest = createTile(1, {} as WebGLTexture);
+    const newest = createTile(2, {} as WebGLTexture);
+    oldest.byteSize = 10;
+    newest.byteSize = 10;
+    const tileCache = new Map([
+      ["old", oldest],
+      ["new", newest],
+    ]);
+    const deleteTexture = vi.fn();
+
+    cleanupTileTextures({
+      currentVisibleTiles: new Set(),
+      deleteTexture,
+      maxCacheBytes: 10,
+      maxCacheSize: 10,
+      now: 2,
+      tileCache,
+    });
+
+    expect([...tileCache.keys()]).toEqual(["new"]);
+    expect(deleteTexture).toHaveBeenCalledWith(oldest.texture);
   });
 });
 

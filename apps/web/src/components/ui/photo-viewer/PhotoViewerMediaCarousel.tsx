@@ -170,7 +170,7 @@ export const PhotoViewerMediaCarousel = ({
               className={`${viewerNavButtonClassName} left-4`}
               onClick={onPrevious}
             >
-              <i className="i-mingcute-left-line text-xl" />
+              <i className="i-mingcute-left-line text-xl" aria-hidden="true" />
             </button>
           )}
 
@@ -182,7 +182,7 @@ export const PhotoViewerMediaCarousel = ({
               className={`${viewerNavButtonClassName} right-4`}
               onClick={onNext}
             >
-              <i className="i-mingcute-right-line text-xl" />
+              <i className="i-mingcute-right-line text-xl" aria-hidden="true" />
             </button>
           )}
         </Fragment>

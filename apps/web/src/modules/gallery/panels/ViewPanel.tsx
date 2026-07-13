@@ -11,7 +11,10 @@ export const ViewPanel = () => {
     <div className="pb-safe lg:pb-safe-2 w-full overflow-y-auto overscroll-contain px-6 pt-2 pb-6 lg:max-h-[min(72vh,34rem)] lg:px-5 lg:pt-5 lg:pb-5">
       <header className="flex items-center gap-3">
         <div className="bg-accent/10 border-accent/20 text-accent flex size-12 shrink-0 items-center justify-center rounded-2xl border shadow-sm lg:size-11">
-          <i className="i-mingcute-layout-grid-line text-lg" />
+          <i
+            className="i-mingcute-layout-grid-line text-lg"
+            aria-hidden="true"
+          />
         </div>
         <div className="min-w-0">
           <h3 className="text-text text-lg leading-tight font-semibold text-pretty lg:text-base">
@@ -26,7 +29,7 @@ export const ViewPanel = () => {
       {/* 排序部分 */}
       <section className="mt-6">
         <div className="text-text-secondary mb-2 flex items-center gap-2 px-1 text-xs font-medium">
-          <i className="i-mingcute-sort-descending-line" />
+          <i className="i-mingcute-sort-descending-line" aria-hidden="true" />
           <h4>{t("action.sort.mode")}</h4>
         </div>
         <SortPanel />
@@ -38,7 +41,7 @@ export const ViewPanel = () => {
       {/* 列数部分 */}
       <section>
         <div className="text-text-secondary mb-3 flex items-center gap-2 px-1 text-xs font-medium">
-          <i className="i-mingcute-grid-line" />
+          <i className="i-mingcute-grid-line" aria-hidden="true" />
           <h4>{t("action.columns.setting")}</h4>
         </div>
         <ColumnsPanel />

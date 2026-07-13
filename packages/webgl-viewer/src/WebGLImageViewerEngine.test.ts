@@ -43,9 +43,28 @@ class ResizeObserverMock {
 class WorkerMock {
   static instances: WorkerMock[] = [];
 
-  onmessage: ((event: MessageEvent) => void) | null = null;
+  private messageHandler: ((event: MessageEvent) => void) | null = null;
+  private latestSessionId = 0;
+  set onmessage(handler: ((event: MessageEvent) => void) | null) {
+    this.messageHandler = handler;
+  }
+  get onmessage(): ((event: MessageEvent) => void) | null {
+    if (!this.messageHandler) return null;
+    return (event) => {
+      const data = event.data as Record<string, unknown>;
+      this.messageHandler?.({
+        ...event,
+        data: { sessionId: this.latestSessionId, ...data },
+      });
+    };
+  }
   onerror: ((event: ErrorEvent) => void) | null = null;
-  postMessage = vi.fn();
+  onmessageerror: ((event: MessageEvent) => void) | null = null;
+  postMessage = vi.fn((message) => {
+    if (message.type === "load-image" && message.payload?.sessionId) {
+      this.latestSessionId = message.payload.sessionId;
+    }
+  });
   terminate = vi.fn();
 
   constructor() {
@@ -55,10 +74,20 @@ class WorkerMock {
 
 function createWebGLMock(): WebGLRenderingContext & {
   __loseContext: ReturnType<typeof vi.fn>;
+  __createProgram: ReturnType<typeof vi.fn<() => WebGLProgram | null>>;
+  __createTexture: ReturnType<typeof vi.fn<() => WebGLTexture | null>>;
 } {
   const loseContext = vi.fn();
+  const createProgram = vi.fn<() => WebGLProgram | null>(
+    () => ({}) as WebGLProgram,
+  );
+  const createTexture = vi.fn<() => WebGLTexture | null>(
+    () => ({}) as WebGLTexture,
+  );
   return Object.assign(Object.create(null), {
     __loseContext: loseContext,
+    __createProgram: createProgram,
+    __createTexture: createTexture,
     getExtension: vi.fn((name: string) =>
       name === "WEBGL_lose_context" ? { loseContext } : null,
     ),
@@ -72,7 +101,15 @@ function createWebGLMock(): WebGLRenderingContext & {
     LINE_LOOP: 0x0002,
     LINEAR: 0x2601,
     LINK_STATUS: 0x8b82,
+    MAX_RENDERBUFFER_SIZE: 0x84e8,
     MAX_TEXTURE_SIZE: 0x0d33,
+    MAX_VIEWPORT_DIMS: 0x0d3a,
+    NO_ERROR: 0,
+    INVALID_ENUM: 0x0500,
+    INVALID_VALUE: 0x0501,
+    INVALID_OPERATION: 0x0502,
+    OUT_OF_MEMORY: 0x0505,
+    CONTEXT_LOST_WEBGL: 0x9242,
     ONE_MINUS_SRC_ALPHA: 0x0303,
     RGBA: 0x1908,
     SRC_ALPHA: 0x0302,
@@ -85,6 +122,7 @@ function createWebGLMock(): WebGLRenderingContext & {
     TEXTURE_WRAP_T: 0x2803,
     TRIANGLES: 0x0004,
     UNSIGNED_BYTE: 0x1401,
+    UNPACK_PREMULTIPLY_ALPHA_WEBGL: 0x9241,
     VERTEX_SHADER: 0x8b31,
     activeTexture: vi.fn(),
     attachShader: vi.fn(),
@@ -95,18 +133,20 @@ function createWebGLMock(): WebGLRenderingContext & {
     clear: vi.fn(),
     clearColor: vi.fn(),
     compileShader: vi.fn(),
-    createBuffer: vi.fn(() => ({})),
-    createProgram: vi.fn(() => ({})),
-    createShader: vi.fn(() => ({})),
-    createTexture: vi.fn(() => ({})),
+    createBuffer: vi.fn<() => WebGLBuffer | null>(() => ({}) as WebGLBuffer),
+    createProgram,
+    createShader: vi.fn<() => WebGLShader | null>(() => ({}) as WebGLShader),
+    createTexture,
     deleteBuffer: vi.fn(),
     deleteProgram: vi.fn(),
     deleteShader: vi.fn(),
     deleteTexture: vi.fn(),
     drawArrays: vi.fn(),
+    disable: vi.fn(),
     enable: vi.fn(),
     enableVertexAttribArray: vi.fn(),
     getAttribLocation: vi.fn(() => 0),
+    getError: vi.fn(() => 0),
     getParameter: vi.fn(() => 4096),
     getProgramInfoLog: vi.fn(() => ""),
     getProgramParameter: vi.fn(() => true),
@@ -115,6 +155,7 @@ function createWebGLMock(): WebGLRenderingContext & {
     getUniformLocation: vi.fn(() => ({})),
     lineWidth: vi.fn(),
     linkProgram: vi.fn(),
+    pixelStorei: vi.fn(),
     shaderSource: vi.fn(),
     texImage2D: vi.fn(),
     texParameteri: vi.fn(),
@@ -473,7 +514,13 @@ describe("WebGLImageViewerEngine lifecycle", () => {
     // 否则超大原图的 0.5x 底图超过老设备 MAX_TEXTURE_SIZE 会渲染成黑块。
     expect(WorkerMock.instances.at(-1)?.postMessage).toHaveBeenCalledWith({
       type: "load-image",
-      payload: { url: "blob:photo", blob: sourceBlob, maxTextureSize: 4096 },
+      payload: {
+        sessionId: 1,
+        url: "blob:photo",
+        blob: sourceBlob,
+        maxTextureSize: 4096,
+        maxTextureBytes: 64 * 1024 * 1024,
+      },
     });
     expect(gl.getParameter).toHaveBeenCalledWith(gl.MAX_TEXTURE_SIZE);
 
@@ -842,6 +889,248 @@ describe("WebGLImageViewerEngine lifecycle", () => {
     await expect(second).resolves.toBeUndefined();
 
     engine.destroy();
+  });
+
+  it("rejects the load and closes the bitmap when base texture allocation fails", async () => {
+    const canvas = document.createElement("canvas");
+    const gl = createWebGLMock();
+    vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    });
+    const engine = createEngine(canvas);
+    const worker = WorkerMock.instances.at(-1)!;
+    const load = engine.loadImage("blob:photo", 100, 100);
+    const bitmap = { width: 50, height: 50, close: vi.fn() };
+    gl.__createTexture.mockReturnValueOnce(null);
+
+    worker.onmessage?.({
+      data: {
+        type: "image-loaded",
+        sessionId: 1,
+        payload: {
+          imageBitmap: bitmap,
+          imageWidth: 100,
+          imageHeight: 100,
+          lodLevel: 1,
+        },
+      },
+    } as MessageEvent);
+
+    await expect(load).rejects.toThrow(/allocate WebGL texture/);
+    expect(bitmap.close).toHaveBeenCalledTimes(1);
+    engine.destroy();
+  });
+
+  it("settles a pending load when the worker crashes", async () => {
+    const canvas = document.createElement("canvas");
+    const gl = createWebGLMock();
+    vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    });
+    const engine = createEngine(canvas);
+    const worker = WorkerMock.instances.at(-1)!;
+    const load = engine.loadImage("blob:photo", 100, 100);
+
+    worker.onerror?.(
+      new ErrorEvent("error", {
+        error: new Error("decoder crashed"),
+        message: "decoder crashed",
+      }),
+    );
+
+    await expect(load).rejects.toThrow("decoder crashed");
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+    engine.destroy();
+  });
+
+  it("closes stale generation bitmaps without settling the current load", async () => {
+    const canvas = document.createElement("canvas");
+    const gl = createWebGLMock();
+    vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    });
+    const engine = createEngine(canvas);
+    const worker = WorkerMock.instances.at(-1)!;
+    const first = engine.loadImage("blob:photo", 100, 100);
+    const second = engine.loadImage("blob:photo", 100, 100);
+    await expect(first).rejects.toThrow(/superseded/);
+
+    const staleBitmap = { width: 50, height: 50, close: vi.fn() };
+    worker.onmessage?.({
+      data: {
+        type: "image-loaded",
+        sessionId: 1,
+        payload: {
+          imageBitmap: staleBitmap,
+          imageWidth: 100,
+          imageHeight: 100,
+          lodLevel: 1,
+        },
+      },
+    } as MessageEvent);
+    expect(staleBitmap.close).toHaveBeenCalledTimes(1);
+
+    worker.onmessage?.({
+      data: {
+        type: "image-loaded",
+        sessionId: 2,
+        payload: {
+          imageBitmap: { width: 50, height: 50, close: vi.fn() },
+          imageWidth: 100,
+          imageHeight: 100,
+          lodLevel: 1,
+        },
+      },
+    } as MessageEvent);
+    await expect(second).resolves.toBeUndefined();
+    engine.destroy();
+  });
+
+  it("retains the source blob when reloading after context restoration", async () => {
+    const contextWarning = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => {});
+    const canvas = document.createElement("canvas");
+    const gl = createWebGLMock();
+    vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    });
+    const sourceBlob = new Blob(["photo"]);
+    const engine = createEngine(canvas);
+    const worker = WorkerMock.instances.at(-1)!;
+    const first = engine.loadImage("blob:photo", 100, 100, sourceBlob);
+    worker.onmessage?.({
+      data: {
+        type: "image-loaded",
+        sessionId: 1,
+        payload: {
+          imageBitmap: { width: 50, height: 50, close: vi.fn() },
+          imageWidth: 100,
+          imageHeight: 100,
+          lodLevel: 1,
+        },
+      },
+    } as MessageEvent);
+    await first;
+
+    canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+    expect(contextWarning).toHaveBeenCalledWith(
+      "WebGL context lost; pausing rendering until restored.",
+    );
+    canvas.dispatchEvent(new Event("webglcontextrestored"));
+
+    expect(worker.postMessage).toHaveBeenLastCalledWith({
+      type: "load-image",
+      payload: {
+        sessionId: 2,
+        url: "blob:photo",
+        blob: sourceBlob,
+        maxTextureSize: 4096,
+        maxTextureBytes: 64 * 1024 * 1024,
+      },
+    });
+
+    worker.onmessage?.({
+      data: {
+        type: "image-loaded",
+        sessionId: 2,
+        payload: {
+          imageBitmap: { width: 50, height: 50, close: vi.fn() },
+          imageWidth: 100,
+          imageHeight: 100,
+          lodLevel: 1,
+        },
+      },
+    } as MessageEvent);
+    await Promise.resolve();
+    engine.destroy();
+  });
+
+  it("derives double-click toggle state from scale and honors zero animation time", () => {
+    vi.spyOn(performance, "now").mockReturnValue(0);
+    const canvas = document.createElement("canvas");
+    const gl = createWebGLMock();
+    vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    });
+    const engine = createEngine(canvas, {
+      doubleClick: { step: 2, mode: "toggle", animationTime: 0 },
+    });
+    engine.loadImage("blob:photo", 1000, 1000).catch(() => {});
+    engine.zoomAt(50, 50, 2);
+    expect(engine.getScale()).toBeCloseTo(0.2);
+
+    doubleTap(canvas, 50, 50);
+
+    expect(engine.getScale()).toBeCloseTo(0.1);
+    engine.destroy();
+  });
+
+  it("rolls back the WebGL context if construction fails partway", () => {
+    const canvas = document.createElement("canvas");
+    const gl = createWebGLMock();
+    vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    });
+    gl.__createProgram.mockReturnValueOnce(null);
+
+    expect(() => createEngine(canvas)).toThrow(/create WebGL program/);
+    expect(gl.__loseContext).toHaveBeenCalledTimes(1);
+    expect(WorkerMock.instances).toHaveLength(0);
   });
 });
 

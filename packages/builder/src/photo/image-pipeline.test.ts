@@ -169,7 +169,9 @@ describe("processPhotoWithPipeline thumbnail buffer lifetime", () => {
     const result = await runPipeline(harness, context);
 
     expect(result.type).toBe("new");
-    expect(result.item?.thumbnailUrl).toBe("/thumbnails/sunset.jpg");
+    expect(result.item?.thumbnailUrl).toMatch(
+      /^\/thumbnails\/sunset\.[\da-f]{64}\.[\da-f]{12}\.jpg$/,
+    );
 
     // afterPhotoProcess（thumbnail-storage 的上传钩子）必须看到真实 JPEG bytes。
     expect(harness.snapshots).toHaveLength(1);
@@ -184,12 +186,9 @@ describe("processPhotoWithPipeline thumbnail buffer lifetime", () => {
     const entry = result.pluginData[
       THUMBNAIL_PLUGIN_DATA_KEY
     ] as ThumbnailPluginData;
-    expect(entry).toEqual({
-      photoId: "sunset",
-      fileName: "sunset.jpg",
-      buffer: null,
-      localUrl: "/thumbnails/sunset.jpg",
-    });
+    expect(entry).toMatchObject({ photoId: "sunset", buffer: null });
+    expect(entry.localUrl).toBe(result.item?.thumbnailUrl);
+    expect(entry.fileName).toBe(result.item?.thumbnailUrl.split("/").at(-1));
   });
 
   it("releases the buffer even when the pipeline fails after thumbnail generation", async () => {

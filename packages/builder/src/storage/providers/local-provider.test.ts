@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -108,13 +109,38 @@ describe("LocalFileSystemProvider", () => {
     expect(keys).toContain("a.jpg");
   });
 
-  it("returns an empty list when basePath does not exist", async () => {
+  it("marks a missing basePath as an incomplete listing", async () => {
     const provider = new LocalFileSystemProvider({
       provider: "local",
       basePath: path.join(baseDir, "does-not-exist"),
     });
 
     await expect(provider.listAllFiles()).resolves.toEqual([]);
+    await expect(provider.listAllFilesDetailed()).resolves.toMatchObject({
+      objects: [],
+      complete: false,
+      reason: { code: "provider-error" },
+    });
+  });
+
+  it("marks a scan incomplete when a listed subdirectory disappears", async () => {
+    const provider = new LocalFileSystemProvider({
+      provider: "local",
+      basePath: baseDir,
+    });
+    let removed = false;
+
+    const listing = await provider.listAllFilesDetailed(() => {
+      if (removed) return;
+      removed = true;
+      fsSync.rmSync(path.join(baseDir, "trip"), {
+        force: true,
+        recursive: true,
+      });
+    });
+
+    expect(listing.complete).toBe(false);
+    expect(listing.reason?.code).toBe("provider-error");
   });
 
   it("getFile returns the file content and null for missing keys", async () => {
@@ -146,14 +172,31 @@ describe("LocalFileSystemProvider", () => {
     }
   });
 
-  it("generates public URLs under /photos by default with encoded segments", () => {
+  it("getFile rejects a symlink that escapes basePath", async () => {
+    const outside = path.join(path.dirname(baseDir), "outside-secret.txt");
+    const linked = path.join(baseDir, "linked.jpg");
+    await fs.writeFile(outside, "secret");
+    await fs.symlink(outside, linked);
+    try {
+      const provider = new LocalFileSystemProvider({
+        provider: "local",
+        basePath: baseDir,
+      });
+
+      await expect(provider.getFile("linked.jpg")).resolves.toBeNull();
+    } finally {
+      await fs.rm(outside, { force: true });
+    }
+  });
+
+  it("generates public URLs under /originals by default with encoded segments", () => {
     const provider = new LocalFileSystemProvider({
       provider: "local",
       basePath: baseDir,
     });
 
     expect(provider.generatePublicUrl("family/2024 #1?.jpg")).toBe(
-      "/photos/family/2024%20%231%3F.jpg",
+      "/originals/family/2024%20%231%3F.jpg",
     );
   });
 
@@ -203,6 +246,49 @@ describe("LocalFileSystemProvider", () => {
     // 但 listAllFiles 会应用 excludeRegex
     const allKeys = (await provider.listAllFiles()).map((o) => o.key);
     expect(allKeys).not.toContain("thumbnails/a.jpg");
+  });
+
+  it("uploadFile never follows an existing destination symlink", async () => {
+    const outside = path.join(path.dirname(baseDir), "outside-target.jpg");
+    await fs.writeFile(outside, "do-not-overwrite");
+    await fs.symlink(outside, path.join(baseDir, "thumbnail.jpg"));
+    try {
+      const provider = new LocalFileSystemProvider({
+        provider: "local",
+        basePath: baseDir,
+      });
+
+      await expect(
+        provider.uploadFile("thumbnail.jpg", Buffer.from("replacement")),
+      ).rejects.toThrow("symbolic link");
+      await expect(fs.readFile(outside, "utf8")).resolves.toBe(
+        "do-not-overwrite",
+      );
+    } finally {
+      await fs.rm(outside, { force: true });
+    }
+  });
+
+  it("uploadFile rejects a parent directory symlink outside basePath", async () => {
+    const outsideDirectory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "afilmory-local-outside-"),
+    );
+    await fs.symlink(outsideDirectory, path.join(baseDir, "linked-dir"));
+    try {
+      const provider = new LocalFileSystemProvider({
+        provider: "local",
+        basePath: baseDir,
+      });
+
+      await expect(
+        provider.uploadFile("linked-dir/thumbnail.jpg", Buffer.from("image")),
+      ).rejects.toThrow("outside the photo directory");
+      await expect(
+        fs.stat(path.join(outsideDirectory, "thumbnail.jpg")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await fs.rm(outsideDirectory, { force: true, recursive: true });
+    }
   });
 
   it("deleteFile removes the file and tolerates missing keys", async () => {

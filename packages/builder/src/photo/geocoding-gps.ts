@@ -26,6 +26,10 @@ export function parseGPSCoordinates(exif: PickedExif): {
       return {};
     }
 
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return {};
+    }
+
     if (exif.GPSLatitudeRef === "S" || exif.GPSLatitudeRef === "South") {
       latitude = -Math.abs(latitude);
     }
@@ -39,35 +43,57 @@ export function parseGPSCoordinates(exif: PickedExif): {
   }
 }
 
+export type GeocodingLookupResult =
+  | { status: "found"; location: LocationInfo }
+  | { status: "not-found" }
+  | { status: "invalid" }
+  | { status: "error"; error: unknown };
+
+export async function lookupLocationFromGPS(
+  latitude: number,
+  longitude: number,
+  provider: GeocodingProvider,
+  logger?: GPSLogger,
+): Promise<GeocodingLookupResult> {
+  const log = logger ?? getPhotoProcessingLoggers().location;
+
+  if (
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    Math.abs(latitude) > 90 ||
+    Math.abs(longitude) > 180
+  ) {
+    log.warn(`Invalid GPS coordinates: ${latitude}, ${longitude}`);
+    return { status: "invalid" };
+  }
+
+  log.info(`Reverse geocoding coordinates: ${latitude}, ${longitude}`);
+
+  try {
+    const location = await provider.reverseGeocode(latitude, longitude);
+    if (!location) {
+      log.warn("No location info found");
+      return { status: "not-found" };
+    }
+    log.success?.(`Location found: ${location.city}, ${location.country}`);
+    return { status: "found", location };
+  } catch (error) {
+    log.error?.("Location extraction failed:", error);
+    return { status: "error", error };
+  }
+}
+
 export async function extractLocationFromGPS(
   latitude: number,
   longitude: number,
   provider: GeocodingProvider,
   logger?: GPSLogger,
 ): Promise<LocationInfo | null> {
-  const log = logger ?? getPhotoProcessingLoggers().location;
-
-  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
-    log.warn(`Invalid GPS coordinates: ${latitude}, ${longitude}`);
-    return null;
-  }
-
-  log.info(`Reverse geocoding coordinates: ${latitude}, ${longitude}`);
-
-  try {
-    const locationInfo = await provider.reverseGeocode(latitude, longitude);
-
-    if (locationInfo) {
-      log.success?.(
-        `Location found: ${locationInfo.city}, ${locationInfo.country}`,
-      );
-    } else {
-      log.warn("No location info found");
-    }
-
-    return locationInfo;
-  } catch (error) {
-    log.error?.("Location extraction failed:", error);
-    return null;
-  }
+  const result = await lookupLocationFromGPS(
+    latitude,
+    longitude,
+    provider,
+    logger,
+  );
+  return result.status === "found" ? result.location : null;
 }

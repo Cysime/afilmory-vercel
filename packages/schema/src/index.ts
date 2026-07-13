@@ -1,6 +1,7 @@
 export type {
   LenientManifestParseResult,
   ManifestValidationResult,
+  RepairedPhoto,
   SkippedPhoto,
 } from "./manifest.ts";
 export {

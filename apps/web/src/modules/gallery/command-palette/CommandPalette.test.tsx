@@ -77,6 +77,7 @@ vi.mock("~/modules/gallery/panels/FilterPanel", () => ({
 
 describe("CommandPalette", () => {
   let store: ReturnType<typeof createStore>;
+  let main: HTMLElement;
 
   const renderPalette = (props: { isOpen: boolean; onClose: () => void }) =>
     render(<CommandPalette {...props} />, {
@@ -89,10 +90,14 @@ describe("CommandPalette", () => {
     isMobile = false;
     allTags = [];
     store = createStore();
+    main = document.createElement("main");
+    main.id = "main-content";
+    document.body.append(main);
   });
 
   afterEach(() => {
     cleanup();
+    main.remove();
     vi.clearAllMocks();
   });
 
@@ -119,12 +124,30 @@ describe("CommandPalette", () => {
     });
   });
 
-  it("moves focus onto the panel itself on mobile (no virtual keyboard pop)", () => {
+  it("moves focus onto the panel itself on mobile (no virtual keyboard pop)", async () => {
     isMobile = true;
 
     const { getByRole } = renderPalette({ isOpen: true, onClose: vi.fn() });
 
-    expect(document.activeElement).toBe(getByRole("dialog"));
+    await waitFor(() => {
+      expect(document.activeElement).toBe(getByRole("dialog"));
+    });
+  });
+
+  it("isolates the background gallery and restores it on close", () => {
+    document.body.style.overflow = "auto";
+    const view = renderPalette({ isOpen: true, onClose: vi.fn() });
+
+    expect(main.hasAttribute("inert")).toBe(true);
+    expect(main.getAttribute("aria-hidden")).toBe("true");
+    expect(document.body.style.overflow).toBe("hidden");
+
+    view.rerender(<CommandPalette isOpen={false} onClose={vi.fn()} />);
+
+    expect(main.hasAttribute("inert")).toBe(false);
+    expect(main.hasAttribute("aria-hidden")).toBe(false);
+    expect(document.body.style.overflow).toBe("auto");
+    document.body.style.overflow = "";
   });
 
   it("wraps Tab from the last focusable element back to the first", () => {
@@ -159,7 +182,7 @@ describe("CommandPalette", () => {
 
   it("restores focus to the previously focused element on close", () => {
     const trigger = document.createElement("button");
-    document.body.append(trigger);
+    main.append(trigger);
     trigger.focus();
 
     const view = renderPalette({ isOpen: true, onClose: vi.fn() });

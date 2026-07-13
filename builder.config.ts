@@ -8,11 +8,7 @@ import { env } from "./env.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const requiredS3Vars = {
-  S3_ACCESS_KEY_ID: env.S3_ACCESS_KEY_ID,
-  S3_SECRET_ACCESS_KEY: env.S3_SECRET_ACCESS_KEY,
-  S3_BUCKET_NAME: env.S3_BUCKET_NAME,
-};
+const requiredS3Vars = { S3_BUCKET_NAME: env.S3_BUCKET_NAME };
 
 const missingS3Vars = Object.entries(requiredS3Vars)
   .filter(([, value]) => !value)
@@ -27,7 +23,16 @@ const geocodingUserAgent =
   env.GEOCODING_USER_AGENT ||
   `afilmory-vercel/0.1 (${env.SITE_URL || "https://github.com/vsxd/afilmory-vercel"})`;
 
-if (missingS3Vars.length > 0) {
+if (
+  env.PHOTO_STORAGE_PROVIDER === "s3" &&
+  Boolean(env.S3_ACCESS_KEY_ID) !== Boolean(env.S3_SECRET_ACCESS_KEY)
+) {
+  throw new Error(
+    "S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must either both be provided or both be omitted to use the AWS default credential chain",
+  );
+}
+
+if (env.PHOTO_STORAGE_PROVIDER === "s3" && missingS3Vars.length > 0) {
   throw new Error(
     `Missing required S3 environment variables: ${missingS3Vars.join(", ")}`,
   );
@@ -54,15 +59,15 @@ if (missingS3Vars.length > 0) {
  *   storage: {
  *     provider: "local",
  *     // photos source directory; the repo-root photos/ dir is exactly the one
- *     // apps/web/plugins/vite/photos-static.ts serves at /photos/* in dev
+ *     // apps/web/plugins/vite/photos-static.ts serves at /originals/* in dev
  *     basePath: path.resolve(__dirname, "photos"),
- *     // originalUrl prefix, defaults to "/photos", matching the Vite plugin's path convention
- *     // baseUrl: "/photos",
+ *     // originalUrl prefix, defaults to "/originals", matching the Vite plugin's path convention
+ *     // baseUrl: "/originals",
  *     // excludeRegex: "^drafts/",
  *   },
  *
  * With this, pnpm build:manifest needs no object-storage credentials at all;
- * the manifest's originalUrl values look like /photos/..., and pnpm dev serves
+ * the manifest's originalUrl values look like /originals/..., and pnpm dev serves
  * the local originals directly through the Vite plugin.
  * See the "Local filesystem provider" section in packages/builder/README.md.
  */
@@ -73,35 +78,39 @@ export default defineBuilderConfig(() => ({
     originalsDir: path.resolve(__dirname, "apps/web/public/originals"),
   },
 
-  // Use S3 storage
-  storage: {
-    provider: "s3",
-    bucket: env.S3_BUCKET_NAME,
-    region: env.S3_REGION,
-    endpoint: env.S3_ENDPOINT,
-    accessKeyId: env.S3_ACCESS_KEY_ID,
-    secretAccessKey: env.S3_SECRET_ACCESS_KEY,
-    prefix: env.S3_PREFIX,
-    customDomain: env.S3_CUSTOM_DOMAIN,
-    excludeRegex: env.S3_EXCLUDE_REGEX,
-    // S3 client addressing style (path-style vs virtual-hosted-style).
-    // Auto-derived from the endpoint by default, matching how public URLs are
-    // generated: AWS / Alibaba Cloud OSS -> virtual-hosted-style; any other
-    // custom endpoint (MinIO and similar self-hosted services) -> path-style.
-    // Only set this explicitly when the derivation does not match your actual
-    // service; see packages/builder/src/storage/providers/README.md.
-    // forcePathStyle: true,
-    keepAlive: true,
-    maxSockets: 64,
-    connectionTimeoutMs: 5_000,
-    socketTimeoutMs: 30_000,
-    requestTimeoutMs: 20_000,
-    idleTimeoutMs: 10_000,
-    totalTimeoutMs: 60_000,
-    retryMode: "standard",
-    maxAttempts: 3,
-    downloadConcurrency: 8,
-  },
+  storage:
+    env.PHOTO_STORAGE_PROVIDER === "local"
+      ? {
+          provider: "local" as const,
+          basePath: path.resolve(__dirname, env.LOCAL_PHOTOS_PATH),
+          baseUrl: env.LOCAL_PHOTOS_BASE_URL,
+          excludeRegex: env.S3_EXCLUDE_REGEX,
+        }
+      : {
+          provider: "s3" as const,
+          bucket: env.S3_BUCKET_NAME,
+          region: env.S3_REGION,
+          endpoint: env.S3_ENDPOINT,
+          accessKeyId: env.S3_ACCESS_KEY_ID || undefined,
+          secretAccessKey: env.S3_SECRET_ACCESS_KEY || undefined,
+          prefix: env.S3_PREFIX,
+          customDomain: env.S3_CUSTOM_DOMAIN,
+          excludeRegex: env.S3_EXCLUDE_REGEX,
+          // S3 client addressing style (path-style vs virtual-hosted-style).
+          // Auto-derived from the endpoint by default, matching how public URLs are
+          // generated: AWS / Alibaba Cloud OSS -> virtual-hosted-style; any other
+          // custom endpoint (MinIO and similar self-hosted services) -> path-style.
+          keepAlive: true,
+          maxSockets: 64,
+          connectionTimeoutMs: 5_000,
+          socketTimeoutMs: 30_000,
+          requestTimeoutMs: 20_000,
+          idleTimeoutMs: 10_000,
+          totalTimeoutMs: 60_000,
+          retryMode: "standard" as const,
+          maxAttempts: 3,
+          downloadConcurrency: 8,
+        },
 
   system: {
     processing: {
@@ -114,8 +123,18 @@ export default defineBuilderConfig(() => ({
         // S3 downloads into the 60s timeout (see the s3-provider retry logs).
         workerCount: env.BUILDER_WORKER_COUNT
           ? Number(env.BUILDER_WORKER_COUNT)
-          : os.cpus().length * 2,
-        timeout: 30_000,
+          : Math.min(
+              1_024,
+              Math.max(
+                1,
+                (typeof os.availableParallelism === "function"
+                  ? os.availableParallelism()
+                  : os.cpus().length) * 2,
+              ),
+            ),
+        // Covers download retries plus decode/EXIF/thumbnail work. This must
+        // remain above the S3 provider's 60s total request deadline.
+        timeout: 300_000,
         useClusterMode: env.BUILDER_USE_CLUSTER_MODE !== "false",
         workerConcurrency: 2,
       },

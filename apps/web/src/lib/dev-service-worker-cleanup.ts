@@ -1,6 +1,11 @@
 import { isAfilmoryRuntimeCacheName } from "~/runtime/cache-names";
 import { AFILMORY_STORAGE_KEYS } from "~/runtime/storage-keys";
 
+import {
+  isAfilmoryServiceWorker,
+  isAfilmoryServiceWorkerRegistration,
+} from "./service-worker-ownership";
+
 type CleanupOptions = {
   reload?: () => void;
 };
@@ -36,15 +41,18 @@ export async function cleanupStaleDevServiceWorker(
 
   try {
     const registrations = await serviceWorker.getRegistrations();
-    const hasController = Boolean(serviceWorker.controller);
+    const ownedRegistrations = registrations.filter(
+      isAfilmoryServiceWorkerRegistration,
+    );
+    const hasController = isAfilmoryServiceWorker(serviceWorker.controller);
 
-    if (!hasController && registrations.length === 0) {
+    if (!hasController && ownedRegistrations.length === 0) {
       clearReloadAttempt();
       return result;
     }
 
     const unregisterResults = await Promise.all(
-      registrations.map((registration) => registration.unregister()),
+      ownedRegistrations.map((registration) => registration.unregister()),
     );
     result.registrationsUnregistered = unregisterResults.filter(Boolean).length;
     result.cacheNamesDeleted = await deleteAfilmoryRuntimeCaches();

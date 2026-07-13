@@ -25,7 +25,12 @@ const initialLanguage = detectPreferredLanguage(
 // 语言包按需加载：en 静态打包兜底（resources），其余每个语言是独立的小 chunk，
 // 避免 6 份语言 JSON 全部进入首屏关键路径。glob 路径相对本文件指向仓库根 locales/。
 const localeBundleLoaders = import.meta.glob<Record<string, string>>(
-  "../../../locales/app/*.json",
+  [
+    "../../../locales/app/*.json",
+    // English is already in the static fallback resource. Excluding it from
+    // the glob avoids a duplicate static+dynamic import and its Vite warning.
+    "!../../../locales/app/en.json",
+  ],
   { import: "default" },
 );
 

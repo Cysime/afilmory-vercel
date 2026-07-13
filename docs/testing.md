@@ -1,7 +1,7 @@
 # Testing & CI
 
 This repo uses **Vitest** (unit/component) and **Playwright** (e2e), orchestrated
-as Vitest *projects* from the root `vitest.config.ts`.
+as Vitest _projects_ from the root `vitest.config.ts`.
 
 ## Running tests
 
@@ -10,6 +10,7 @@ pnpm test              # all projects in one vitest run
 pnpm test:coverage     # same, with v8 coverage -> ./coverage
 pnpm test:e2e:install  # one-time: download the chromium browser Playwright needs
 pnpm test:e2e          # Playwright e2e (spawns a Vite dev server)
+pnpm test:e2e:prod     # production build + service-worker smoke test
 ```
 
 Run a single project or file:
@@ -20,12 +21,12 @@ pnpm exec vitest run --project web apps/web/src/lib/__tests__/color.test.ts
 pnpm exec vitest --project ui            # watch mode
 ```
 
-## Coverage (report-only)
+## Coverage gate
 
-Coverage is **measured, not gated** — CI surfaces the numbers in the job summary
-and uploads the HTML/lcov report as an artifact, but does not fail a build on a
-coverage drop. To ratchet later, add a `coverage.thresholds` block to
-`vitest.config.ts`.
+CI surfaces coverage in the job summary, uploads the HTML/lcov report, and
+enforces repository-wide minimums from `vitest.config.ts`. The thresholds sit
+slightly below the current baseline so a broad regression fails without making
+small, well-tested changes brittle. Ratchet them upward as coverage improves.
 
 ```bash
 pnpm test:coverage && open coverage/index.html
@@ -34,14 +35,18 @@ pnpm test:coverage && open coverage/index.html
 `coverage.all` is enabled, so untested source files count toward the denominator
 (they show as `0%`) — the baseline reflects real coverage, not just touched files.
 
+Every Vitest project also installs `test/setup/fail-on-console.ts`. An
+unexpected `console.warn` or `console.error` fails the test. If console output is
+the behavior being tested, spy on that method explicitly in the test.
+
 ## Conventions
 
 Match the surrounding package — the two projects differ:
 
-| Project | Test location | Import style | Environment |
-| --- | --- | --- | --- |
-| `@afilmory/builder` (NodeNext) | co-located `foo.test.ts` next to `foo.ts` | `import { x } from "./foo.js"` (`.js` extension) | node |
-| `apps/web`, `@afilmory/ui` | `__tests__/foo.test.ts` | `import { x } from "../foo"` (no extension) | jsdom |
+| Project                        | Test location                             | Import style                                     | Environment |
+| ------------------------------ | ----------------------------------------- | ------------------------------------------------ | ----------- |
+| `@afilmory/builder` (NodeNext) | co-located `foo.test.ts` next to `foo.ts` | `import { x } from "./foo.js"` (`.js` extension) | node        |
+| `apps/web`, `@afilmory/ui`     | `__tests__/foo.test.ts`                   | `import { x } from "../foo"` (no extension)      | jsdom       |
 
 - Use `import { describe, expect, it, vi } from "vitest"` (no globals).
 - Prefer characterization tests that pin down real, subtle behavior over trivial asserts.
@@ -51,14 +56,24 @@ Match the surrounding package — the two projects differ:
 ## End-to-end (Playwright)
 
 The e2e specs (`apps/web/e2e/`) drive a real Vite dev server (`webServer` in
-`playwright.config.ts`) with `AFILMORY_EMBED_MANIFEST=true`, which embeds
-`generated/photos-manifest.json`.
+`playwright.config.ts`) with an embedded manifest. E2E uses dedicated ports
+(`1925` for dev and `4174` for prod smoke), separate from the normal Vite ports.
+Existing servers are never reused by default; set
+`PLAYWRIGHT_REUSE_SERVER=true` only when you deliberately own a compatible
+server lifecycle.
 
-Because `generated/` is gitignored (and absent in CI), the e2e job uses a
-committed fixture manifest instead: `apps/web/e2e/fixtures/photos-manifest.json`.
-The CI job copies it into `generated/` before running. Build-time thumbnail assets
-(also gitignored) are stubbed inside the spec, so the suite needs no generated
-images.
+Both server wrappers set `AFILMORY_MANIFEST_PATH` to the committed
+`apps/web/e2e/fixtures/photos-manifest.json` and `AFILMORY_PUBLIC_ASSET_DIR` to
+the fixture root. The build-time readers consume those isolated paths directly,
+so an e2e run never reads, writes, locks, or restores the developer's
+`generated/photos-manifest.json`; parallel runs cannot race over it. Build-time
+thumbnail assets are stubbed inside dev specs; the production build reads them
+from the fixture root for OG generation, then prod smoke copies them into its
+fresh build output. The wrappers also
+point dotenv at the committed empty `environment.env`, pass through only a
+small allowlist of platform/connectivity variables, and pin the provider/site/map
+values used by the specs. A developer's private root `.env` or shell variables
+therefore cannot silently change the run.
 
 A separate prod-smoke mode (`pnpm test:e2e:prod`) runs a real production build
 (external manifest asset, PWA service worker) behind `vite preview` and executes
@@ -84,10 +99,14 @@ pipeline (so `thumbHash` values are genuine), and writes everything under
 
 `.github/workflows/ci.yml` runs these jobs in parallel on every PR/push to `main`:
 
-- **Lint**, **Type-check**, **Dependency audit**
+- **Formatting + lint**, **Type-check**, **Production dependency audit**
 - **Test + coverage** — `pnpm test:coverage`, uploads coverage, writes a summary
 - **Build** — `SKIP_MANIFEST_BUILD=true pnpm build` against an empty manifest fixture
 - **E2E (Playwright)** — dev-server specs, then a prod-smoke run, both against
   the committed fixture manifest
 
 Shared install/setup lives in the composite action `.github/actions/setup`.
+`.github/workflows/security-audit.yml` also runs a weekly full production +
+development dependency audit (and supports manual dispatch). Dependabot opens
+grouped weekly minor/patch updates for pnpm dependencies and GitHub Actions;
+major upgrades remain an explicit maintainer decision.

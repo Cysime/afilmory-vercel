@@ -4,6 +4,8 @@ import {
   AFILMORY_STORAGE_KEYS,
 } from "~/runtime/storage-keys";
 
+import { isAfilmoryServiceWorkerRegistration } from "./service-worker-ownership";
+
 const STALE_RUNTIME_ERROR_PATTERNS = [
   "Failed to fetch dynamically imported module",
   "error loading dynamically imported module",
@@ -108,8 +110,11 @@ async function unregisterServiceWorkers(): Promise<number> {
 
   try {
     const registrations = await serviceWorker.getRegistrations();
+    const ownedRegistrations = registrations.filter(
+      isAfilmoryServiceWorkerRegistration,
+    );
     const unregisterResults = await Promise.all(
-      registrations.map((registration) => registration.unregister()),
+      ownedRegistrations.map((registration) => registration.unregister()),
     );
     return unregisterResults.filter(Boolean).length;
   } catch (error) {

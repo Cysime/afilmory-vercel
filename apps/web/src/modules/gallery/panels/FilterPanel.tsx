@@ -27,20 +27,24 @@ const FilterSection = ({
   items,
   selected,
   onToggle,
+  headingLevel,
 }: {
   title: string;
   icon: string;
   items: FilterItem[];
   selected: string[];
   onToggle: (id: string) => void;
+  headingLevel: 3 | 4;
 }) => {
   if (items.length === 0) return null;
+
+  const Heading = headingLevel === 3 ? "h3" : "h4";
 
   return (
     <section>
       <div className="text-text-secondary mb-2 flex items-center gap-2 px-1 text-xs font-medium">
-        <i className={icon} />
-        <h4>{title}</h4>
+        <i className={icon} aria-hidden="true" />
+        <Heading>{title}</Heading>
       </div>
       <div className="flex flex-wrap gap-2">
         {items.map((item) => {
@@ -108,6 +112,7 @@ export const FilterPanel = ({
       }),
     [allCameras, allLenses, allTags, geoRegions, i18n.language],
   );
+  const sectionHeadingLevel = showHeader ? 4 : 3;
 
   const resetFilters = () => {
     setGallerySetting((prev) => ({
@@ -133,7 +138,10 @@ export const FilterPanel = ({
         <header className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <div className="bg-accent/10 border-accent/15 text-accent flex size-10 shrink-0 items-center justify-center rounded-xl border">
-              <i className="i-mingcute-filter-3-line text-lg" />
+              <i
+                className="i-mingcute-filter-3-line text-lg"
+                aria-hidden="true"
+              />
             </div>
             <div className="min-w-0">
               <h3 className="text-text text-sm font-semibold">
@@ -159,6 +167,7 @@ export const FilterPanel = ({
           title={t("action.tag.filter")}
           icon="i-mingcute-tag-line"
           items={filterItems.tags}
+          headingLevel={sectionHeadingLevel}
           selected={gallerySetting.selectedTags}
           onToggle={(id) =>
             setGallerySetting((prev) => ({
@@ -171,6 +180,7 @@ export const FilterPanel = ({
           title={t("action.camera.filter")}
           icon="i-mingcute-camera-line"
           items={filterItems.cameras}
+          headingLevel={sectionHeadingLevel}
           selected={gallerySetting.selectedCameras}
           onToggle={(id) =>
             setGallerySetting((prev) => ({
@@ -183,6 +193,7 @@ export const FilterPanel = ({
           title={t("action.lens.filter")}
           icon="i-mingcute-camera-2-line"
           items={filterItems.lenses}
+          headingLevel={sectionHeadingLevel}
           selected={gallerySetting.selectedLenses}
           onToggle={(id) =>
             setGallerySetting((prev) => ({
@@ -195,6 +206,7 @@ export const FilterPanel = ({
           title={t("action.geo.country.filter")}
           icon="i-mingcute-world-line"
           items={filterItems.countries}
+          headingLevel={sectionHeadingLevel}
           selected={gallerySetting.selectedGeoCountries}
           onToggle={(id) =>
             setGallerySetting((prev) => ({
@@ -207,6 +219,7 @@ export const FilterPanel = ({
           title={t("action.geo.city.filter")}
           icon="i-mingcute-building-5-line"
           items={filterItems.cities}
+          headingLevel={sectionHeadingLevel}
           selected={gallerySetting.selectedGeoCities}
           onToggle={(id) =>
             setGallerySetting((prev) => ({

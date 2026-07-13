@@ -6,6 +6,7 @@ export function cleanupTileTextures({
   currentVisibleTiles,
   deleteTexture,
   maxAgeMs = DEFAULT_TILE_MAX_AGE_MS,
+  maxCacheBytes = Number.POSITIVE_INFINITY,
   maxCacheSize,
   now,
   tileCache,
@@ -13,25 +14,30 @@ export function cleanupTileTextures({
   currentVisibleTiles: Set<TileKey>;
   deleteTexture: (texture: WebGLTexture) => void;
   maxAgeMs?: number;
+  maxCacheBytes?: number;
   maxCacheSize: number;
   now: number;
   tileCache: Map<TileKey, TileInfo>;
 }): number {
   let removed = 0;
 
-  if (tileCache.size > maxCacheSize) {
-    const tilesToRemove = Array.from(tileCache.entries())
-      .filter(([key]) => !currentVisibleTiles.has(key))
-      .sort(([, a], [, b]) => a.lastUsed - b.lastUsed)
-      .slice(0, tileCache.size - maxCacheSize + 5);
+  let cacheBytes = 0;
+  for (const tile of tileCache.values()) {
+    cacheBytes += tile.byteSize;
+  }
 
-    for (const [key, tileInfo] of tilesToRemove) {
-      if (tileInfo.texture) {
-        deleteTexture(tileInfo.texture);
-      }
-      tileCache.delete(key);
-      removed++;
+  const evictionCandidates = Array.from(tileCache.entries())
+    .filter(([key]) => !currentVisibleTiles.has(key))
+    .sort(([, a], [, b]) => a.lastUsed - b.lastUsed);
+
+  for (const [key, tileInfo] of evictionCandidates) {
+    if (tileCache.size <= maxCacheSize && cacheBytes <= maxCacheBytes) break;
+    if (tileInfo.texture) {
+      deleteTexture(tileInfo.texture);
     }
+    tileCache.delete(key);
+    cacheBytes -= tileInfo.byteSize;
+    removed++;
   }
 
   for (const [key, tileInfo] of tileCache.entries()) {

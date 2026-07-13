@@ -11,9 +11,10 @@ import { clsxm, focusRing } from "../utils/cn";
 
 const buttonVariants = tv({
   base: [
-    "relative inline-flex items-center justify-center whitespace-nowrap rounded text-center font-medium transition-all duration-100 ease-in-out",
+    "relative inline-flex items-center justify-center whitespace-nowrap rounded text-center font-medium transition-[background-color,border-color,box-shadow,color,opacity,transform] duration-100 ease-in-out",
     "active:scale-95",
     "disabled:pointer-events-none",
+    "aria-disabled:cursor-not-allowed aria-disabled:opacity-60",
     focusRing,
   ],
   variants: {
@@ -98,6 +99,8 @@ const Button = ({
   flat,
   children,
   type = "button",
+  onClick,
+  onClickCapture,
   ...props
 }: ButtonProps & {
   ref?: React.Ref<HTMLButtonElement>;
@@ -131,13 +134,57 @@ const Button = ({
     buttonVariants({ variant, size, flat }),
     className,
   );
+  const isDisabled = Boolean(disabled || isLoading);
 
   if (asChild) {
-    const slotChild =
-      isLoading &&
-      React.isValidElement<{ children?: React.ReactNode }>(children)
-        ? React.cloneElement(children, undefined, content)
-        : content;
+    type SlottedElementProps = {
+      children?: React.ReactNode;
+      onClick?: React.MouseEventHandler<HTMLElement>;
+      onClickCapture?: React.MouseEventHandler<HTMLElement>;
+      "aria-disabled"?: boolean;
+      "aria-busy"?: boolean;
+      "data-disabled"?: string;
+    };
+
+    if (!React.isValidElement<SlottedElementProps>(children)) {
+      throw new Error("Button with asChild requires a single React element");
+    }
+
+    const blockActivation: React.MouseEventHandler<HTMLElement> = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    const childOnClick = children.props.onClick;
+    const childOnClickCapture = children.props.onClickCapture;
+    const mergedOnClick: React.MouseEventHandler<HTMLElement> = isDisabled
+      ? blockActivation
+      : (event) => {
+          childOnClick?.(event);
+          if (!event.defaultPrevented) {
+            onClick?.(event as React.MouseEvent<HTMLButtonElement>);
+          }
+        };
+    const mergedOnClickCapture: React.MouseEventHandler<HTMLElement> =
+      isDisabled
+        ? blockActivation
+        : (event) => {
+            childOnClickCapture?.(event);
+            if (!event.defaultPrevented) {
+              onClickCapture?.(event as React.MouseEvent<HTMLButtonElement>);
+            }
+          };
+
+    const slotChild = React.cloneElement(
+      children,
+      {
+        "aria-busy": isLoading || children.props["aria-busy"],
+        "aria-disabled": isDisabled || children.props["aria-disabled"],
+        "data-disabled": isDisabled ? "" : children.props["data-disabled"],
+        onClick: mergedOnClick,
+        onClickCapture: mergedOnClickCapture,
+      },
+      isLoading ? content : children.props.children,
+    );
 
     return (
       <Slot
@@ -155,9 +202,12 @@ const Button = ({
     <button
       ref={forwardedRef}
       className={resolvedClassName}
-      disabled={disabled || isLoading}
+      aria-busy={isLoading || undefined}
+      disabled={isDisabled}
       data-tremor-id="tremor-raw"
       type={type}
+      onClick={onClick}
+      onClickCapture={onClickCapture}
       {...props}
     >
       {content}

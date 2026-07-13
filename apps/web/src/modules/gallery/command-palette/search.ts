@@ -1,5 +1,10 @@
 import type { LocationAdminInfo, PhotoManifestItem } from "@afilmory/schema";
 
+export interface PhotoSearchEntry {
+  photo: PhotoManifestItem;
+  searchText: string;
+}
+
 const getLocationTokens = (
   location?: {
     locationName?: string | null;
@@ -74,36 +79,43 @@ export const fuzzyMatch = (text: string, query: string): boolean => {
 };
 
 export const searchPhotos = (photos: PhotoManifestItem[], query: string) => {
-  const lowerQuery = query.trim().toLowerCase();
-  if (!lowerQuery) return [];
+  return searchPhotoIndex(buildPhotoSearchIndex(photos), query);
+};
 
-  return photos.filter((photo) => {
-    const matchesTitle = photo.title?.toLowerCase().includes(lowerQuery);
-    const matchesDescription = photo.description
-      ?.toLowerCase()
-      .includes(lowerQuery);
-    const matchesTags = photo.tags?.some((tag) =>
-      tag.toLowerCase().includes(lowerQuery),
-    );
-    const matchesCamera =
-      photo.exif?.Make?.toLowerCase().includes(lowerQuery) ||
-      photo.exif?.Model?.toLowerCase().includes(lowerQuery);
-    const matchesLens =
-      photo.exif?.LensModel?.toLowerCase().includes(lowerQuery);
-    const locationTokens = getLocationTokens(photo.location);
-    const matchesLocation = locationTokens.some((token) =>
-      token.toLowerCase().includes(lowerQuery),
-    );
+export const buildPhotoSearchIndex = (
+  photos: PhotoManifestItem[],
+): PhotoSearchEntry[] =>
+  photos.map((photo) => ({
+    photo,
+    searchText: [
+      photo.title,
+      photo.description,
+      ...(photo.tags ?? []),
+      photo.exif?.Make,
+      photo.exif?.Model,
+      photo.exif?.LensModel,
+      ...getLocationTokens(photo.location),
+    ]
+      .filter((value): value is string => Boolean(value?.trim()))
+      .join("\u0000")
+      .toLocaleLowerCase(),
+  }));
 
-    return (
-      matchesTitle ||
-      matchesDescription ||
-      matchesTags ||
-      matchesCamera ||
-      matchesLens ||
-      matchesLocation
-    );
-  });
+export const searchPhotoIndex = (
+  index: PhotoSearchEntry[],
+  query: string,
+  limit = Number.POSITIVE_INFINITY,
+): PhotoManifestItem[] => {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery || limit <= 0) return [];
+
+  const matches: PhotoManifestItem[] = [];
+  for (const entry of index) {
+    if (!entry.searchText.includes(normalizedQuery)) continue;
+    matches.push(entry.photo);
+    if (matches.length >= limit) break;
+  }
+  return matches;
 };
 
 export { getLocationTokens };

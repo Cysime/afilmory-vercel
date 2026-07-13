@@ -6,6 +6,7 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 
 import type { S3Config } from "../storage/interfaces";
+import { assertSafeHttpBaseUrl } from "../storage/url.js";
 
 /**
  * 推导 S3 客户端的寻址风格（path-style vs virtual-hosted-style）。
@@ -43,16 +44,43 @@ export function resolveForcePathStyle(
   return true;
 }
 
+function assertOptionalPositiveInteger(
+  name: string,
+  value: number | undefined,
+  max: number,
+): void {
+  if (value === undefined) return;
+  if (!Number.isSafeInteger(value) || value <= 0 || value > max) {
+    throw new Error(`${name} must be a positive integer <= ${max}`);
+  }
+}
+
 // 创建 S3 客户端
 export function createS3Client(config: S3Config): S3Client {
   if (config.provider !== "s3") {
     throw new Error("Storage provider is not s3");
   }
 
-  const { accessKeyId, secretAccessKey, endpoint, region } = config;
-  if (!accessKeyId || !secretAccessKey) {
-    throw new Error("accessKeyId and secretAccessKey are required");
+  const { accessKeyId, secretAccessKey, endpoint } = config;
+  const region = config.region ?? "us-east-1";
+  if (Boolean(accessKeyId) !== Boolean(secretAccessKey)) {
+    throw new Error(
+      "accessKeyId and secretAccessKey must either both be provided or both be omitted",
+    );
   }
+  if (endpoint) assertSafeHttpBaseUrl(endpoint, "S3 endpoint");
+  assertOptionalPositiveInteger("maxSockets", config.maxSockets, 10_000);
+  assertOptionalPositiveInteger("maxAttempts", config.maxAttempts, 10);
+  assertOptionalPositiveInteger(
+    "connectionTimeoutMs",
+    config.connectionTimeoutMs,
+    86_400_000,
+  );
+  assertOptionalPositiveInteger(
+    "socketTimeoutMs",
+    config.socketTimeoutMs,
+    86_400_000,
+  );
 
   const keepAlive = config.keepAlive ?? true;
   const maxSockets = config.maxSockets ?? 64;
@@ -67,10 +95,12 @@ export function createS3Client(config: S3Config): S3Client {
 
   const s3ClientConfig: S3ClientConfig = {
     region,
-    credentials: {
-      accessKeyId,
-      secretAccessKey,
-    },
+    // Omitting credentials activates the AWS SDK's standard provider chain
+    // (environment, shared config/SSO, web identity, ECS/EC2 roles). Explicit
+    // credentials remain useful for non-AWS S3-compatible services.
+    ...(accessKeyId && secretAccessKey
+      ? { credentials: { accessKeyId, secretAccessKey } }
+      : {}),
     // from https://github.com/aws/aws-sdk-js-v3/issues/6810
     // some non AWS services like backblaze or cloudflare don't expect the new headers
     requestChecksumCalculation: "WHEN_REQUIRED",

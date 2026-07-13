@@ -1,6 +1,7 @@
 import { RootPortal, RootPortalProvider } from "@afilmory/ui";
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { RemoveScroll } from "react-remove-scroll";
 import { useParams } from "react-router";
 
@@ -10,8 +11,11 @@ import { usePhotoViewer, useViewerPhotos } from "~/hooks/usePhotoViewer";
 import { useTitle } from "~/hooks/useTitle";
 import { applyAccentTransitionStyle } from "~/lib/accent-transition-style";
 import { deriveAccentFromSources } from "~/lib/color";
+import { getReadableTextColor } from "~/lib/color-contrast";
+import { usePhotoRouteUnavailable } from "~/providers/photo-route-availability";
 
 export const Component = () => {
+  const { t } = useTranslation();
   const { photoId } = useParams();
   const photos = useViewerPhotos(photoId);
   const photoViewer = usePhotoViewer(photos.length);
@@ -33,6 +37,8 @@ export const Component = () => {
       photoIndex !== -1 && photos[photoIndex] ? photos[photoIndex] : null;
     return photo;
   }, [photos, photoIndex]);
+  const isPhotoRouteUnavailable = !currentPhoto || photoIndex === -1;
+  usePhotoRouteUnavailable(isPhotoRouteUnavailable);
 
   // 处理照片索引变化：更新 photoViewer 的 currentIndex，URL 由 layout.tsx 的 useSyncStateToUrl 自动同步
   const handleIndexChange = useCallback(
@@ -52,7 +58,7 @@ export const Component = () => {
     }),
     [ref],
   );
-  useTitle(currentPhoto?.title || "Not Found");
+  useTitle(currentPhoto?.title || t("error.not-found.title"));
 
   const [accentColor, setAccentColor] = useState<string | null>(null);
 
@@ -84,7 +90,7 @@ export const Component = () => {
   }, [currentPhoto]);
 
   // 如果照片不存在，显示 NotFound
-  if (!currentPhoto || photoIndex === -1) {
+  if (isPhotoRouteUnavailable) {
     return <NotFound />;
   }
 
@@ -94,7 +100,12 @@ export const Component = () => {
         <RemoveScroll
           style={
             {
-              ...(accentColor ? { "--color-accent": accentColor } : {}),
+              ...(accentColor
+                ? {
+                    "--color-accent": accentColor,
+                    "--color-accent-content": getReadableTextColor(accentColor),
+                  }
+                : {}),
             } as React.CSSProperties
           }
           ref={setRef}

@@ -4,6 +4,7 @@ import { m } from "motion/react";
 export const MotionButtonBase = ({
   ref,
   children,
+  type = "button",
   ...rest
 }: HTMLMotionProps<"button"> & {
   ref?: React.RefObject<HTMLButtonElement>;
@@ -14,6 +15,7 @@ export const MotionButtonBase = ({
       whileFocus={{ scale: 1.02 }}
       whileHover={{ scale: 1.02 }}
       whileTap={{ scale: 0.95 }}
+      type={type}
       {...rest}
       ref={ref}
     >

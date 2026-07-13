@@ -48,6 +48,8 @@ storage: {
   retryMode: "standard",
   maxAttempts: 3,
   downloadConcurrency: 8,
+  maxDownloadBytes: 1024 * 1024 * 1024,
+  downloadMemoryBudgetBytes: 2 * 1024 * 1024 * 1024,
 }
 ```
 
@@ -55,11 +57,12 @@ storage: {
 
 Builder 刷新 manifest 时必需：
 
-| 变量                   | 说明          |
-| ---------------------- | ------------- |
-| `S3_BUCKET_NAME`       | bucket 名称   |
-| `S3_ACCESS_KEY_ID`     | access key ID |
-| `S3_SECRET_ACCESS_KEY` | secret key    |
+| 变量             | 说明        |
+| ---------------- | ----------- |
+| `S3_BUCKET_NAME` | bucket 名称 |
+
+`S3_ACCESS_KEY_ID` 与 `S3_SECRET_ACCESS_KEY` 可以成对显式设置；两者都省略时使用
+AWS SDK 默认凭据链（环境变量、shared config/SSO、Web Identity、ECS/EC2 role 等）。
 
 可选：
 
@@ -88,9 +91,8 @@ Builder 刷新 manifest 时必需：
 `S3StorageProvider.generatePublicUrl(key)`：
 
 1. 有 `customDomain` 时：`customDomain + encoded key`。
-2. AWS endpoint 或未设置 endpoint 时：`https://<bucket>.s3.<region>.amazonaws.com/<encoded key>`。
-3. 阿里云 OSS endpoint 时：把 bucket 插入 endpoint host。
-4. 其他自定义 endpoint 时：`endpoint/<bucket>/<encoded key>`。
+2. `forcePathStyle=false`（含自动推导）时：把 bucket 插入 endpoint host。
+3. `forcePathStyle=true`（含自动推导）时：`endpoint/<bucket>/<encoded key>`。
 
 所有 key 会按 URL path segment 安全编码。
 
@@ -119,25 +121,26 @@ virtual-hosted-style，或 AWS 兼容服务只支持 path-style）。
 
 - `downloadConcurrency` 控制 provider 内部下载并发。
 - `requestTimeoutMs`、`idleTimeoutMs`、`totalTimeoutMs` 控制超时。
-- `maxAttempts` 和标准 backoff 控制重试。
-- 大文件会输出内存压力警告。
+- 命令级错误由 AWS SDK 的统一重试层处理；响应 body 中途失败时由 provider
+  在同一 `maxAttempts` 预算内重新请求，避免嵌套重试放大请求数。
+- `maxDownloadBytes` 是单对象硬上限（默认 1 GiB）；
+  `downloadMemoryBudgetBytes` 限制一个进程内并发下载可占用的总 buffer（默认 2 GiB）。
+- Provider/Manager 实现异步 `dispose()`；Builder 每轮结束都会释放连接池。
 
 ## 本地文件系统提供商（`local-provider.ts`）
 
 `provider: "local"` 以 `basePath` 为根递归扫描照片源目录，不需要任何对象存储凭据：
 
-```ts
-storage: {
-  provider: "local",
-  basePath: path.resolve(__dirname, "photos"),
-  // baseUrl: "/photos",        // originalUrl 前缀，默认 "/photos"
-  // excludeRegex: "^drafts/",  // 语义与 S3 的 excludeRegex 对等
-}
+```bash
+PHOTO_STORAGE_PROVIDER=local
+LOCAL_PHOTOS_PATH=photos
+LOCAL_PHOTOS_BASE_URL=/originals
 ```
 
 - **key**：相对 `basePath` 的 posix 路径（与 S3 key 语义一致），列举结果按 key 稳定排序。
 - **StorageObject 元数据**：`size` / `lastModified` 来自 `fs.stat`；`etag` 是由 stat 派生的弱 etag（`mtimeMs-size`），不做内容哈希——它诚实地只声明"stat 变了"，用于兜住 `needsUpdate` 的 mtime "变新才算变" 判定漏掉的同尺寸回滚场景。
-- **公开 URL**：`baseUrl`（默认 `/photos`）+ 编码后的 key。dev 下 `apps/web/plugins/vite/photos-static.ts` 按同一约定把 `/photos/*` 映射到仓库根的 `photos/` 目录，因此 manifest 里的 originalUrl 开箱即用。
+- **公开 URL**：`baseUrl`（仓库根配置默认 `/originals`）+ 编码后的 key。dev 下 `apps/web/plugins/vite/photos-static.ts` 按配置映射本地目录；生产构建把原图复制到 `dist` 中相同的 URL 前缀，因此 manifest 里的 `originalUrl` 在两种模式下都可用。Web 应用拒绝 `/photos`、`/assets`、`/thumbnails`、`/vendor` 等保留命名空间。
+- **隐私**：manifest 的 `source` 不记录机器上的绝对 `basePath`；不要把主机目录结构发布到静态产物。
 - **Live Photo / 图片过滤**：与 S3 共用 `live-photo.ts` 与 `supported-formats.ts`。
 - **uploadFile / deleteFile**：写入/删除 `basePath` 下的文件；本地文件系统没有对象元数据，`contentType` / `cacheControl` 会被忽略；删除不存在的 key 与 S3 一样静默成功。
 - **安全**：所有 key 解析后必须仍在 `basePath` 内，越界 key 一律拒绝。
@@ -149,6 +152,8 @@ storage: {
   `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.tiff`, `.tif`, `.heic`, `.heif`, `.hif`。
 - `excludeRegex` 可排除某些 key，例如 `.*\.txt$`。
 - S3 专属：`S3_PREFIX` 限制扫描前缀，`maxFileLimit` 限制扫描数量。
+- 构建工作流使用 `listAllFilesDetailed()`。达到 `maxFileLimit`、分页 token 异常或
+  provider 失败时返回 `complete: false`；这种快照不得用于删除或发布缩水 manifest。
 
 ## Live Photo 检测
 
@@ -165,7 +170,7 @@ storage: {
 
 ## 常见问题
 
-- **缺少 S3 凭据**：`precheck` 会在已有 `generated/photos-manifest.json` 时复用 manifest；没有 manifest 时构建失败。想完全绕开凭据，用 `provider: "local"`。
+- **缺少 S3 凭据**：AWS 环境可依赖默认凭据链；其他 S3 兼容服务通常需要成对设置 access key/secret。想完全绕开对象存储，用 `provider: "local"`。
 - **URL 不是预期 CDN 域名**：确认 `S3_CUSTOM_DOMAIN` 是否设置，且不要在 key 中重复写 CDN path。
 - **照片没有出现在 manifest**：检查扩展名、`S3_PREFIX` 和 `excludeRegex`。
 - **首次构建慢**：首次需要下载和处理全部照片，后续会基于现有 manifest 增量复用。

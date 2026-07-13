@@ -4,6 +4,8 @@ export interface BuilderOptions {
   isForceThumbnails: boolean;
   concurrencyLimit?: number;
   progressListener?: BuildProgressListener;
+  /** @internal Cached records normalized by lenient parsing must be rebuilt. */
+  reprocessKeys?: readonly string[];
 }
 
 export interface BuilderResult {

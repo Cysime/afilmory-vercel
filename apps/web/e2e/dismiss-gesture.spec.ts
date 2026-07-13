@@ -1,7 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 
-import { stubGoogleFonts, stubLocalThumbnails } from "./helpers";
+import { stubLocalThumbnails } from "./helpers";
 
 async function openGallery(page: Page) {
   await page.goto(`/?e2e=${Date.now()}`);
@@ -81,9 +81,8 @@ const GALLERY_URL = /\/(\?.*)?$/;
 const VIEWER_URL = /\/photos\/[^/?]+/;
 
 test.beforeEach(async ({ page }) => {
-  // Fonts + thumbnails cover every network dependency of these routes, so the
+  // Thumbnails cover the only non-bundled dependency of these routes, so the
   // gesture specs run fully offline (no map view here → no carto stub needed).
-  await stubGoogleFonts(page);
   await stubLocalThumbnails(page);
 });
 

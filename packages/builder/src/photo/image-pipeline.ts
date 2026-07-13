@@ -10,6 +10,7 @@ import {
   preprocessImageBuffer,
 } from "../image/processor.js";
 import { SOURCE_SHARP_OPTIONS } from "../image/sharp-options.js";
+import { getThumbnailFileNameFromUrl } from "../image/thumbnail.js";
 import { needsUpdate } from "../manifest/manager.js";
 import type { ThumbnailPluginData } from "../plugins/thumbnail-storage/shared.js";
 import { THUMBNAIL_PLUGIN_DATA_KEY } from "../plugins/thumbnail-storage/shared.js";
@@ -39,12 +40,15 @@ export interface ProcessedImageData {
  */
 async function preprocessImage(
   photoKey: string,
+  signal?: AbortSignal,
 ): Promise<{ rawBuffer: Buffer; processedBuffer: Buffer } | null> {
   const { loggers, storageManager } = getPhotoExecutionContext();
 
   try {
     // 获取图片数据
-    const rawImageBuffer = await storageManager.getFile(photoKey);
+    signal?.throwIfAborted();
+    const rawImageBuffer = await storageManager.getFile(photoKey, signal);
+    signal?.throwIfAborted();
     if (!rawImageBuffer) {
       loggers.image.error(`Failed to fetch image data: ${photoKey}`);
       return null;
@@ -54,7 +58,9 @@ async function preprocessImage(
     let imageBuffer: Buffer;
     try {
       imageBuffer = await preprocessImageBuffer(rawImageBuffer, photoKey);
+      signal?.throwIfAborted();
     } catch (error) {
+      if (signal?.aborted) throw signal.reason;
       loggers.image.error(`Failed to preprocess image: ${photoKey}`, error);
       return null;
     }
@@ -64,6 +70,7 @@ async function preprocessImage(
       processedBuffer: imageBuffer,
     };
   } catch (error) {
+    if (signal?.aborted) throw signal.reason;
     loggers.image.error(`Image preprocessing failed: ${photoKey}`, error);
     return null;
   }
@@ -76,10 +83,12 @@ async function preprocessImage(
 async function processImageWithSharp(
   imageBuffer: Buffer,
   photoKey: string,
+  signal?: AbortSignal,
 ): Promise<ProcessedImageData | null> {
   const { loggers } = getPhotoExecutionContext();
 
   try {
+    signal?.throwIfAborted();
     // 创建 Sharp 实例，复用于多个操作
     let sharpInstance = sharp(imageBuffer, SOURCE_SHARP_OPTIONS);
     let processedBuffer = imageBuffer;
@@ -89,9 +98,12 @@ async function processImageWithSharp(
       try {
         // Convert the BMP image to JPEG format and create a new Sharp instance for the converted image.
         sharpInstance = await convertBmpToJpegSharpInstance(imageBuffer);
+        signal?.throwIfAborted();
         // Update the image buffer to reflect the new JPEG data from the Sharp instance.
         processedBuffer = await sharpInstance.toBuffer();
+        signal?.throwIfAborted();
       } catch (error) {
+        if (signal?.aborted) throw signal.reason;
         loggers.image.error(`Failed to convert BMP: ${photoKey}`, error);
         return null;
       }
@@ -99,6 +111,7 @@ async function processImageWithSharp(
 
     // 获取图片元数据（复用 Sharp 实例）
     const metadata = await getImageMetadataWithSharp(sharpInstance);
+    signal?.throwIfAborted();
     if (!metadata) {
       loggers.image.error(`Failed to read image metadata: ${photoKey}`);
       return null;
@@ -110,6 +123,7 @@ async function processImageWithSharp(
       metadata,
     };
   } catch (error) {
+    if (signal?.aborted) throw signal.reason;
     loggers.image.error(`Sharp processing failed: ${photoKey}`, error);
     return null;
   }
@@ -124,24 +138,32 @@ async function executePhotoProcessingPipeline(
   context: PhotoProcessingContext,
   photoId: string,
 ): Promise<PhotoManifestItem | null> {
-  const { photoKey, obj, existingItem, livePhotoMap, options } = context;
+  const { photoKey, obj, existingItem, livePhotoMap, options, signal } =
+    context;
   const { loggers, storageManager, services } = getPhotoExecutionContext();
 
   // 内容变更判定与 DiffPlanner 的入队谓词同源（needsUpdate）：这张照片若因
   // mtime/size/etag 变化被选中重处理，下游的"复用现有数据"检查必须让位——
   // 否则原图白白下载一遍，缩略图/EXIF/影调仍沿用旧内容，永远不会更新。
-  const contentChanged = existingItem ? needsUpdate(existingItem, obj) : false;
+  const contentChanged = existingItem
+    ? options.reprocessKeys?.includes(photoKey) ||
+      needsUpdate(existingItem, obj)
+    : false;
 
   try {
+    signal?.throwIfAborted();
     // 1. 预处理图片
-    const imageData = await preprocessImage(photoKey);
+    const imageData = await preprocessImage(photoKey, signal);
+    signal?.throwIfAborted();
     if (!imageData) return null;
 
     // 2. 处理图片并创建 Sharp 实例
     const processedData = await processImageWithSharp(
       imageData.processedBuffer,
       photoKey,
+      signal,
     );
+    signal?.throwIfAborted();
     if (!processedData) return null;
 
     const { sharpInstance, imageBuffer, metadata } = processedData;
@@ -154,6 +176,7 @@ async function executePhotoProcessingPipeline(
       options,
       contentChanged,
     );
+    signal?.throwIfAborted();
 
     // 缩略图生成失败：将该照片视为处理失败并跳过（会计入 failedCount），
     // 而不是带着空 thumbnailUrl 继续构建一个“成功但损坏”的 manifest 项。
@@ -166,7 +189,9 @@ async function executePhotoProcessingPipeline(
 
     context.pluginData[THUMBNAIL_PLUGIN_DATA_KEY] = {
       photoId,
-      fileName: `${photoId}.jpg`,
+      fileName:
+        getThumbnailFileNameFromUrl(thumbnailResult.thumbnailUrl) ??
+        `${photoId}.jpg`,
       buffer: thumbnailResult.thumbnailBuffer,
       localUrl: thumbnailResult.thumbnailUrl,
     };
@@ -181,6 +206,7 @@ async function executePhotoProcessingPipeline(
       services.exif,
       contentChanged,
     );
+    signal?.throwIfAborted();
 
     // 5. 检测 HDR GainMap（Ultra HDR 图片）
     const hasGainMap = detectGainMap({
@@ -199,6 +225,7 @@ async function executePhotoProcessingPipeline(
       livePhotoMap,
       storageManager,
     );
+    signal?.throwIfAborted();
 
     // 检测冲突：不允许同时存在 Motion Photo 和 Live Photo
     if (motionPhotoMetadata?.isMotionPhoto && livePhotoResult.isLivePhoto) {
@@ -215,9 +242,14 @@ async function executePhotoProcessingPipeline(
       options,
       contentChanged,
     );
+    signal?.throwIfAborted();
 
     // 9. 提取照片信息
-    const photoInfo = extractPhotoInfo(photoKey, exifData);
+    const photoInfo = extractPhotoInfo(
+      photoKey,
+      exifData,
+      obj.lastModified ?? existingItem?.dateTaken,
+    );
 
     // 10. 构建照片清单项
     const aspectRatio = metadata.width / metadata.height;
@@ -258,6 +290,7 @@ async function executePhotoProcessingPipeline(
                 type: "live-photo",
                 videoUrl: livePhotoResult.livePhotoVideoUrl,
                 s3Key: livePhotoResult.livePhotoVideoS3Key,
+                version: livePhotoResult.livePhotoVideoVersion,
               }
             : undefined,
       // HDR 相关字段
@@ -267,9 +300,11 @@ async function executePhotoProcessingPipeline(
         hasGainMap,
     };
 
+    signal?.throwIfAborted();
     loggers.image.success(`✅ Processing complete: ${photoKey}`);
     return photoItem;
   } catch (error) {
+    if (signal?.aborted) throw signal.reason;
     loggers.image.error(`❌ Processing pipeline failed: ${photoKey}`, error);
     return null;
   }
@@ -291,10 +326,12 @@ export async function processPhotoWithPipeline(
 
   const photoId = services.photoId.getIdForKey(photoKey, existingItem);
 
+  context.signal?.throwIfAborted();
   await emitPluginEvent(runtime.runState, "beforePhotoProcess", {
     options: runtime.builderOptions,
     context,
   });
+  context.signal?.throwIfAborted();
 
   // 检查是否需要处理
   const { shouldProcess, reason } = await shouldProcessPhoto(
@@ -303,6 +340,7 @@ export async function processPhotoWithPipeline(
     obj,
     options,
   );
+  context.signal?.throwIfAborted();
 
   if (!shouldProcess) {
     loggers.image.info(`⏭️ Skipping (${reason}): ${photoKey}`);
@@ -316,6 +354,7 @@ export async function processPhotoWithPipeline(
       context,
       result,
     });
+    context.signal?.throwIfAborted();
     return result;
   }
 
@@ -336,6 +375,7 @@ export async function processPhotoWithPipeline(
       resultType = "failed";
     }
   } catch (error) {
+    if (context.signal?.aborted) throw context.signal.reason;
     await emitPluginEvent(runtime.runState, "photoProcessError", {
       options: runtime.builderOptions,
       context,
@@ -352,11 +392,13 @@ export async function processPhotoWithPipeline(
     pluginData: context.pluginData,
   };
 
+  context.signal?.throwIfAborted();
   await emitPluginEvent(runtime.runState, "afterPhotoProcess", {
     options: runtime.builderOptions,
     context,
     result,
   });
+  context.signal?.throwIfAborted();
 
   // afterPhotoProcess 是缩略图 buffer 的最后消费者（thumbnail-storage 在钩子里
   // 上传）。钩子返回后立刻断开引用，让每张几十上百 KB 的 JPEG 即刻可回收：

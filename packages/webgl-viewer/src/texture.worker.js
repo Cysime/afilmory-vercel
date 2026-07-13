@@ -1,11 +1,13 @@
 /// <reference lib="webworker" />
 
-// TILE_SIZE, SIMPLE_LOD_LEVELS and clampDimensionsToFit are injected by
+// TILE_SIZE, SIMPLE_LOD_LEVELS, RGBA_BYTES_PER_PIXEL and
+// clampDimensionsToFit are injected by
 // worker-bridge.ts as a generated prelude (single source of truth:
 // tile-cache.ts / worker-bridge.ts). Do not declare them here.
 /* global TILE_SIZE, SIMPLE_LOD_LEVELS, clampDimensionsToFit */
 
 let originalImage = null;
+let activeSessionId = 0;
 
 /**
  *
@@ -20,11 +22,20 @@ self.onmessage = async (e) => {
       // 上下文恢复会通过同一个存活 worker 重新 loadImage：旧的全尺寸 bitmap
       // （48MP 约 190MB）若等 GC 释放，恰好撞上引发上下文丢失的内存压力窗口。
       // 先置 null 再解码，解码期间到达的 create-tile 会走 !originalImage 守卫安全失败。
+      const { sessionId } = payload;
+      activeSessionId = sessionId;
       if (originalImage) {
         originalImage.close();
         originalImage = null;
       }
-      const { url, blob: sourceBlob, maxTextureSize } = payload;
+      const {
+        url,
+        blob: sourceBlob,
+        maxTextureSize,
+        maxTextureBytes,
+      } = payload;
+      let decodedImage = null;
+      let initialLODBitmap = null;
       try {
         const blob =
           sourceBlob ??
@@ -32,9 +43,15 @@ self.onmessage = async (e) => {
             const response = await fetch(url, { mode: "cors" });
             return await response.blob();
           })());
-        originalImage = await createImageBitmap(blob);
-
-        self.postMessage({ type: "init-done" });
+        decodedImage = await createImageBitmap(blob, {
+          premultiplyAlpha: "none",
+        });
+        if (activeSessionId !== sessionId) {
+          decodedImage.close();
+          return;
+        }
+        originalImage = decodedImage;
+        decodedImage = null;
 
         // Create initial LOD texture
         const lodLevel = 1; // Initial LOD level
@@ -46,17 +63,24 @@ self.onmessage = async (e) => {
           Math.max(1, Math.round(originalImage.width * lodConfig.scale)),
           Math.max(1, Math.round(originalImage.height * lodConfig.scale)),
           maxTextureSize,
+          maxTextureBytes,
         );
 
-        const initialLODBitmap = await createImageBitmap(originalImage, {
+        initialLODBitmap = await createImageBitmap(originalImage, {
           resizeWidth: finalWidth,
           resizeHeight: finalHeight,
           resizeQuality: "medium",
+          premultiplyAlpha: "none",
         });
+        if (activeSessionId !== sessionId) {
+          initialLODBitmap.close();
+          return;
+        }
 
         self.postMessage(
           {
             type: "image-loaded",
+            sessionId,
             payload: {
               imageBitmap: initialLODBitmap,
               imageWidth: originalImage.width,
@@ -66,19 +90,33 @@ self.onmessage = async (e) => {
           },
           [initialLODBitmap],
         );
+        initialLODBitmap = null;
+        self.postMessage({ type: "init-done", sessionId });
       } catch (error) {
-        console.error("[Worker] Error loading image:", error);
-        self.postMessage({ type: "load-error", payload: { error } });
+        decodedImage?.close();
+        initialLODBitmap?.close();
+        if (activeSessionId === sessionId) {
+          originalImage?.close();
+          originalImage = null;
+          console.error("[Worker] Error loading image:", error);
+          self.postMessage({
+            type: "load-error",
+            sessionId,
+            payload: { error: toErrorMessage(error) },
+          });
+        }
       }
       break;
     }
     case "create-tile": {
-      if (!originalImage) {
+      const { sessionId } = payload;
+      if (sessionId !== activeSessionId || !originalImage) {
         // 必须回 tile-error（引擎靠它把 key 移出 loadingTiles 重新排队）：
         // 静默丢弃会让上下文恢复窗口期到达的瓦片永远不再被请求。
         console.warn("Worker has not been initialized with an image.");
         self.postMessage({
           type: "tile-error",
+          sessionId,
           payload: { key: payload.key, error: "image not loaded" },
         });
         return;
@@ -117,41 +155,60 @@ self.onmessage = async (e) => {
         );
 
         if (targetWidth <= 0 || targetHeight <= 0) {
+          self.postMessage({
+            type: "tile-error",
+            sessionId,
+            payload: { key, error: "tile has empty dimensions" },
+          });
           return;
         }
 
-        // Use OffscreenCanvas to draw the tile
-        const canvas = new OffscreenCanvas(targetWidth, targetHeight);
-        const ctx = canvas.getContext("2d");
-
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = lodConfig.scale >= 1 ? "high" : "medium";
-
-        ctx.drawImage(
+        // Decode base and tiles with the same unpremultiplied-alpha policy.
+        // The renderer replaces base pixels with tile pixels instead of
+        // source-over compositing the same translucent source twice.
+        const imageBitmap = await createImageBitmap(
           originalImage,
           sourceX,
           sourceY,
           actualSourceWidth,
           actualSourceHeight,
-          0,
-          0,
-          targetWidth,
-          targetHeight,
+          {
+            resizeWidth: targetWidth,
+            resizeHeight: targetHeight,
+            resizeQuality: lodConfig.scale >= 1 ? "high" : "medium",
+            premultiplyAlpha: "none",
+          },
         );
-
-        const imageBitmap = canvas.transferToImageBitmap();
+        if (sessionId !== activeSessionId) {
+          imageBitmap.close();
+          return;
+        }
         self.postMessage(
-          { type: "tile-created", payload: { key, imageBitmap, lodLevel } },
+          {
+            type: "tile-created",
+            sessionId,
+            payload: { key, imageBitmap, lodLevel },
+          },
           [imageBitmap],
         );
       } catch (error) {
         console.error("Error creating tile in worker:", error);
-        self.postMessage({ type: "tile-error", payload: { key, error } });
+        if (sessionId === activeSessionId) {
+          self.postMessage({
+            type: "tile-error",
+            sessionId,
+            payload: { key, error: toErrorMessage(error) },
+          });
+        }
       }
       break;
     }
   }
 };
+
+function toErrorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 /**
  *

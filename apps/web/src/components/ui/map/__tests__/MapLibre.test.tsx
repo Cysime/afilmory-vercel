@@ -11,6 +11,8 @@ import type { GeographicRegion, PhotoMarker } from "~/types/map";
 
 import { Maplibre } from "../MapLibre";
 
+const motionPreference = vi.hoisted(() => ({ reduce: false }));
+
 let setProjectionMock: ReturnType<typeof vi.fn>;
 let fitBoundsMock: ReturnType<typeof vi.fn>;
 let flyToMock: ReturnType<typeof vi.fn>;
@@ -22,6 +24,14 @@ let capturedOnMove:
       viewState: { longitude: number; latitude: number; zoom: number };
     }) => void)
   | undefined;
+
+vi.mock("motion/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("motion/react")>();
+  return {
+    ...actual,
+    useReducedMotion: () => motionPreference.reduce,
+  };
+});
 
 vi.mock("react-map-gl/maplibre", async () => {
   const React = await import("react");
@@ -192,6 +202,7 @@ const createRegion = (marker: PhotoMarker): GeographicRegion => ({
 
 describe("Maplibre", () => {
   beforeEach(() => {
+    motionPreference.reduce = false;
     setProjectionMock = vi.fn();
     fitBoundsMock = vi.fn();
     flyToMock = vi.fn();
@@ -328,6 +339,44 @@ describe("Maplibre", () => {
       center: [121.5, 31.2],
       zoom: 7,
       duration: 500,
+    });
+  });
+
+  it("removes cluster camera animation when reduced motion is requested", () => {
+    motionPreference.reduce = true;
+    const mapRef = { current: null };
+    getClusterPointsMock.mockReturnValue([
+      {
+        type: "Feature",
+        properties: {
+          cluster: true,
+          point_count: 3,
+          marker: undefined,
+          clusteredPhotos: [],
+        },
+        geometry: {
+          type: "Point",
+          coordinates: [121.5, 31.2],
+        },
+      },
+    ]);
+
+    render(
+      <Maplibre
+        initialViewState={{ longitude: 120, latitude: 30, zoom: 5 }}
+        autoFitBounds={false}
+        displayMode="photos"
+        markers={[]}
+        mapRef={mapRef}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("cluster-marker"));
+
+    expect(flyToMock).toHaveBeenCalledWith({
+      center: [121.5, 31.2],
+      zoom: 7,
+      duration: 0,
     });
   });
 

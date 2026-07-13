@@ -16,28 +16,32 @@ export interface FeedSiteConfig {
   description?: string | null;
   url: string;
   author?: FeedSiteAuthor;
-  locale?: string | null;
+  language?: string | null;
 }
 
 export function generateRSSFeed(
   photos: readonly PhotoManifestItem[],
   config: FeedSiteConfig,
+  generatedAt?: string,
 ): string {
   const baseUrl = normalizeBaseUrl(config.url);
   const sortedPhotos = [...photos].sort(
     (a, b) => resolveDate(b) - resolveDate(a),
   );
-  const lastBuildDate = new Date().toUTCString();
+  const lastBuildDate = resolveBuildDate(
+    sortedPhotos,
+    generatedAt,
+  ).toUTCString();
   const channelDescription = escapeXml(
     config.description ?? config.title ?? "Photo feed",
   );
-  const channelLanguage = escapeXml(config.locale ?? "en");
+  const channelLanguage = escapeXml(config.language ?? "en");
 
   const itemsXml = sortedPhotos
     .map((photo) => createItemXml(photo, baseUrl))
     .join("\n");
 
-  const author = config.author?.name ? escapeXml(config.author.name) : null;
+  const author = config.author?.name ?? null;
   const managingEditor =
     author && config.author?.url ? `${author} (${config.author.url})` : author;
 
@@ -45,12 +49,12 @@ export function generateRSSFeed(
 <rss version="2.0" xmlns:exif="${EXIF_NAMESPACE}">
   <channel>
     <title>${escapeXml(config.title)}</title>
-    <link>${baseUrl}</link>
+    <link>${escapeXml(baseUrl)}</link>
     <description>${channelDescription}</description>
     <language>${channelLanguage}</language>
     <lastBuildDate>${lastBuildDate}</lastBuildDate>
     <generator>${GENERATOR_NAME}</generator>
-    ${managingEditor ? `<managingEditor>${managingEditor}</managingEditor>` : ""}
+    ${managingEditor ? `<managingEditor>${escapeXml(managingEditor)}</managingEditor>` : ""}
     <exif:version>${PROTOCOL_VERSION}</exif:version>
     <exif:protocol>${PROTOCOL_ID}</exif:protocol>
 ${itemsXml}
@@ -59,7 +63,7 @@ ${itemsXml}
 }
 
 function createItemXml(photo: PhotoManifestItem, baseUrl: string): string {
-  const link = `${baseUrl}/photos/${encodeURIComponent(photo.id)}`;
+  const link = `${baseUrl}/photos/${encodeURIComponent(photo.id)}/`;
   const pubDate = new Date(resolveDate(photo)).toUTCString();
   const title = escapeXml(photo.title ?? photo.id);
   const summary = buildDescription(photo);
@@ -90,7 +94,7 @@ function createItemXml(photo: PhotoManifestItem, baseUrl: string): string {
 
   return `    <item>
       <title>${title}</title>
-      <link>${link}</link>
+      <link>${escapeXml(link)}</link>
       <guid isPermaLink="false">${escapeXml(photo.id)}</guid>
       <pubDate>${pubDate}</pubDate>
       <description><![CDATA[${summary}]]></description>
@@ -320,10 +324,23 @@ function normalizeBaseUrl(url: string): string {
 }
 
 function resolveDate(photo: PhotoManifestItem): number {
-  const date = photo.dateTaken ?? photo.lastModified;
-  const timestamp = date ? Date.parse(date) : Number.NaN;
-  if (!Number.isNaN(timestamp)) {
-    return timestamp;
+  for (const date of [photo.dateTaken, photo.lastModified]) {
+    const timestamp = date ? Date.parse(date) : Number.NaN;
+    if (Number.isFinite(timestamp)) return timestamp;
   }
-  return Date.now();
+  return 0;
+}
+
+function resolveBuildDate(
+  photos: readonly PhotoManifestItem[],
+  generatedAt?: string,
+): Date {
+  const generatedTimestamp = generatedAt ? Date.parse(generatedAt) : Number.NaN;
+  if (Number.isFinite(generatedTimestamp)) return new Date(generatedTimestamp);
+
+  const latestPhotoTimestamp = photos.reduce(
+    (latest, photo) => Math.max(latest, resolveDate(photo)),
+    0,
+  );
+  return new Date(latestPhotoTimestamp);
 }

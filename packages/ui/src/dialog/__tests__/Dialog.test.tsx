@@ -1,7 +1,13 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "..";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  DialogTrigger,
+} from "..";
 
 function renderDialog(props: React.ComponentProps<typeof Dialog>) {
   return render(
@@ -11,6 +17,7 @@ function renderDialog(props: React.ComponentProps<typeof Dialog>) {
       </DialogTrigger>
       <DialogContent>
         <DialogTitle>dialog title</DialogTitle>
+        <DialogDescription>dialog description</DialogDescription>
       </DialogContent>
     </Dialog>,
   );
@@ -49,6 +56,7 @@ describe("Dialog", () => {
         </DialogTrigger>
         <DialogContent>
           <DialogTitle>dialog title</DialogTitle>
+          <DialogDescription>dialog description</DialogDescription>
         </DialogContent>
       </Dialog>,
     );
@@ -63,5 +71,6 @@ describe("Dialog", () => {
     fireEvent.click(screen.getByText("trigger"));
 
     expect(onOpenChange).toHaveBeenCalledWith(true);
+    expect(screen.queryByText("dialog title")).toBeNull();
   });
 });

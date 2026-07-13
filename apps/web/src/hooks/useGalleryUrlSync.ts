@@ -268,6 +268,7 @@ const useSyncStateToUrl = (urlRestoreStateRef: RefObject<UrlRestoreState>) => {
       selectedGeoRegions,
       selectedGeoCities,
       selectedGeoDistricts,
+      sortOrder,
     });
 
     // Remove legacy rating filters; the static gallery does not support starring.
@@ -306,6 +307,7 @@ const useSyncStateToUrl = (urlRestoreStateRef: RefObject<UrlRestoreState>) => {
     selectedGeoRegions,
     selectedGeoCities,
     selectedGeoDistricts,
+    sortOrder,
     setSearchParams,
     urlRestoreStateRef,
   ]);

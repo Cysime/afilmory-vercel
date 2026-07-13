@@ -16,6 +16,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { AfilmoryBuilder } from "../builder/builder.js";
 import { createDefaultBuilderConfig } from "../config/defaults.js";
+import {
+  getThumbnailFileNameFromUrl,
+  isThumbnailEncodingStale,
+} from "../image/thumbnail.js";
 import type { BuilderConfig } from "../types/config.js";
 import type { BuilderOptions } from "../types/options.js";
 
@@ -172,6 +176,8 @@ describe("AfilmoryBuilder end-to-end (real sharp + exiftool + local FS)", () => 
     expect(first.deletedCount).toBe(0);
     expect(first.totalPhotos).toBe(FIXTURES.length);
     expect(first.hasUpdates).toBe(true);
+    // Programmatic builds own the same encoding compatibility protocol as CLI.
+    expect(await isThumbnailEncodingStale(thumbnailsDir)).toBe(false);
 
     // (a) 落盘 manifest 通过严格 assertManifest。
     const manifest = await readManifestFromDisk();
@@ -189,9 +195,13 @@ describe("AfilmoryBuilder end-to-end (real sharp + exiftool + local FS)", () => 
       expect(item.height).toBe(fixture.height);
       expect(item.aspectRatio).toBeCloseTo(fixture.width / fixture.height, 5);
 
-      // 缩略图 URL 非空，指向 /thumbnails/<id>.jpg。
+      // 缩略图 URL 是内容寻址的 immutable 资产；编码或内容变化都会换 URL。
       expect(item.thumbnailUrl).toBeTruthy();
-      expect(item.thumbnailUrl).toBe(`/thumbnails/${item.id}.jpg`);
+      expect(item.thumbnailUrl).toMatch(
+        new RegExp(
+          `^/thumbnails/${item.id}\\.[\\da-f]{64}\\.[\\da-f]{12}\\.jpg$`,
+        ),
+      );
 
       // thumbHash 非空，且是 uint8ArrayToHex 产出的十六进制字符串。
       expect(item.thumbHash).toBeTruthy();
@@ -202,7 +212,12 @@ describe("AfilmoryBuilder end-to-end (real sharp + exiftool + local FS)", () => 
 
       // 缩略图 .jpg 实际落盘（每张一个）。
       expect(
-        await pathExists(path.join(thumbnailsDir, `${item.id}.jpg`)),
+        await pathExists(
+          path.join(
+            thumbnailsDir,
+            getThumbnailFileNameFromUrl(item.thumbnailUrl)!,
+          ),
+        ),
         `${fixture.name} 的缩略图应已落盘`,
       ).toBe(true);
     }
@@ -225,6 +240,7 @@ describe("AfilmoryBuilder end-to-end (real sharp + exiftool + local FS)", () => 
     // 第二次构建后 manifest 仍完整且合法。
     const manifestAfterSecond = await readManifestFromDisk();
     expect(manifestAfterSecond.photos).toHaveLength(FIXTURES.length);
+    expect(manifestAfterSecond.generatedAt).toBe(manifest.generatedAt);
 
     // 记下将被删除那张照片的 id 与缩略图路径（删除前它应当在场）。
     const deletedItem = new Map(
@@ -233,7 +249,7 @@ describe("AfilmoryBuilder end-to-end (real sharp + exiftool + local FS)", () => 
     expect(deletedItem).toBeDefined();
     const deletedThumbnailPath = path.join(
       thumbnailsDir,
-      `${deletedItem!.id}.jpg`,
+      getThumbnailFileNameFromUrl(deletedItem!.thumbnailUrl)!,
     );
     expect(await pathExists(deletedThumbnailPath)).toBe(true);
 
@@ -262,7 +278,12 @@ describe("AfilmoryBuilder end-to-end (real sharp + exiftool + local FS)", () => 
     expect(await pathExists(deletedThumbnailPath)).toBe(false);
     for (const photo of manifestAfterThird.photos) {
       expect(
-        await pathExists(path.join(thumbnailsDir, `${photo.id}.jpg`)),
+        await pathExists(
+          path.join(
+            thumbnailsDir,
+            getThumbnailFileNameFromUrl(photo.thumbnailUrl)!,
+          ),
+        ),
       ).toBe(true);
     }
   }, 60_000);
@@ -279,13 +300,18 @@ describe("AfilmoryBuilder end-to-end (real sharp + exiftool + local FS)", () => 
     expect(corruptedItem).toBeDefined();
     const corruptedThumbnailPath = path.join(
       thumbnailsDir,
-      `${corruptedItem!.id}.jpg`,
+      getThumbnailFileNameFromUrl(corruptedItem!.thumbnailUrl)!,
     );
     expect(await pathExists(corruptedThumbnailPath)).toBe(true);
 
     const survivorThumbnailPaths = manifestBefore.photos
       .filter((photo) => photo.s3Key !== CORRUPTED_FIXTURE.name)
-      .map((photo) => path.join(thumbnailsDir, `${photo.id}.jpg`));
+      .map((photo) =>
+        path.join(
+          thumbnailsDir,
+          getThumbnailFileNameFromUrl(photo.thumbnailUrl)!,
+        ),
+      );
     expect(survivorThumbnailPaths).not.toHaveLength(0);
 
     // ---- Build #4: reprocessing an EXISTING photo fails ----

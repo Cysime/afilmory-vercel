@@ -6,6 +6,7 @@ import type {
   TaskMessage,
   TaskResult,
 } from "./cluster-protocol.js";
+import { runWithWatchdog } from "./watchdog.js";
 
 export type WorkerProcessPhoto =
   typeof import("../photo/processor.js").processPhoto;
@@ -17,6 +18,7 @@ export type WorkerProcessPhoto =
 export interface WorkerTaskRuntime extends PhotoTaskRuntime {
   workerId: number;
   imageObjects: StorageObject[];
+  taskTimeoutMs?: number;
 }
 
 async function executePhotoTask(
@@ -29,14 +31,21 @@ async function executePhotoTask(
     throw new Error(`Invalid taskIndex: ${taskIndex}`);
   }
 
-  return await processPhoto(
+  return await runWithWatchdog(
+    async () =>
+      await processPhoto(
+        {
+          obj,
+          index: taskIndex,
+          workerId: runtime.workerId,
+          totalImages: runtime.imageObjects.length,
+        },
+        runtime,
+      ),
     {
-      obj,
-      index: taskIndex,
-      workerId: runtime.workerId,
-      totalImages: runtime.imageObjects.length,
+      label: `Cluster worker ${runtime.workerId} task ${taskIndex + 1}`,
+      timeoutMs: runtime.taskTimeoutMs ?? 300_000,
     },
-    runtime,
   );
 }
 

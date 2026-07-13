@@ -35,7 +35,12 @@ function createInput(
   };
 }
 
-function tile(x: number, y: number, lodLevel: number): TileInfo {
+function tile(
+  x: number,
+  y: number,
+  lodLevel: number,
+  byteSize = 512 * 512 * 4,
+): TileInfo {
   return {
     x,
     y,
@@ -44,6 +49,7 @@ function tile(x: number, y: number, lodLevel: number): TileInfo {
     lastUsed: 0,
     isLoading: false,
     priority: 0,
+    byteSize,
   };
 }
 
@@ -65,15 +71,16 @@ describe("createWebGLDebugInfo", () => {
 
   it("uses smaller real dimensions for non-divisible grids, not a per-tile constant", () => {
     // 1300×700 at LOD 2 → 3×2 grid → 每片 434×350，远小于虚构的 4MiB/片
-    const tileCache = new Map<TileKey, TileInfo>([["0-0-2", tile(0, 0, 2)]]);
+    const byteSize = Math.ceil(1300 / 3) * Math.ceil(700 / 2) * 4;
+    const tileCache = new Map<TileKey, TileInfo>([
+      ["0-0-2", tile(0, 0, 2, byteSize)],
+    ]);
 
     const info = createWebGLDebugInfo(
       createInput({ imageWidth: 1300, imageHeight: 700, tileCache }),
     );
 
-    expect(info.memory.tileTextureBytes).toBe(
-      Math.ceil(1300 / 3) * Math.ceil(700 / 2) * 4,
-    );
+    expect(info.memory.tileTextureBytes).toBe(byteSize);
   });
 
   it("skips tiles without an uploaded texture", () => {

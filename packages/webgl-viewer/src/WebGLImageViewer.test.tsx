@@ -34,6 +34,7 @@ describe("WebGLImageViewer", () => {
   afterEach(() => {
     cleanup();
     engineMocks.throwOnConstruct = false;
+    vi.restoreAllMocks();
     vi.clearAllMocks();
   });
 
@@ -61,7 +62,29 @@ describe("WebGLImageViewer", () => {
     expect(engineMocks.destroy).toHaveBeenCalledTimes(1);
   });
 
+  it("exposes caller-provided image semantics while hiding the raw canvas", () => {
+    const { getByRole, container } = render(
+      <WebGLImageViewer
+        src="blob:photo"
+        width={100}
+        height={80}
+        role="img"
+        aria-label="Mountain at sunset"
+      />,
+    );
+
+    expect(getByRole("img").getAttribute("aria-label")).toBe(
+      "Mountain at sunset",
+    );
+    expect(container.querySelector("canvas")?.getAttribute("aria-hidden")).toBe(
+      "true",
+    );
+  });
+
   it("reports engine initialization failures without throwing from the effect", () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     engineMocks.throwOnConstruct = true;
     const onError = vi.fn();
 
@@ -77,6 +100,7 @@ describe("WebGLImageViewer", () => {
     ).not.toThrow();
 
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
+    expect(consoleError).toHaveBeenCalled();
     expect(engineMocks.loadImage).not.toHaveBeenCalled();
   });
 
@@ -134,6 +158,9 @@ describe("WebGLImageViewer", () => {
   });
 
   it("reports image loading failures through the error callback", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     const onError = vi.fn();
     const loadError = new Error("WebGL image load failed");
     engineMocks.loadImage.mockRejectedValueOnce(loadError);
@@ -150,5 +177,6 @@ describe("WebGLImageViewer", () => {
     await waitFor(() => {
       expect(onError).toHaveBeenCalledWith(loadError);
     });
+    expect(consoleError).toHaveBeenCalled();
   });
 });

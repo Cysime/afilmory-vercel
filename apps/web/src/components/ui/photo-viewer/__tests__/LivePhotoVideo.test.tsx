@@ -13,7 +13,7 @@ import type { VideoSource } from "~/lib/image-loading-types";
 
 import { LivePhotoVideo } from "../LivePhotoVideo";
 
-// 避免加载 @afilmory/ui 整个 barrel（sonner 用了测试环境无的 tw 宏）；组件只用到 clsxm。
+// 避免加载 @afilmory/ui 整个 barrel；组件只用到 clsxm。
 vi.mock("@afilmory/ui", () => ({
   clsxm: (...classes: Array<string | false | null | undefined>) =>
     classes.filter(Boolean).join(" "),

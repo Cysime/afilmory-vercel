@@ -9,8 +9,10 @@ import {
 
 class WorkerMock {
   static instances: WorkerMock[] = [];
+  static throwOnConstruct = false;
 
   onerror: ((event: ErrorEvent) => void) | null = null;
+  onmessageerror: ((event: MessageEvent) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
   postMessage = vi.fn();
   terminate = vi.fn();
@@ -18,6 +20,9 @@ class WorkerMock {
   options?: WorkerOptions;
 
   constructor(url: string, options?: WorkerOptions) {
+    if (WorkerMock.throwOnConstruct) {
+      throw new Error("worker construction failed");
+    }
     this.url = url;
     this.options = options;
     WorkerMock.instances.push(this);
@@ -60,6 +65,13 @@ describe("clampDimensionsToFit", () => {
     expect(clampDimensionsToFit(9000, 9000, -1)).toEqual({
       width: 9000,
       height: 9000,
+    });
+  });
+
+  it("also caps the RGBA allocation by byte budget", () => {
+    expect(clampDimensionsToFit(8192, 8192, 16384, 64 * 1024 * 1024)).toEqual({
+      width: 4096,
+      height: 4096,
     });
   });
 });
@@ -115,6 +127,7 @@ describe("TextureWorkerBridge", () => {
 
   beforeEach(() => {
     WorkerMock.instances = [];
+    WorkerMock.throwOnConstruct = false;
     vi.stubGlobal("Worker", WorkerMock);
     Object.defineProperty(URL, "createObjectURL", {
       configurable: true,
@@ -142,13 +155,15 @@ describe("TextureWorkerBridge", () => {
   it("creates a texture worker and wires message handlers", () => {
     const onMessage = vi.fn();
     const onError = vi.fn();
+    const onMessageError = vi.fn();
 
-    new TextureWorkerBridge({ onError, onMessage });
+    new TextureWorkerBridge({ onError, onMessage, onMessageError });
 
     expect(URL.createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
     expect(WorkerMock.instances).toHaveLength(1);
     expect(WorkerMock.instances[0]).toMatchObject({
       onerror: onError,
+      onmessageerror: onMessageError,
       onmessage: onMessage,
       options: { name: "texture-worker" },
       url: "blob:texture-worker",
@@ -162,10 +177,13 @@ describe("TextureWorkerBridge", () => {
 
     bridge.loadImage({
       blob,
+      sessionId: 7,
       maxTextureSize: 4096,
+      maxTextureBytes: 64 * 1024 * 1024,
       url: "https://example.com/photo.jpg",
     });
     bridge.createTile({
+      sessionId: 7,
       imageHeight: 3000,
       imageWidth: 4000,
       key: "1-2-3",
@@ -178,7 +196,9 @@ describe("TextureWorkerBridge", () => {
     expect(worker.postMessage).toHaveBeenNthCalledWith(1, {
       payload: {
         blob,
+        sessionId: 7,
         maxTextureSize: 4096,
+        maxTextureBytes: 64 * 1024 * 1024,
         url: "https://example.com/photo.jpg",
       },
       type: "load-image",
@@ -187,6 +207,7 @@ describe("TextureWorkerBridge", () => {
       payload: {
         imageHeight: 3000,
         imageWidth: 4000,
+        sessionId: 7,
         key: "1-2-3",
         lodConfig: { scale: 0.5 },
         lodLevel: 3,
@@ -204,6 +225,15 @@ describe("TextureWorkerBridge", () => {
     bridge.dispose();
 
     expect(worker.terminate).toHaveBeenCalledTimes(1);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:texture-worker");
+  });
+
+  it("revokes the generated URL when Worker construction fails", () => {
+    WorkerMock.throwOnConstruct = true;
+
+    expect(() => new TextureWorkerBridge({ onMessage: vi.fn() })).toThrow(
+      /worker construction failed/,
+    );
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:texture-worker");
   });
 });

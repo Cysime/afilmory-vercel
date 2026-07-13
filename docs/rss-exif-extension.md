@@ -41,12 +41,12 @@ The channel contains:
 
 ## Item Fields
 
-Each manifest photo becomes an RSS item sorted newest first by `dateTaken`, then `lastModified`, with current time fallback.
+Each manifest photo becomes an RSS item sorted newest first by `dateTaken`, then `lastModified`, with a deterministic Unix-epoch fallback. The feed build date uses `manifest.generatedAt`, then the newest valid photo timestamp.
 
 The implementation emits:
 
 - `<title>` from `photo.title` or `photo.id`
-- `<link>` as `/photos/<encoded photo.id>`
+- `<link>` as `/photos/<encoded photo.id>/`
 - `<guid isPermaLink="false">photo.id</guid>`
 - `<pubDate>` from resolved photo date
 - `<description><![CDATA[...]]></description>`
@@ -142,7 +142,7 @@ GPS and reverse-geocoded location may still exist in the manifest and web UI, bu
     <exif:protocol>afilmory-rss-exif</exif:protocol>
     <item>
       <title>Sunset</title>
-      <link>https://example.com/photos/sunset-001</link>
+      <link>https://example.com/photos/sunset-001/</link>
       <guid isPermaLink="false">sunset-001</guid>
       <pubDate>Wed, 03 Jun 2026 10:00:00 GMT</pubDate>
       <description><![CDATA[<p><strong>Tags:</strong> travel, sunset</p>]]></description>

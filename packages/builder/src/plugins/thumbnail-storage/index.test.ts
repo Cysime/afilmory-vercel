@@ -70,6 +70,7 @@ function createManagerFixture() {
     .spyOn(manager, "generatePublicUrl")
     .mockImplementation(async (key) => `https://cdn.example.com/${key}`);
   const addExcludePrefix = vi.spyOn(manager, "addExcludePrefix");
+  const dispose = vi.spyOn(manager, "dispose");
 
   return {
     manager,
@@ -78,6 +79,7 @@ function createManagerFixture() {
     listObjectKeys,
     generatePublicUrl,
     addExcludePrefix,
+    dispose,
   };
 }
 type ManagerFixture = ReturnType<typeof createManagerFixture>;
@@ -215,6 +217,14 @@ function createHarness(
     });
   }
 
+  async function runBeforeBuild() {
+    await plugin.hooks!.beforeBuild!({
+      ...baseHookContext,
+      event: "beforeBuild",
+      payload: { options: BUILD_OPTIONS },
+    });
+  }
+
   async function runAfterBuild(
     manifest: PhotoManifestItem[],
     { failedCount = 0 }: { failedCount?: number } = {},
@@ -244,6 +254,7 @@ function createHarness(
     externalManager,
     createManager,
     init,
+    runBeforeBuild,
     runAfterPhotoProcess,
     runAfterBuild,
   };
@@ -290,6 +301,7 @@ describe("thumbnailStoragePlugin onInit", () => {
   it("registers the remote thumbnail prefix as an exclude on the default storage manager", async () => {
     const harness = createHarness();
     await harness.init();
+    await harness.runBeforeBuild();
 
     expect(harness.defaultManager.addExcludePrefix).toHaveBeenCalledWith(
       DEFAULT_REMOTE_PREFIX,
@@ -308,11 +320,12 @@ describe("thumbnailStoragePlugin onInit", () => {
     });
     await harness.init();
 
-    expect(harness.createManager).toHaveBeenCalledWith(externalConfig);
+    expect(harness.createManager).not.toHaveBeenCalled();
     expect(harness.defaultManager.addExcludePrefix).not.toHaveBeenCalled();
 
     // Uploads must go through the external manager, not the default one.
     await harness.runAfterPhotoProcess(makePhotoPayload({ id: "a" }));
+    expect(harness.createManager).toHaveBeenCalledWith(externalConfig);
     expect(harness.externalManager.uploadFile).toHaveBeenCalledTimes(1);
     expect(harness.defaultManager.uploadFile).not.toHaveBeenCalled();
     // External config prefix "cdn" + default directory.
@@ -321,6 +334,9 @@ describe("thumbnailStoragePlugin onInit", () => {
       expect.any(Buffer),
       expect.anything(),
     );
+    await harness.runAfterBuild([manifestItem("a")]);
+    expect(harness.externalManager.dispose).toHaveBeenCalledTimes(1);
+    expect(harness.defaultManager.dispose).not.toHaveBeenCalled();
   });
 });
 

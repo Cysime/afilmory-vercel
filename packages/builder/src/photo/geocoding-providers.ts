@@ -20,6 +20,127 @@ export interface GeocodingProvider {
   reverseGeocode: (lat: number, lon: number) => Promise<LocationInfo | null>;
 }
 
+export type GeocodingErrorKind =
+  | "authentication"
+  | "client"
+  | "invalid-response"
+  | "network"
+  | "rate-limit"
+  | "server"
+  | "timeout";
+
+export class GeocodingProviderError extends Error {
+  constructor(
+    message: string,
+    readonly kind: GeocodingErrorKind,
+    readonly retryable: boolean,
+    options: { cause?: unknown; status?: number } = {},
+  ) {
+    super(message, { cause: options.cause });
+    this.name = "GeocodingProviderError";
+    this.status = options.status;
+  }
+
+  readonly status?: number;
+}
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+
+async function runWithRequestTimeout<T>(
+  callback: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  providerName: string,
+): Promise<T> {
+  const controller = new AbortController();
+  let timedOut = false;
+  let timer: NodeJS.Timeout | undefined;
+  const request = callback(controller.signal).catch((error: unknown) => {
+    if (error instanceof GeocodingProviderError) throw error;
+    if (timedOut || controller.signal.aborted) {
+      throw new GeocodingProviderError(
+        `${providerName} request timed out after ${timeoutMs}ms`,
+        "timeout",
+        true,
+        { cause: error },
+      );
+    }
+    throw new GeocodingProviderError(
+      `${providerName} network request failed`,
+      "network",
+      true,
+      { cause: error },
+    );
+  });
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(
+        new GeocodingProviderError(
+          `${providerName} request timed out after ${timeoutMs}ms`,
+          "timeout",
+          true,
+        ),
+      );
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([request, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function createHttpError(
+  providerName: string,
+  response: Response,
+): GeocodingProviderError {
+  const { status, statusText } = response;
+  if (status === 401 || status === 403) {
+    return new GeocodingProviderError(
+      `${providerName} authentication failed (${status} ${statusText})`,
+      "authentication",
+      false,
+      { status },
+    );
+  }
+  if (status === 429) {
+    return new GeocodingProviderError(
+      `${providerName} rate limit exceeded (429 ${statusText})`,
+      "rate-limit",
+      true,
+      { status },
+    );
+  }
+  if (status === 408 || status === 425 || status >= 500) {
+    return new GeocodingProviderError(
+      `${providerName} temporary server error (${status} ${statusText})`,
+      "server",
+      true,
+      { status },
+    );
+  }
+  return new GeocodingProviderError(
+    `${providerName} request rejected (${status} ${statusText})`,
+    "client",
+    false,
+    { status },
+  );
+}
+
+function normalizeProviderError(
+  providerName: string,
+  error: unknown,
+): GeocodingProviderError {
+  if (error instanceof GeocodingProviderError) return error;
+  return new GeocodingProviderError(
+    `${providerName} returned an invalid response`,
+    "invalid-response",
+    true,
+    { cause: error },
+  );
+}
+
 const getBackoffDelay = (attempt: number, baseDelay: number): number => {
   const exponential = baseDelay * 2 ** (attempt - 1);
   const jitter = Math.random() * baseDelay;
@@ -59,8 +180,13 @@ export class MapboxGeocodingProvider implements GeocodingProvider {
   private readonly interprocessKey: string;
   private readonly maxRetries = 3;
   private readonly retryBaseDelayMs = 500;
+  private readonly requestTimeoutMs: number;
 
-  constructor(accessToken: string, language?: string | null) {
+  constructor(
+    accessToken: string,
+    language?: string | null,
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  ) {
     this.accessToken = accessToken;
     this.language = language ?? null;
     this.rateLimiter = getRateLimiter(
@@ -68,6 +194,7 @@ export class MapboxGeocodingProvider implements GeocodingProvider {
       this.rateLimitMs,
     );
     this.interprocessKey = `mapbox:${accessToken}`;
+    this.requestTimeoutMs = requestTimeoutMs;
   }
 
   async reverseGeocode(lat: number, lon: number): Promise<LocationInfo | null> {
@@ -87,15 +214,32 @@ export class MapboxGeocodingProvider implements GeocodingProvider {
 
         log.info(`Calling Mapbox API: ${lat}, ${lon}`);
 
-        const response = await fetch(url.toString());
-
-        if (!response.ok) {
-          throw new Error(
-            `Mapbox API error: ${response.status} ${response.statusText}`,
-          );
-        }
-
-        const data = await response.json();
+        const lookup = await runWithRequestTimeout(
+          async (signal) => {
+            const response = await fetch(url.toString(), { signal });
+            if (!response.ok) {
+              if (response.status === 404) return { notFound: true as const };
+              throw createHttpError("Mapbox", response);
+            }
+            try {
+              return {
+                notFound: false as const,
+                data: await response.json(),
+              };
+            } catch (error) {
+              throw new GeocodingProviderError(
+                "Mapbox returned invalid JSON",
+                "invalid-response",
+                true,
+                { cause: error },
+              );
+            }
+          },
+          this.requestTimeoutMs,
+          "Mapbox",
+        );
+        if (lookup.notFound) return null;
+        const { data } = lookup;
 
         if (!data || !data.features || data.features.length === 0) {
           log.warn("Mapbox API returned no results");
@@ -135,22 +279,27 @@ export class MapboxGeocodingProvider implements GeocodingProvider {
           locationName,
         });
       } catch (error) {
+        const providerError = normalizeProviderError("Mapbox", error);
         const isLastAttempt = attempt === this.maxRetries;
-        if (isLastAttempt) {
-          log.error("Mapbox reverse geocoding failed:", error);
-          break;
+        if (isLastAttempt || !providerError.retryable) {
+          log.error("Mapbox reverse geocoding failed:", providerError);
+          throw providerError;
         }
 
         const delay = getBackoffDelay(attempt, this.retryBaseDelayMs);
         log.warn(
           `Mapbox API call failed, retrying in ${Math.round(delay)}ms (${attempt}/${this.maxRetries})`,
-          error,
+          providerError,
         );
         await sleep(delay);
       }
     }
 
-    return null;
+    throw new GeocodingProviderError(
+      "Mapbox reverse geocoding exhausted its retry budget",
+      "network",
+      false,
+    );
   }
 
   private async applyRateLimit(): Promise<void> {
@@ -168,11 +317,13 @@ export class NominatimGeocodingProvider implements GeocodingProvider {
   private readonly interprocessKey: string;
   private readonly maxRetries = 3;
   private readonly retryBaseDelayMs = 1000;
+  private readonly requestTimeoutMs: number;
 
   constructor(
     baseUrl?: string,
     language?: string | null,
     userAgent?: string | null,
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   ) {
     this.baseUrl = baseUrl || "https://nominatim.openstreetmap.org";
     this.language = language ?? null;
@@ -182,6 +333,7 @@ export class NominatimGeocodingProvider implements GeocodingProvider {
       this.rateLimitMs,
     );
     this.interprocessKey = `nominatim:${this.baseUrl}`;
+    this.requestTimeoutMs = requestTimeoutMs;
   }
 
   async reverseGeocode(lat: number, lon: number): Promise<LocationInfo | null> {
@@ -202,23 +354,57 @@ export class NominatimGeocodingProvider implements GeocodingProvider {
 
         log.info(`Calling Nominatim API: ${lat}, ${lon}`);
 
-        const response = await fetch(url.toString(), {
-          headers: {
-            "User-Agent": this.userAgent,
-            ...(this.language ? { "Accept-Language": this.language } : {}),
+        const lookup = await runWithRequestTimeout(
+          async (signal) => {
+            const response = await fetch(url.toString(), {
+              signal,
+              headers: {
+                "User-Agent": this.userAgent,
+                ...(this.language ? { "Accept-Language": this.language } : {}),
+              },
+            });
+            if (!response.ok) {
+              if (response.status === 404) return { notFound: true as const };
+              throw createHttpError("Nominatim", response);
+            }
+            try {
+              return {
+                notFound: false as const,
+                data: await response.json(),
+              };
+            } catch (error) {
+              throw new GeocodingProviderError(
+                "Nominatim returned invalid JSON",
+                "invalid-response",
+                true,
+                { cause: error },
+              );
+            }
           },
-        });
+          this.requestTimeoutMs,
+          "Nominatim",
+        );
+        if (lookup.notFound) return null;
+        const { data } = lookup;
 
-        if (!response.ok) {
-          throw new Error(
-            `Nominatim API error: ${response.status} ${response.statusText}`,
+        if (!data) {
+          throw new GeocodingProviderError(
+            "Nominatim returned an empty response",
+            "invalid-response",
+            true,
           );
         }
-
-        const data = await response.json();
-
-        if (!data || data.error) {
-          throw new Error(`Nominatim API returned an error: ${data?.error}`);
+        if (data.error) {
+          if (
+            /unable to geocode|not found|no result/i.test(String(data.error))
+          ) {
+            return null;
+          }
+          throw new GeocodingProviderError(
+            `Nominatim returned an error: ${String(data.error)}`,
+            "invalid-response",
+            false,
+          );
         }
 
         const address = data.address || {};
@@ -265,22 +451,27 @@ export class NominatimGeocodingProvider implements GeocodingProvider {
           locationName,
         });
       } catch (error) {
+        const providerError = normalizeProviderError("Nominatim", error);
         const isLastAttempt = attempt === this.maxRetries;
-        if (isLastAttempt) {
-          log.error("Nominatim reverse geocoding failed:", error);
-          break;
+        if (isLastAttempt || !providerError.retryable) {
+          log.error("Nominatim reverse geocoding failed:", providerError);
+          throw providerError;
         }
 
         const delay = getBackoffDelay(attempt, this.retryBaseDelayMs);
         log.warn(
           `Nominatim API call failed, retrying in ${Math.round(delay)}ms (${attempt}/${this.maxRetries})`,
-          error,
+          providerError,
         );
         await sleep(delay);
       }
     }
 
-    return null;
+    throw new GeocodingProviderError(
+      "Nominatim reverse geocoding exhausted its retry budget",
+      "network",
+      false,
+    );
   }
 
   private async applyRateLimit(): Promise<void> {
@@ -295,9 +486,10 @@ export function createGeocodingProvider(
   nominatimBaseUrl?: string,
   language?: string | null,
   userAgent?: string | null,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
 ): GeocodingProvider | null {
   if ((provider === "mapbox" || provider === "auto") && mapboxToken) {
-    return new MapboxGeocodingProvider(mapboxToken, language);
+    return new MapboxGeocodingProvider(mapboxToken, language, requestTimeoutMs);
   }
 
   if (provider === "nominatim" || provider === "auto") {
@@ -305,6 +497,7 @@ export function createGeocodingProvider(
       nominatimBaseUrl,
       language,
       userAgent,
+      requestTimeoutMs,
     );
   }
 

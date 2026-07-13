@@ -1,11 +1,6 @@
 import type { DebugInfo } from "./interface";
 import type { TileInfo, TileKey } from "./tile-cache";
-import {
-  getTilePixelSize,
-  MAX_TILES_PER_FRAME,
-  TILE_CACHE_SIZE,
-  TILE_SIZE,
-} from "./tile-cache";
+import { MAX_TILES_PER_FRAME, TILE_CACHE_SIZE, TILE_SIZE } from "./tile-cache";
 
 /** RGBA8 textures: 4 bytes per pixel. */
 const BYTES_PER_PIXEL = 4;
@@ -43,14 +38,7 @@ export function createWebGLDebugInfo(input: WebGLDebugAdapterInput): DebugInfo {
   let tileTextureBytes = 0;
   for (const tileInfo of input.tileCache.values()) {
     if (!tileInfo.texture) continue;
-    const { width, height } = getTilePixelSize({
-      x: tileInfo.x,
-      y: tileInfo.y,
-      lodLevel: tileInfo.lodLevel,
-      imageWidth: input.imageWidth,
-      imageHeight: input.imageHeight,
-    });
-    tileTextureBytes += width * height * BYTES_PER_PIXEL;
+    tileTextureBytes += tileInfo.byteSize;
   }
 
   const baseTextureBytes = input.baseTextureSize

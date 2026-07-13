@@ -1,6 +1,8 @@
 export const TILE_SIZE = 512;
 export const MAX_TILES_PER_FRAME = 4;
 export const TILE_CACHE_SIZE = 32;
+export const TILE_CACHE_BYTE_BUDGET = 32 * 1024 * 1024;
+export const TEXTURE_BYTES_PER_PIXEL = 4;
 
 export interface TileInfo {
   x: number;
@@ -10,6 +12,8 @@ export interface TileInfo {
   lastUsed: number;
   isLoading: boolean;
   priority: number;
+  /** Actual RGBA8 allocation size for byte-budgeted eviction/debugging. */
+  byteSize: number;
 }
 
 export type TileKey = string;

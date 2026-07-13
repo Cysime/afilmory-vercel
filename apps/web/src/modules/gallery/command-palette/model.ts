@@ -25,6 +25,8 @@ export interface Command {
     src: string;
     alt: string;
     thumbHash?: string | null;
+    width: number;
+    height: number;
   };
 }
 
@@ -236,38 +238,53 @@ export function buildCommandIndex(input: {
   }
 
   if (query.trim()) {
-    for (const photo of searchPhotos(allPhotos, query).slice(0, 10)) {
-      const locationTokens = getLocationTokens(photo.location);
-      const locationSubtitle = locationTokens.join(", ");
-      commands.push({
-        id: `photo-${photo.id}`,
-        type: "photo",
-        title: photo.title || photo.id,
-        subtitle:
-          photo.description ||
-          locationSubtitle ||
-          `${photo.exif?.Model || t("action.search.photo")}`,
-        icon: "photo-thumbnail",
-        thumbnail: {
-          photoId: photo.id,
-          src: photo.thumbnailUrl,
-          alt: t("action.search.photo-thumbnail", {
-            title: photo.title || photo.id,
-          }),
-          thumbHash: photo.thumbHash,
-        },
-        action: { type: "open-photo", photoId: photo.id },
-        keywords: [
-          photo.title,
-          photo.description,
-          ...locationTokens,
-          ...(photo.tags || []),
-        ].filter(isNonEmptyString),
-      });
-    }
+    commands.push(
+      ...buildPhotoCommands({
+        t,
+        photos: searchPhotos(allPhotos, query).slice(0, 10),
+      }),
+    );
   }
 
   return commands;
+}
+
+export function buildPhotoCommands(input: {
+  t: GalleryTranslation;
+  photos: PhotoManifest[];
+}): Command[] {
+  const { t, photos } = input;
+  return photos.map((photo) => {
+    const locationTokens = getLocationTokens(photo.location);
+    const locationSubtitle = locationTokens.join(", ");
+    return {
+      id: `photo-${photo.id}`,
+      type: "photo",
+      title: photo.title || photo.id,
+      subtitle:
+        photo.description ||
+        locationSubtitle ||
+        `${photo.exif?.Model || t("action.search.photo")}`,
+      icon: "photo-thumbnail",
+      thumbnail: {
+        photoId: photo.id,
+        src: photo.thumbnailUrl,
+        alt: t("action.search.photo-thumbnail", {
+          title: photo.title || photo.id,
+        }),
+        thumbHash: photo.thumbHash,
+        width: photo.width,
+        height: photo.height,
+      },
+      action: { type: "open-photo", photoId: photo.id },
+      keywords: [
+        photo.title,
+        photo.description,
+        ...locationTokens,
+        ...(photo.tags || []),
+      ].filter(isNonEmptyString),
+    } satisfies Command;
+  });
 }
 
 export function applyGalleryCommandAction(

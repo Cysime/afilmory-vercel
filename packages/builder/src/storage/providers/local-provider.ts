@@ -1,11 +1,14 @@
+import { constants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
 import { logger } from "../../logger/index.js";
+import { writeFileAtomic } from "../../utils/atomic-write.js";
 import { compileExcludeRegex } from "../exclude-regex.js";
 import type {
   LocalConfig,
   ProgressCallback,
+  StorageListing,
   StorageObject,
   StorageProvider,
   StorageUploadOptions,
@@ -14,13 +17,13 @@ import { detectLivePhotoPairs } from "../live-photo.js";
 import { isSupportedImageKey } from "../supported-formats.js";
 import { joinPublicUrl } from "../url.js";
 
-export const DEFAULT_LOCAL_BASE_URL = "/photos";
+export const DEFAULT_LOCAL_BASE_URL = "/originals";
 
 /**
  * 本地文件系统 provider：以 basePath 为根递归扫描照片源目录。
  *
  * - key 为相对 basePath 的 posix 路径（与 S3 key 语义一致）。
- * - originalUrl 由 baseUrl（默认 "/photos"）+ key 拼出，
+ * - originalUrl 由 baseUrl（默认 "/originals"）+ key 拼出，
  *   dev 下由 apps/web 的 photos-static Vite 插件按同样的约定服务本地文件，
  *   因此不需要任何对象存储凭据即可完整跑通 builder + 前端。
  *
@@ -70,39 +73,153 @@ export class LocalFileSystemProvider implements StorageProvider {
    * 递归列举 basePath 下的所有文件（不应用 excludeRegex，
    * 供 listObjectKeys 等需要原始列表的场景复用），按 key 稳定排序。
    */
-  private async walkAllObjects(
+  private isWithinBasePath(
+    candidatePath: string,
+    realBasePath: string,
+  ): boolean {
+    const relativePath = path.relative(realBasePath, candidatePath);
+    return !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
+  }
+
+  private async resolveExistingKey(key: string): Promise<string | null> {
+    const absolute = this.resolveKey(key);
+    if (!absolute) return null;
+
+    try {
+      const [realBasePath, candidateStats] = await Promise.all([
+        fs.realpath(this.basePath),
+        fs.lstat(absolute),
+      ]);
+      if (candidateStats.isSymbolicLink()) return null;
+      const realCandidatePath = await fs.realpath(absolute);
+      return this.isWithinBasePath(realCandidatePath, realBasePath)
+        ? realCandidatePath
+        : null;
+    } catch (error) {
+      const { code } = error as NodeJS.ErrnoException;
+      if (code === "ENOENT" || code === "ENOTDIR") return null;
+      throw error;
+    }
+  }
+
+  private async resolveSafeParent(key: string): Promise<string | null> {
+    const absolute = this.resolveKey(key);
+    if (!absolute) return null;
+
+    await fs.mkdir(this.basePath, { recursive: true });
+    const realBasePath = await fs.realpath(this.basePath);
+    const relativePath = path.relative(this.basePath, absolute);
+    const segments = relativePath.split(path.sep);
+    const fileName = segments.pop();
+    if (!fileName) return null;
+
+    let realParent = realBasePath;
+    for (const segment of segments) {
+      const candidateDirectory = path.join(realParent, segment);
+      let stats = await fs
+        .lstat(candidateDirectory)
+        .catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+      if (!stats) {
+        await fs.mkdir(candidateDirectory);
+        stats = await fs.lstat(candidateDirectory);
+      }
+      if (stats.isSymbolicLink() || !stats.isDirectory()) return null;
+      const realDirectory = await fs.realpath(candidateDirectory);
+      if (!this.isWithinBasePath(realDirectory, realBasePath)) return null;
+      realParent = realDirectory;
+    }
+
+    return path.join(realParent, fileName);
+  }
+
+  private async walkAllObjectsDetailed(
     progressCallback?: ProgressCallback,
-  ): Promise<StorageObject[]> {
+  ): Promise<StorageListing> {
     const objects: StorageObject[] = [];
     let filesScanned = 0;
+    let complete = true;
+    const failures: string[] = [];
+
+    let realBasePath: string;
+    try {
+      realBasePath = await fs.realpath(this.basePath);
+      const baseStats = await fs.stat(realBasePath);
+      if (!baseStats.isDirectory()) {
+        throw new Error(
+          `Local photo path is not a directory: ${this.basePath}`,
+        );
+      }
+    } catch (error) {
+      const message = `Local photo directory cannot be scanned: ${this.basePath} - ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      logger.fs.error(message);
+      return {
+        objects,
+        complete: false,
+        reason: { code: "provider-error", message },
+      };
+    }
+
+    const markIncomplete = (directory: string, error: unknown) => {
+      complete = false;
+      const message = `Local photo scan became incomplete at ${directory}: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      failures.push(message);
+      logger.fs.error(message);
+    };
 
     const walk = async (dir: string): Promise<void> => {
       let entries;
       try {
         entries = await fs.readdir(dir, { withFileTypes: true });
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-          // basePath 不存在时返回空列表（与空 bucket 行为一致），
-          // 由上层"没有找到需要处理的照片"给出统一提示。
-          logger.fs.warn(`Local photo directory does not exist: ${dir}`);
-          return;
-        }
-        throw error;
+        markIncomplete(dir, error);
+        return;
       }
 
       for (const entry of entries) {
         const absolute = path.join(dir, entry.name);
         if (entry.isDirectory()) {
-          await walk(absolute);
+          try {
+            const realDirectory = await fs.realpath(absolute);
+            if (!this.isWithinBasePath(realDirectory, realBasePath)) {
+              markIncomplete(
+                absolute,
+                new Error("directory resolves outside the configured root"),
+              );
+              continue;
+            }
+            await walk(realDirectory);
+          } catch (error) {
+            markIncomplete(absolute, error);
+          }
           continue;
         }
         if (!entry.isFile()) continue;
 
+        let stats;
+        try {
+          stats = await fs.lstat(absolute);
+          if (!stats.isFile() || stats.isSymbolicLink()) {
+            markIncomplete(
+              absolute,
+              new Error("file type changed while scanning"),
+            );
+            continue;
+          }
+        } catch (error) {
+          markIncomplete(absolute, error);
+          continue;
+        }
         const key = path
-          .relative(this.basePath, absolute)
+          .relative(realBasePath, absolute)
           .split(path.sep)
           .join("/");
-        const stats = await fs.stat(absolute);
         filesScanned++;
         progressCallback?.({ currentPath: key, filesScanned });
 
@@ -118,23 +235,44 @@ export class LocalFileSystemProvider implements StorageProvider {
       }
     };
 
-    await walk(this.basePath);
+    await walk(realBasePath);
 
     // 稳定排序：文件系统 readdir 顺序平台相关，排序后 diff/配对结果可复现。
     objects.sort((a, b) => a.key.localeCompare(b.key));
-    return objects;
+    return {
+      objects,
+      complete,
+      ...(complete
+        ? {}
+        : {
+            reason: {
+              code: "provider-error" as const,
+              message: failures.join("; "),
+            },
+          }),
+    };
   }
 
-  async getFile(key: string): Promise<Buffer | null> {
-    const absolute = this.resolveKey(key);
-    if (!absolute) {
+  async getFile(key: string, signal?: AbortSignal): Promise<Buffer | null> {
+    if (signal?.aborted) return null;
+    const safePath = await this.resolveExistingKey(key);
+    if (!safePath) {
       logger.fs.warn(`Rejected key outside the photo directory: ${key}`);
       return null;
     }
 
+    let handle: fs.FileHandle | undefined;
     try {
-      return await fs.readFile(absolute);
+      signal?.throwIfAborted();
+      handle = await fs.open(
+        safePath,
+        constants.O_RDONLY | constants.O_NOFOLLOW,
+      );
+      if (!(await handle.stat()).isFile()) return null;
+      const content = await handle.readFile();
+      return signal?.aborted ? null : content;
     } catch (error) {
+      if (signal?.aborted) throw signal.reason;
       // 与 S3 provider 的契约一致：最终失败返回 null，由上层按"该照片处理失败"处理。
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         logger.fs.warn(`Local file does not exist: ${key}`);
@@ -142,6 +280,8 @@ export class LocalFileSystemProvider implements StorageProvider {
         logger.fs.error(`Failed to read local file: ${key}`, error);
       }
       return null;
+    } finally {
+      await handle?.close();
     }
   }
 
@@ -153,8 +293,17 @@ export class LocalFileSystemProvider implements StorageProvider {
   async listAllFiles(
     progressCallback?: ProgressCallback,
   ): Promise<StorageObject[]> {
-    const objects = await this.walkAllObjects(progressCallback);
-    return objects.filter((obj) => !this.isExcluded(obj.key));
+    return (await this.listAllFilesDetailed(progressCallback)).objects;
+  }
+
+  async listAllFilesDetailed(
+    progressCallback?: ProgressCallback,
+  ): Promise<StorageListing> {
+    const listing = await this.walkAllObjectsDetailed(progressCallback);
+    return {
+      ...listing,
+      objects: listing.objects.filter((obj) => !this.isExcluded(obj.key)),
+    };
   }
 
   generatePublicUrl(key: string): string {
@@ -166,14 +315,14 @@ export class LocalFileSystemProvider implements StorageProvider {
   }
 
   async deleteFile(key: string): Promise<void> {
-    const absolute = this.resolveKey(key);
-    if (!absolute) {
+    const safePath = await this.resolveSafeParent(key);
+    if (!safePath) {
       logger.fs.warn(`Rejected key outside the photo directory: ${key}`);
       return;
     }
 
     try {
-      await fs.unlink(absolute);
+      await fs.unlink(safePath);
     } catch (error) {
       // 与 S3 DeleteObject 对不存在 key 也返回成功的语义保持一致。
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
@@ -184,8 +333,13 @@ export class LocalFileSystemProvider implements StorageProvider {
   async listObjectKeys(prefix: string): Promise<string[]> {
     // 契约要求不应用 exclude（见 StorageProvider.listObjectKeys 注释），
     // 这里直接用原始列举。
-    const objects = await this.walkAllObjects();
-    return objects
+    const listing = await this.walkAllObjectsDetailed();
+    if (!listing.complete) {
+      throw new Error(
+        listing.reason?.message ?? "Local object listing is incomplete",
+      );
+    }
+    return listing.objects
       .map((obj) => obj.key)
       .filter((key) => key.startsWith(prefix));
   }
@@ -195,15 +349,23 @@ export class LocalFileSystemProvider implements StorageProvider {
     data: Buffer,
     _options?: StorageUploadOptions,
   ): Promise<StorageObject> {
-    const absolute = this.resolveKey(key);
-    if (!absolute) {
+    const safePath = await this.resolveSafeParent(key);
+    if (!safePath) {
       throw new Error(`Rejected key outside the photo directory: ${key}`);
     }
 
     // 本地文件系统没有对象元数据，contentType/cacheControl 无处存放，忽略。
-    await fs.mkdir(path.dirname(absolute), { recursive: true });
-    await fs.writeFile(absolute, data);
-    const stats = await fs.stat(absolute);
+    const existingStats = await fs
+      .lstat(safePath)
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+    if (existingStats?.isSymbolicLink()) {
+      throw new Error(`Refusing to replace a symbolic link: ${key}`);
+    }
+    await writeFileAtomic(safePath, data);
+    const stats = await fs.stat(safePath);
 
     return {
       key,
@@ -211,5 +373,9 @@ export class LocalFileSystemProvider implements StorageProvider {
       lastModified: stats.mtime,
       etag: `${stats.mtimeMs}-${stats.size}`,
     };
+  }
+
+  dispose(): void {
+    // The local provider owns no long-lived handles.
   }
 }
