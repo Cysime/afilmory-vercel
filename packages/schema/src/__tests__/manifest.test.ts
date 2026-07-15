@@ -293,13 +293,13 @@ describe("manifest v2 schema", () => {
     });
   });
 
-  it("enforces portable unique IDs, unique storage keys, and sane numbers", () => {
+  it("enforces safe unique IDs, unique storage keys, and sane numbers", () => {
     const result = validateManifest(
       createManifest({
         photos: [
           createValidPhoto({ id: "Photo", size: -1 }),
-          createValidPhoto({ id: "photo", s3Key: "photos/Photo.jpg" }),
-          createValidPhoto({ id: "bad:name" }),
+          createValidPhoto({ id: "Photo", s3Key: "photos/Photo.jpg" }),
+          createValidPhoto({ id: "photos/evil" }),
         ],
       }),
     );
@@ -310,9 +310,33 @@ describe("manifest v2 schema", () => {
         "photos[0].size must be a non-negative number",
         "photos[1].id duplicates photos[0].id",
         "photos[1].s3Key duplicates photos[0].s3Key",
-        "photos[2].id must be a non-empty portable identifier",
+        "photos[2].id must be a non-empty safe identifier",
       ]),
     });
+  });
+
+  // 旧版 builder 铸造过 NFD、含 ':'、仅大小写不同的 id；它们承载着已发布的
+  // /photos/<id> 永久链接，解析层（严格与宽松）都必须原样保留。
+  it("keeps legacy non-portable IDs and case-variant IDs (published permalinks)", () => {
+    const legacyIds = [
+      "café".normalize("NFD"),
+      "IMG 0001 (2)",
+      "scan:2019",
+      "Sunset",
+      "sunset",
+    ];
+    const input = createManifest({
+      photos: legacyIds.map((id, index) =>
+        createValidPhoto({ id, s3Key: `photos/${index}.jpg` }),
+      ),
+    });
+
+    const strict = validateManifest(input);
+    expect(strict.success).toBe(true);
+
+    const { manifest, skipped } = parseManifestLenient(input);
+    expect(skipped).toEqual([]);
+    expect(manifest.photos.map((photo) => photo.id)).toEqual(legacyIds);
   });
 
   it("repairs cross-field aspect ratios and validates index references", () => {

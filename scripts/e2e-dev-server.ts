@@ -1,21 +1,19 @@
 /** Hermetic Playwright dev-server entrypoint. */
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createE2EWebEnvironment } from "./e2e-web-environment.js";
+import {
+  createE2EWebEnvironment,
+  resolveViteBin,
+} from "./e2e-web-environment.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const webDir = path.join(root, "apps/web");
 const host = "127.0.0.1";
 const port = process.env.E2E_DEV_PORT ?? "1925";
 
-const webRequire = createRequire(path.join(webDir, "package.json"));
-const viteBin = path.join(
-  path.dirname(webRequire.resolve("vite/package.json")),
-  "bin/vite.js",
-);
+const viteBin = resolveViteBin();
 
 const server = spawn(
   process.execPath,

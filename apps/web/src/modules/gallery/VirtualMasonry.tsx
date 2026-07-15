@@ -271,39 +271,57 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
   const overscanPx =
     Math.max(viewportHeight || targetColumnWidth, 1) * overscanBy;
   const masonryScrollTop = scrollTop - containerScrollOffset;
-  const { visible } = React.useMemo(() => {
-    const selection = selectVisibleMasonryCells({
-      cells: layout.cells,
-      columns: layout.columns,
-      scrollTop: masonryScrollTop,
-      viewportHeight: viewportHeight || targetColumnWidth,
+  const effectiveViewportHeight = viewportHeight || targetColumnWidth;
+  // 自然可见选择（带 overscan、不含 pin）：pin 清除与零 overscan 派生都基于它。
+  const baseSelection = React.useMemo(
+    () =>
+      selectVisibleMasonryCells({
+        cells: layout.cells,
+        columns: layout.columns,
+        scrollTop: masonryScrollTop,
+        viewportHeight: effectiveViewportHeight,
+        overscanPx,
+      }),
+    [
+      layout.cells,
+      layout.columns,
+      masonryScrollTop,
+      effectiveViewportHeight,
       overscanPx,
-    });
+    ],
+  );
+
+  // pin 只为在目标 cell 滚入视野前强制挂载（scrollToIndex/聚焦）；一旦它自然
+  // 进入可见选择立即解除 —— 否则聚焦过的 cell 整个会话被强制渲染，且此后每个
+  // 滚动帧都为离屏 pin 多付 some + 拼接排序。对已可见 cell 的 pin 会即刻清除。
+  React.useEffect(() => {
+    if (pinnedIndex === null) return;
+    if (baseSelection.visible.some((cell) => cell.index === pinnedIndex)) {
+      setPinnedIndex(null);
+    }
+  }, [baseSelection.visible, pinnedIndex]);
+
+  const { visible } = React.useMemo(() => {
     if (
       pinnedIndex === null ||
-      selection.visible.some((cell) => cell.index === pinnedIndex)
+      baseSelection.visible.some((cell) => cell.index === pinnedIndex)
     ) {
-      return selection;
+      return baseSelection;
     }
     const pinnedCell = layout.cells[pinnedIndex];
     return pinnedCell
       ? {
-          ...selection,
-          visible: [...selection.visible, pinnedCell].sort(
+          ...baseSelection,
+          visible: [...baseSelection.visible, pinnedCell].sort(
             (left, right) => left.index - right.index,
           ),
         }
-      : selection;
-  }, [
-    layout.cells,
-    layout.columns,
-    masonryScrollTop,
-    viewportHeight,
-    overscanPx,
-    targetColumnWidth,
-    pinnedIndex,
-  ]);
+      : baseSelection;
+  }, [baseSelection, layout.cells, pinnedIndex]);
 
+  // 刻意不给依赖数组：pin 一个已可见的 cell 不会改变 visible 的身份（baseSelection
+  // 不含 pin），按 [visible] 触发会漏掉"目标已渲染、无需滚动"的聚焦。每次渲染都跑，
+  // 无待聚焦目标时一个 ref 判空即返回，热路径零成本。
   React.useLayoutEffect(() => {
     const index = pendingFocusIndexRef.current;
     if (index === null) return;
@@ -314,38 +332,53 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
     if (!target) return;
     pendingFocusIndexRef.current = null;
     target.focus({ preventScroll: true });
-  }, [visible]);
+  });
 
-  const viewportSelection = React.useMemo(
-    () =>
-      selectVisibleMasonryCells({
-        cells: layout.cells,
-        columns: layout.columns,
-        scrollTop: masonryScrollTop,
-        viewportHeight: viewportHeight || targetColumnWidth,
-        overscanPx: 0,
-      }),
-    [
-      layout.cells,
-      layout.columns,
-      masonryScrollTop,
-      viewportHeight,
-      targetColumnWidth,
-    ],
-  );
-  const viewportVisibleIndices = React.useMemo(
-    () => viewportSelection.visible.map((cell) => cell.index),
-    [viewportSelection.visible],
-  );
+  // 零 overscan 的"真视口"index 集合（onRender 契约）：从带 overscan 的自然选择
+  // 里按视口边界过滤（谓词与 selectVisibleMasonryCells 的可见性判断一致，真视口
+  // 集必是其子集），省掉每个滚动帧的第二次全量选择。内容未变时保留上一次数组
+  // 身份 —— 滚动只推进 overscan 时 onRender 与下游按 identity 早退的缓存才不失效。
+  const viewportVisibleIndicesRef = React.useRef<number[]>([]);
+  const viewportVisibleIndices = React.useMemo(() => {
+    const viewportBottom = masonryScrollTop + effectiveViewportHeight;
+    const next: number[] = [];
+    for (const cell of baseSelection.visible) {
+      if (
+        cell.top + cell.height >= masonryScrollTop &&
+        cell.top <= viewportBottom
+      ) {
+        next.push(cell.index);
+      }
+    }
+    const previous = viewportVisibleIndicesRef.current;
+    if (
+      previous.length === next.length &&
+      previous.every((value, index) => value === next[index])
+    ) {
+      return previous;
+    }
+    viewportVisibleIndicesRef.current = next;
+    return next;
+  }, [baseSelection.visible, masonryScrollTop, effectiveViewportHeight]);
+  // baseSelection.visible 已按 index 升序，首尾即区间端点（空集回退 0，与
+  // selectVisibleMasonryCells 的约定一致）。
+  const viewportStartIndex = viewportVisibleIndices[0] ?? 0;
+  const viewportStopIndex = viewportVisibleIndices.at(-1) ?? 0;
 
   React.useEffect(() => {
     onRender?.(
-      viewportSelection.startIndex,
-      viewportSelection.stopIndex,
+      viewportStartIndex,
+      viewportStopIndex,
       items,
       viewportVisibleIndices,
     );
-  }, [items, onRender, viewportSelection, viewportVisibleIndices]);
+  }, [
+    items,
+    onRender,
+    viewportStartIndex,
+    viewportStopIndex,
+    viewportVisibleIndices,
+  ]);
 
   // 稳定的 measure 回调：身份跨滚动帧不变，MasonryCell 的 effect 才不会在每次
   // setScrollTop 重渲染时重挂 ResizeObserver + 重读 offsetHeight（强制重排——

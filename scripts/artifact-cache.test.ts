@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { THUMBNAIL_ENCODING_SIGNATURE } from "@afilmory/builder/thumbnail-encoding";
 import { createEmptyManifest } from "@afilmory/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -293,7 +294,9 @@ describe("saveArtifacts", () => {
 
     const commands = gitCommands();
     const names = commands.map((args) => args.join(" "));
-    expect(names).toContain("rev-parse HEAD");
+    expect(names).toContain(
+      `rev-parse --verify refs/remotes/origin/${DEFAULT_CACHE_BRANCH}`,
+    );
     expect(names.some((c) => c.startsWith("checkout --orphan"))).toBe(true);
     expect(commands.at(-1)).toEqual([
       "push",
@@ -301,6 +304,66 @@ describe("saveArtifacts", () => {
       "origin",
       `HEAD:refs/heads/${DEFAULT_CACHE_BRANCH}`,
     ]);
+  });
+
+  it("bootstraps a missing cache branch by cloning the default branch", async () => {
+    setRespond({ status: " M photos-manifest.json\n" });
+    const base = spawnState.respond;
+    spawnState.respond = (args) => {
+      if (args[0] === "clone" && args.includes("--branch")) {
+        return {
+          code: 128,
+          stderr: `fatal: Remote branch ${DEFAULT_CACHE_BRANCH} not found in upstream origin`,
+          stdout: "",
+        };
+      }
+      return base(args);
+    };
+
+    await saveArtifacts(config);
+
+    const commands = gitCommands();
+    const clones = commands.filter((args) => args[0] === "clone");
+    expect(clones).toHaveLength(2);
+    expect(clones[1]).not.toContain("--branch");
+    // push HEAD:refs/heads/<branch> 在远端创建缓存分支，完成引导。
+    expect(commands.at(-1)).toEqual([
+      "push",
+      "origin",
+      `HEAD:refs/heads/${DEFAULT_CACHE_BRANCH}`,
+    ]);
+  });
+
+  it("accepts thumbnails named after legacy non-ASCII ids and ignores .DS_Store", async () => {
+    setRespond({ status: " M thumbnails\n" });
+    const thumbnailsDir = path.join(rootDir, "apps/web/public/thumbnails");
+    await fs.writeFile(
+      path.join(thumbnailsDir, ".encoding"),
+      `${THUMBNAIL_ENCODING_SIGNATURE}\n`,
+    );
+    // 旧版 builder 原样复用的照片 id 可含 CJK、空格、括号，缩略图文件名
+    // 嵌入这些 id——它们是合法产物，不能中止保存。
+    await fs.writeFile(
+      path.join(thumbnailsDir, "北京 IMG 0001 (2).0f3a.jpg"),
+      JPEG_BYTES,
+    );
+    await fs.writeFile(path.join(thumbnailsDir, ".DS_Store"), "finder junk");
+
+    await saveArtifacts(config);
+
+    expect(gitCommands().some((args) => args[0] === "push")).toBe(true);
+  });
+
+  it("aborts the save when the encoding marker mismatches the current signature", async () => {
+    setRespond({ status: " M thumbnails\n" });
+    await fs.writeFile(
+      path.join(rootDir, "apps/web/public/thumbnails/.encoding"),
+      "jpeg-w600-q80-mozjpeg\n",
+    );
+
+    await expect(saveArtifacts(config)).rejects.toThrow(
+      /invalid thumbnail encoding marker/,
+    );
   });
 
   it.each(["coarse", "strip"] as const)(
@@ -506,6 +569,38 @@ describe("restoreArtifacts", () => {
       fs.readFile(path.join(rootDir, "apps/web/public/thumbnails/a.jpg")),
     ).resolves.toEqual(JPEG_BYTES);
     expect(warnings()).toEqual([]);
+  });
+
+  it("restores a manifest with legacy-quirk entries instead of skipping the whole cache", async () => {
+    // 一条旧数据瑕疵不能整体丢弃 manifest 缓存（否则每次部署全量重建）：
+    // 消费方走宽松解析，坏条目逐条抢救/重建即可。
+    const manifest = JSON.stringify({
+      ...createEmptyManifest(),
+      photos: [
+        {
+          id: "café".normalize("NFD"),
+          originalUrl: "/originals/cafe.jpg",
+          thumbnailUrl: "/thumbnails/cafe.jpg",
+          s3Key: "photos/cafe.jpg",
+        },
+        { corrupt: true },
+      ],
+    });
+    setCloneFixtures((cacheDir) => {
+      writeFileSync(path.join(cacheDir, "photos-manifest.json"), manifest);
+    });
+
+    await restoreArtifacts(config);
+
+    await expect(
+      fs.readFile(
+        path.join(rootDir, "generated/photos-manifest.json"),
+        "utf-8",
+      ),
+    ).resolves.toBe(manifest);
+    expect(warnings()).toContainEqual(
+      expect.stringContaining("1 unusable entry"),
+    );
   });
 
   it("keeps the existing manifest when the staging copy fails", async () => {

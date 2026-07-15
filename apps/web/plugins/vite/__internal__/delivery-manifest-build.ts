@@ -226,7 +226,9 @@ export function createWebDeliveryArtifacts(
     kind: "map-details",
     photos: Object.fromEntries(
       publicationManifest.photos
-        .filter((photo) => photo.location || photo.exif?.GPSLatitude)
+        // != null 而非真值判断：赤道照片的 GPSLatitude 是数字 0（合法坐标），
+        // 与消费方 map-utils 的 `GPSLatitude == null` 判定保持一致。
+        .filter((photo) => photo.location || photo.exif?.GPSLatitude != null)
         .map((photo) => [
           photo.id,
           {

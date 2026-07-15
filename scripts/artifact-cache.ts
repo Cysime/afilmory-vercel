@@ -8,7 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { assertManifest } from "@afilmory/schema";
+import { THUMBNAIL_ENCODING_SIGNATURE } from "@afilmory/builder/thumbnail-encoding";
+import { parseManifestLenient } from "@afilmory/schema";
 
 export interface ArtifactCacheConfig {
   allowHistoryRewrite: boolean;
@@ -119,7 +120,21 @@ const validateManifestFile = async (filePath: string): Promise<void> => {
     "photos manifest",
   );
   const content = await fs.readFile(filePath, "utf-8");
-  assertManifest(JSON.parse(content));
+  // 宽松校验而非 assertManifest：真正的消费方（builder 与 web 运行时）都走
+  // parseManifestLenient，个别历史条目的瑕疵会被逐条抢救。这里若用严格校验，
+  // 一条旧数据瑕疵就会整体跳过 manifest 缓存 → 每次部署全量重建。
+  // 信封损坏（schema/version/photos 非数组）仍会抛出。
+  const { manifest, skipped } = parseManifestLenient(JSON.parse(content));
+  if (manifest.photos.length === 0 && skipped.length > 0) {
+    throw new Error("photos manifest contains no usable photos");
+  }
+  if (skipped.length > 0) {
+    console.warn(
+      `[artifact-cache] Photos manifest has ${skipped.length} unusable entr${
+        skipped.length === 1 ? "y" : "ies"
+      }; they will be reprocessed by the builder.`,
+    );
+  }
 };
 
 const assertRegularFileWithinLimit = async (
@@ -216,16 +231,30 @@ const validateThumbnailDirectory = async (
       );
       totalBytes += size;
       const marker = await fs.readFile(filePath, "utf-8");
-      if (!/^jpeg-w\d+-q\d+-mozjpeg\n?$/.test(marker)) {
+      // 与 builder 的当前签名精确比对（单一事实来源，避免正则副本失同步——
+      // 曾因签名追加 '-ca1' 后缀而让每次保存都在此中止）。恢复方向上旧签名
+      // 的缓存会校验失败被跳过：无损，因为签名不一致本就触发全量重生成。
+      if (marker.trim() !== THUMBNAIL_ENCODING_SIGNATURE) {
         throw new Error("invalid thumbnail encoding marker");
       }
       continue;
     }
 
+    // macOS 桌面产物；本地跑保存路径时不应中止整个缓存更新。
+    if (entry.name === ".DS_Store") {
+      continue;
+    }
+
+    // 文件名约束只排除真正不安全/不可能的名字。缩略图文件名嵌入原样复用的
+    // 旧版照片 id（可含 CJK、空格、括号等），ASCII-only 的模式会误杀合法
+    // 缩略图并中止整个保存。readdir 条目不含路径分隔符，无需再查。
     if (
-      !/^\w[\w.-]{0,199}\.(?:avif|gif|jpe?g|mp4|png|webm|webp)$/i.test(
-        entry.name,
-      )
+      entry.name.startsWith(".") ||
+      Buffer.byteLength(entry.name, "utf8") > 255 ||
+      [...entry.name].some(
+        (character) => (character.codePointAt(0) ?? 0) <= 0x1f,
+      ) ||
+      !/\.(?:avif|gif|jpe?g|mp4|png|webm|webp)$/i.test(entry.name)
     ) {
       throw new Error(`invalid thumbnail filename: ${entry.name}`);
     }
@@ -446,7 +475,35 @@ const cloneCacheRepository = async (
   // 仓库地址和固定用户名。
   args.push(createAskpassRepoUrl(config.repoUrl), config.cacheDir);
 
-  await run(config, "git", args, gitEnv);
+  try {
+    await run(config, "git", args, gitEnv);
+  } catch (error) {
+    // 缓存分支尚不存在（全新/空缓存仓库，或旧部署把缓存放在默认分支上）：
+    // 回退克隆默认分支，保存路径的 push HEAD:refs/heads/<branch> 会创建该
+    // 分支完成引导。若这里直接失败，缓存分支永远无法被创建——每次部署都
+    // 全量重建。其他错误（认证、网络）原样抛出。
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/remote branch .+ not found|couldn't find remote ref/i.test(message)) {
+      throw error;
+    }
+    console.info(
+      `[artifact-cache] Cache branch '${config.repoBranch}' not found; ` +
+        "cloning the default branch (the cache branch is created on save).",
+    );
+    await fs.rm(config.cacheDir, { force: true, recursive: true });
+    await run(
+      config,
+      "git",
+      [
+        "clone",
+        "--depth=1",
+        "--single-branch",
+        createAskpassRepoUrl(config.repoUrl),
+        config.cacheDir,
+      ],
+      gitEnv,
+    );
+  }
 };
 
 const readSourceRepoUrl = async (
@@ -702,11 +759,24 @@ export const saveArtifacts = async (
     }
 
     // History compaction is deliberately opt-in. Capture the fetched remote
-    // head before creating the orphan commit, then lease exactly that object so
-    // a concurrent writer can never be overwritten silently.
-    const expectedRemoteHead = (
-      await run(config, "git", ["rev-parse", "HEAD"], gitEnv, config.cacheDir)
-    ).trim();
+    // cache-branch head before creating the orphan commit, then lease exactly
+    // that object so a concurrent writer can never be overwritten silently.
+    // 分支引导场景（回退克隆了默认分支/空仓库）远端还没有缓存分支：lease 用
+    // 空值，语义是「远端此 ref 必须不存在」，并发安全性等价。
+    let expectedRemoteHead = "";
+    try {
+      expectedRemoteHead = (
+        await run(
+          config,
+          "git",
+          ["rev-parse", "--verify", `refs/remotes/origin/${branch}`],
+          gitEnv,
+          config.cacheDir,
+        )
+      ).trim();
+    } catch {
+      // 远端缓存分支不存在（首次保存）。
+    }
     await run(
       config,
       "git",

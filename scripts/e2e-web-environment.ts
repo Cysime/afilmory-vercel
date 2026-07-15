@@ -1,8 +1,22 @@
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixturesDir = path.join(root, "apps/web/e2e/fixtures");
+
+/**
+ * Vite's bin as resolved from apps/web, so entrypoints can run it via node
+ * directly instead of relying on pnpm being resolvable on PATH (webServer
+ * child processes may miss it under an nvm lazy-loader shell).
+ */
+export function resolveViteBin(): string {
+  const webRequire = createRequire(path.join(root, "apps/web/package.json"));
+  return path.join(
+    path.dirname(webRequire.resolve("vite/package.json")),
+    "bin/vite.js",
+  );
+}
 
 const PASSTHROUGH_KEYS = [
   "ALL_PROXY",

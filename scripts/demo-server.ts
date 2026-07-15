@@ -1,10 +1,12 @@
 /* eslint-disable no-console */
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { createE2EWebEnvironment } from "./e2e-web-environment.js";
+import {
+  createE2EWebEnvironment,
+  resolveViteBin,
+} from "./e2e-web-environment.js";
 
 const rootDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -29,11 +31,7 @@ const isMainModule =
 if (isMainModule) {
   const host = process.env.HOST ?? "127.0.0.1";
   const port = process.env.PORT ?? "1924";
-  const webRequire = createRequire(path.join(webDir, "package.json"));
-  const viteBin = path.join(
-    path.dirname(webRequire.resolve("vite/package.json")),
-    "bin/vite.js",
-  );
+  const viteBin = resolveViteBin();
   console.info(`Starting the synthetic demo at http://${host}:${port}`);
   const server = spawn(
     process.execPath,

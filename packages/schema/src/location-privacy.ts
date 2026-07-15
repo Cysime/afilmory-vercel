@@ -25,7 +25,8 @@ const roundCoordinate = (value: number): number => {
   return Object.is(rounded, -0) ? 0 : rounded;
 };
 
-const parseExifCoordinates = (
+/** Signed decimal GPS coordinates from EXIF, or null when absent/non-finite. */
+export const parseExifCoordinates = (
   exif: PickedExif,
 ): { latitude: number; longitude: number } | null => {
   if (exif.GPSLatitude === undefined || exif.GPSLongitude === undefined) {

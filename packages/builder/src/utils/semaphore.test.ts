@@ -80,7 +80,7 @@ describe("Semaphore", () => {
     const sem = new Semaphore(1);
     const release = await sem.acquire();
     const controller = new AbortController();
-    const pending = sem.acquire(controller.signal);
+    const pending = sem.acquire({ signal: controller.signal });
 
     controller.abort(new Error("cancelled"));
     await expect(pending).rejects.toThrow("cancelled");
@@ -88,5 +88,130 @@ describe("Semaphore", () => {
 
     const nextRelease = await sem.acquire();
     nextRelease();
+  });
+
+  it("rejects an already-aborted acquire with the abort reason", async () => {
+    const sem = new Semaphore(1);
+    const controller = new AbortController();
+    controller.abort(new Error("too late"));
+
+    await expect(sem.acquire({ signal: controller.signal })).rejects.toThrow(
+      "too late",
+    );
+  });
+
+  it("blocks a weighted acquire until enough permits are released", async () => {
+    const sem = new Semaphore(4);
+    const releaseA = await sem.acquire({ weight: 3 });
+
+    let acquired = false;
+    const pending = sem.acquire({ weight: 2 }).then((release) => {
+      acquired = true;
+      return release;
+    });
+
+    await Promise.resolve();
+    expect(acquired).toBe(false);
+
+    releaseA();
+    const releaseB = await pending;
+    expect(acquired).toBe(true);
+    releaseB();
+
+    // The full budget must be back: a max-weight acquire succeeds immediately.
+    const releaseC = await sem.acquire({ weight: 4 });
+    releaseC();
+  });
+
+  it("does not let a light waiter overtake a blocked heavy waiter (strict FIFO)", async () => {
+    const sem = new Semaphore(4);
+    const releaseA = await sem.acquire({ weight: 2 });
+
+    let heavyAcquired = false;
+    let lightAcquired = false;
+    const heavy = sem.acquire({ weight: 3 }).then((release) => {
+      heavyAcquired = true;
+      return release;
+    });
+    const light = sem.acquire({ weight: 1 }).then((release) => {
+      lightAcquired = true;
+      return release;
+    });
+
+    // The light waiter would fit (2 + 1 <= 4) but must wait behind the heavy
+    // head so large reservations are never starved.
+    await Promise.resolve();
+    expect(heavyAcquired).toBe(false);
+    expect(lightAcquired).toBe(false);
+
+    releaseA();
+    const releaseHeavy = await heavy;
+    const releaseLight = await light;
+    expect(heavyAcquired).toBe(true);
+    expect(lightAcquired).toBe(true);
+    releaseHeavy();
+    releaseLight();
+  });
+
+  it("unblocks queued waiters when the heavy waiter ahead of them aborts", async () => {
+    const sem = new Semaphore(4);
+    const releaseA = await sem.acquire({ weight: 2 });
+
+    const controller = new AbortController();
+    const heavy = sem.acquire({ weight: 3, signal: controller.signal });
+    let lightAcquired = false;
+    const light = sem.acquire({ weight: 2 }).then((release) => {
+      lightAcquired = true;
+      return release;
+    });
+
+    await Promise.resolve();
+    expect(lightAcquired).toBe(false);
+
+    // No release happens here: removing the aborted head alone must drain
+    // the queue and grant the waiter behind it.
+    controller.abort(new Error("cancelled"));
+    await expect(heavy).rejects.toThrow("cancelled");
+    const releaseLight = await light;
+    expect(lightAcquired).toBe(true);
+    releaseLight();
+    releaseA();
+  });
+
+  it("ignores duplicate release calls instead of minting extra permits", async () => {
+    const sem = new Semaphore(2);
+    const release = await sem.acquire();
+    release();
+    release();
+
+    const release1 = await sem.acquire();
+    const release2 = await sem.acquire();
+    let acquired3 = false;
+    const pending = sem.acquire().then((r) => {
+      acquired3 = true;
+      return r;
+    });
+
+    // If the duplicate release had leaked a permit, this acquire would have
+    // been granted immediately.
+    await Promise.resolve();
+    expect(acquired3).toBe(false);
+
+    release1();
+    (await pending)();
+    release2();
+  });
+
+  it("rejects weights that are invalid or can never be satisfied", async () => {
+    const sem = new Semaphore(4);
+    await expect(sem.acquire({ weight: 5 })).rejects.toThrow(
+      /exceeds the total permit count/,
+    );
+    await expect(sem.acquire({ weight: 0 })).rejects.toThrow(
+      /positive integer/,
+    );
+    await expect(sem.acquire({ weight: 1.5 })).rejects.toThrow(
+      /positive integer/,
+    );
   });
 });

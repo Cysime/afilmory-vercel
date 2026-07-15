@@ -374,7 +374,7 @@ describe("loadExistingManifest", () => {
         { provider: "unknown" },
         { previousManifest: first.manifest },
       ),
-    ).rejects.toThrow(/portable identifier/);
+    ).rejects.toThrow(/safe identifier/);
     expect(await fs.readFile(manifestPath, "utf8")).toBe(firstBytes);
   });
 });

@@ -18,11 +18,13 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync } from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createE2EWebEnvironment } from "./e2e-web-environment.js";
+import {
+  createE2EWebEnvironment,
+  resolveViteBin,
+} from "./e2e-web-environment.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const webDir = path.join(root, "apps/web");
@@ -32,11 +34,7 @@ const fixturesDir = path.join(webDir, "e2e/fixtures");
 const PREVIEW_HOST = "127.0.0.1";
 const PREVIEW_PORT = process.env.E2E_PROD_PORT ?? "4174";
 
-const webRequire = createRequire(path.join(webDir, "package.json"));
-const viteBin = path.join(
-  path.dirname(webRequire.resolve("vite/package.json")),
-  "bin/vite.js",
-);
+const viteBin = resolveViteBin();
 
 const buildEnvironment = createE2EWebEnvironment({ embedManifest: false });
 

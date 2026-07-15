@@ -369,6 +369,25 @@ export class AfilmoryBuilder {
           );
       }
 
+      // 本地 provider 的 originalUrl/videoUrl 是「当前 baseUrl + s3Key」的
+      // 确定性函数，而增量跳过路径会原样复用旧 manifest 条目。baseUrl 变更时
+      //（如 /photos → /originals 的命名空间迁移，/photos 已改为照片页 HTML）
+      // 必须在这里统一重推导，否则旧条目的 URL 指向 HTML，查看器整库报
+      // 「Failed to load image」且永远不会被增量构建修复。
+      if (this.getStorageConfig().provider === "local") {
+        const urlStorageManager = this.getStorageManager();
+        for (const item of manifest) {
+          item.originalUrl = await urlStorageManager.generatePublicUrl(
+            item.s3Key,
+          );
+          if (item.video?.type === "live-photo") {
+            item.video.videoUrl = await urlStorageManager.generatePublicUrl(
+              item.video.s3Key,
+            );
+          }
+        }
+      }
+
       const locationMode =
         session.config.system.processing.locationMode ?? "coarse";
       for (const item of manifest) {

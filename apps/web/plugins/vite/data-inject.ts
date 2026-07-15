@@ -18,6 +18,7 @@ import {
 } from "./__internal__/build-metadata";
 import { MANIFEST_PATH } from "./__internal__/constants";
 import { createWebDeliveryArtifacts } from "./__internal__/delivery-manifest-build";
+import { serializeJsonForHtml } from "./__internal__/html-inline-json";
 import { buildExternalManifestScriptContent } from "./__internal__/manifest-inline-snippet";
 
 // ── manifest helpers ──────────────────────────────────────────────────────────
@@ -50,25 +51,12 @@ function getManifest(command: "serve" | "build"): AfilmoryManifest {
   }
 }
 
-function getManifestContent(command: "serve" | "build"): string {
-  return JSON.stringify(getManifest(command));
-}
-
-function escapeInlineScriptJson(json: string): string {
-  return json
-    .replaceAll("&", "\\u0026")
-    .replaceAll("<", "\\u003C")
-    .replaceAll(">", "\\u003E")
-    .replaceAll("\u2028", "\\u2028")
-    .replaceAll("\u2029", "\\u2029");
-}
-
 function ensureRuntimeScript(): string {
   return `window.__AFILMORY__ = Object.assign({ version: 1 }, window.__AFILMORY__);`;
 }
 
-function buildRuntimeAssignment(path: string, json: string): string {
-  return `${ensureRuntimeScript()}window.__AFILMORY__.${path} = ${escapeInlineScriptJson(json)};`;
+function buildRuntimeAssignment(path: string, value: unknown): string {
+  return `${ensureRuntimeScript()}window.__AFILMORY__.${path} = ${serializeJsonForHtml(value)};`;
 }
 
 function getBuildMetadata() {
@@ -93,12 +81,12 @@ const CONFIG_SCRIPT_ID = "config";
 const INJECTED_SCRIPT_ID = "config-runtime";
 const MANIFEST_DEV_PUBLIC_PATH = "/__afilmory/gallery-index.json";
 
-function buildInlineManifestScriptContent(manifestJson: string): string {
+function buildInlineManifestScriptContent(manifest: AfilmoryManifest): string {
   return [
     ensureRuntimeScript(),
     `window.__AFILMORY__.manifest = {`,
     `  mode: 'inline',`,
-    `  data: ${escapeInlineScriptJson(manifestJson)},`,
+    `  data: ${serializeJsonForHtml(manifest)},`,
     `};`,
     `window.__AFILMORY__.manifest.promise = Promise.resolve(window.__AFILMORY__.manifest.data);`,
   ].join("");
@@ -116,16 +104,10 @@ export function dataInjectPlugin(): Plugin {
   let devDeliveryAssets = new Map<string, string>();
 
   const buildMetadata = getBuildMetadata();
-  const siteConfigScriptContent = buildRuntimeAssignment(
-    "config",
-    JSON.stringify({
-      site: siteConfig,
-    }),
-  );
-  const buildInfoScriptContent = buildRuntimeAssignment(
-    "build",
-    JSON.stringify(buildMetadata),
-  );
+  const siteConfigScriptContent = buildRuntimeAssignment("config", {
+    site: siteConfig,
+  });
+  const buildInfoScriptContent = buildRuntimeAssignment("build", buildMetadata);
   const parser = new DOMParser();
   const getBuildManifestAssetPublicPath = () => {
     if (!emittedManifestAssetFileName) {
@@ -246,7 +228,7 @@ export function dataInjectPlugin(): Plugin {
       const document = parser.parseFromString(html, "text/html");
 
       const manifestScriptContent = shouldEmbed
-        ? buildInlineManifestScriptContent(getManifestContent(command))
+        ? buildInlineManifestScriptContent(getManifest(command))
         : buildExternalManifestScriptContent(
             command === "serve"
               ? MANIFEST_DEV_PUBLIC_PATH

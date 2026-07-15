@@ -1,6 +1,9 @@
+import path from "node:path";
+
 import type { PhotoManifestItem } from "@afilmory/schema";
 
-import { normalizeBaseUrl } from "./build-assets-seo";
+import { absoluteHttpUrl, normalizeBaseUrl } from "./build-assets-seo";
+import { MIME_TYPES } from "./photos-static";
 
 const GENERATOR_NAME = "Afilmory Feed Generator";
 const EXIF_NAMESPACE = "https://afilmory.com/rss/exif";
@@ -77,7 +80,7 @@ function createItemXml(photo: PhotoManifestItem, baseUrl: string): string {
       : "";
 
   let enclosure = "";
-  const thumbUrl = resolveHttpUrl(photo.thumbnailUrl, baseUrl);
+  const thumbUrl = absoluteHttpUrl(photo.thumbnailUrl, baseUrl);
   if (thumbUrl) {
     const mimeType = inferImageMimeType(thumbUrl);
     enclosure = `      <enclosure url="${escapeXml(thumbUrl)}" type="${mimeType}" length="0" />`;
@@ -325,26 +328,9 @@ function escapeHtmlBlock(value: string): string {
   return `<p>${escapeXml(value)}</p>`;
 }
 
-function resolveHttpUrl(value: string, baseUrl: string): string | null {
-  try {
-    const url = new URL(value, `${baseUrl}/`);
-    return (url.protocol === "http:" || url.protocol === "https:") &&
-      !url.username &&
-      !url.password
-      ? url.href
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 function inferImageMimeType(url: string): string {
-  const pathname = new URL(url).pathname.toLowerCase();
-  if (pathname.endsWith(".webp")) return "image/webp";
-  if (pathname.endsWith(".png")) return "image/png";
-  if (pathname.endsWith(".avif")) return "image/avif";
-  if (pathname.endsWith(".gif")) return "image/gif";
-  return "image/jpeg";
+  const extension = path.extname(new URL(url).pathname).toLowerCase();
+  return MIME_TYPES[extension] ?? "image/jpeg";
 }
 
 function resolveDate(photo: PhotoManifestItem): number {

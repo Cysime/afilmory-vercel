@@ -24,7 +24,7 @@ export interface PhotosStaticPluginOptions {
   provider: "local" | "s3";
 }
 
-const MIME_TYPES: Record<string, string> = {
+export const MIME_TYPES: Record<string, string> = {
   ".avif": "image/avif",
   ".bmp": "image/bmp",
   ".gif": "image/gif",

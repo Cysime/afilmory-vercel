@@ -6,7 +6,8 @@
   "description": "Build-time photo processing engine: scans S3-compatible or local storage, extracts EXIF, generates thumbnails and thumbhash placeholders, and emits the static photos manifest for the web app",
   "license": "SEE LICENSE IN ../../LICENSE",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./thumbnail-encoding": "./src/image/encoding-signature.ts"
   },
   "scripts": {
     "cli": "tsx src/cli.ts",

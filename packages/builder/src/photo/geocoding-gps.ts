@@ -1,3 +1,5 @@
+import { parseExifCoordinates } from "@afilmory/schema";
+
 import type { LocationInfo, PickedExif } from "../types/photo.js";
 import type { GeocodingProvider } from "./geocoding-providers.js";
 import { getPhotoProcessingLoggers } from "./logger-adapter.js";
@@ -13,34 +15,7 @@ export function parseGPSCoordinates(exif: PickedExif): {
   latitude?: number;
   longitude?: number;
 } {
-  try {
-    let latitude: number | undefined;
-    let longitude: number | undefined;
-
-    if (exif.GPSLatitude !== undefined && exif.GPSLongitude !== undefined) {
-      latitude = Number(exif.GPSLatitude);
-      longitude = Number(exif.GPSLongitude);
-    }
-
-    if (latitude === undefined || longitude === undefined) {
-      return {};
-    }
-
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-      return {};
-    }
-
-    if (exif.GPSLatitudeRef === "S" || exif.GPSLatitudeRef === "South") {
-      latitude = -Math.abs(latitude);
-    }
-    if (exif.GPSLongitudeRef === "W" || exif.GPSLongitudeRef === "West") {
-      longitude = -Math.abs(longitude);
-    }
-
-    return { latitude, longitude };
-  } catch {
-    return {};
-  }
+  return parseExifCoordinates(exif) ?? {};
 }
 
 export type GeocodingLookupResult =
@@ -81,19 +56,4 @@ export async function lookupLocationFromGPS(
     log.error?.("Location extraction failed:", error);
     return { status: "error", error };
   }
-}
-
-export async function extractLocationFromGPS(
-  latitude: number,
-  longitude: number,
-  provider: GeocodingProvider,
-  logger?: GPSLogger,
-): Promise<LocationInfo | null> {
-  const result = await lookupLocationFromGPS(
-    latitude,
-    longitude,
-    provider,
-    logger,
-  );
-  return result.status === "found" ? result.location : null;
 }

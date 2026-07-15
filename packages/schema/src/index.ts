@@ -5,6 +5,7 @@ export {
   applyManifestLocationPrivacy,
   applyPhotoLocationPrivacy,
   COARSE_LOCATION_DECIMAL_PLACES,
+  parseExifCoordinates,
 } from "./location-privacy.ts";
 export type {
   LenientManifestParseResult,

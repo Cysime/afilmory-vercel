@@ -69,6 +69,19 @@ export const MasonryRoot = () => {
     );
   }, [photoIndexById, photos]);
 
+  // 身份稳定的聚焦回调（格子回传自己的 photoIndex）：VirtualMasonry 每个滚动帧
+  // 都会重跑 render()，若在其中现造箭头函数，MasonryItem/MasonryPhotoItem 的
+  // memo 会每帧失效，整棵照片子树跟着滚动重渲染。
+  const handlePhotoFocus = useCallback(
+    (photoIndex: number) => {
+      const photo = photos[photoIndex];
+      if (!photo) return;
+      setActivePhotoId(photo.id);
+      masonryRef.current?.pinIndex(isMobile ? photoIndex : photoIndex + 1);
+    },
+    [isMobile, photos],
+  );
+
   const focusPhoto = useCallback(
     (photoIndex: number) => {
       const boundedIndex = Math.min(
@@ -269,12 +282,7 @@ export const MasonryRoot = () => {
                   isRovingTarget={photo?.id === activePhotoId}
                   hasAnimated={hasAnimatedRef.current}
                   shouldReduceMotion={shouldReduceMotion}
-                  onFocus={() => {
-                    if (photoIndex < 0) return;
-                    if (!photo) return;
-                    setActivePhotoId(photo.id);
-                    masonryRef.current?.pinIndex(props.index);
-                  }}
+                  onFocus={handlePhotoFocus}
                   onAnimationComplete={handleAnimationComplete}
                 />
               );
@@ -282,6 +290,7 @@ export const MasonryRoot = () => {
             [
               activePhotoId,
               handleAnimationComplete,
+              handlePhotoFocus,
               photoIndexById,
               shouldReduceMotion,
             ],
@@ -329,7 +338,7 @@ export const MasonryItem = memo(
     index: number;
     photoIndex: number;
     isRovingTarget: boolean;
-    onFocus: () => void;
+    onFocus: (photoIndex: number) => void;
     shouldReduceMotion: boolean;
     hasAnimated: boolean;
     onAnimationComplete: () => void;

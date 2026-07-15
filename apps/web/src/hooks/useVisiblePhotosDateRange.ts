@@ -15,8 +15,20 @@ interface ComputedRangeKey {
   end: number;
   items: unknown;
   lang: string;
-  visibleIndices: unknown;
+  visibleIndices: number[] | undefined;
 }
+
+// visibleIndices 按内容比较（数组很小）而非仅 identity：调用方若退化成每帧
+// 现造数组（曾发生过，见 VirtualMasonry 的内容稳定 memo），identity 比较会
+// 让早退永不命中、昂贵的 slice/sort/Intl 每帧全跑。
+const isSameVisibleIndices = (
+  previous: number[] | undefined,
+  next: number[] | undefined,
+): boolean => {
+  if (previous === next) return true;
+  if (!previous || !next || previous.length !== next.length) return false;
+  return previous.every((value, index) => value === next[index]);
+};
 
 /**
  * Hook to calculate the date range of currently visible photos in the viewport
@@ -90,7 +102,7 @@ export const useVisiblePhotosDateRange = () => {
         last.start === startIndex &&
         last.end === endIndex &&
         last.items === items &&
-        last.visibleIndices === visibleIndices &&
+        isSameVisibleIndices(last.visibleIndices, visibleIndices) &&
         last.lang === i18n.language
       ) {
         return;

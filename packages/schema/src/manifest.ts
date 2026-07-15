@@ -55,18 +55,20 @@ const isString = (value: unknown): value is string => typeof value === "string";
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.trim().length > 0;
 
-const isPortablePhotoId = (value: unknown): value is string => {
-  if (!isNonEmptyString(value) || value.normalize("NFC") !== value)
-    return false;
-  if (new TextEncoder().encode(value).length > 170) return false;
-  if (
-    /[<>:"/\\|?*]/.test(value) ||
-    [...value].some((character) => (character.codePointAt(0) ?? 0) <= 0x1f) ||
-    /[. ]$/.test(value)
-  ) {
-    return false;
-  }
-  return !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(value);
+/**
+ * 解析层只把「无法安全用作路由段/文件名成分」的 id 判为致命：路径分隔符、
+ * 控制字符、空串或离谱长度。完整的可移植性规则（NFC、Windows 保留名、170 字节、
+ * 尾部点/空格）只在铸造新 id 时由 builder 的 createPhotoId 强制——旧 manifest 里
+ * 由旧版 builder 铸造的 id（NFD、大小写变体、含 ':' 等）必须原样保留，否则照片
+ * 从图库消失且已发布的 /photos/<id> 永久链接会被换新（见 id.ts 的 reuse 契约）。
+ */
+const isSafePhotoId = (value: unknown): value is string => {
+  if (!isNonEmptyString(value)) return false;
+  if (new TextEncoder().encode(value).length > 512) return false;
+  return (
+    !/[/\\]/.test(value) &&
+    ![...value].some((character) => (character.codePointAt(0) ?? 0) <= 0x1f)
+  );
 };
 
 const isDateString = (value: unknown): value is string =>
@@ -540,10 +542,7 @@ function normalizeExif(value: unknown): PickedExif | null {
 // 键顺序即历史上 item 字面量的构造顺序，保证归一化输出的 JSON 键序不变。
 
 const photoShape: Shape = {
-  id: requiredField(
-    isPortablePhotoId,
-    "must be a non-empty portable identifier",
-  ),
+  id: requiredField(isSafePhotoId, "must be a non-empty safe identifier"),
   originalUrl: nonEmptyStr(),
   thumbnailUrl: nonEmptyStr(),
   thumbHash: field(
@@ -759,14 +758,17 @@ export function validateManifest(input: unknown): ManifestValidationResult {
       const { item, issues: photoIssues } = validatePhoto(photo, index);
       issues.push(...photoIssues);
       if (item) {
-        const canonicalId = item.id.normalize("NFC").toLowerCase();
-        const previousIdIndex = idIndexes.get(canonicalId);
+        // 只判定字节级完全相同的 id 为重复：旧版 builder 合法产出过仅大小写/
+        // Unicode 归一化不同的 id（不同照片），大小写折叠去重会误删其中一张。
+        // 新 id 的跨文件系统碰撞由 builder 的 findPhotoIdCollisionKeys 在铸造时
+        // 用 digest 后缀规避。
+        const previousIdIndex = idIndexes.get(item.id);
         if (previousIdIndex !== undefined) {
           issues.push(
             `photos[${index}].id duplicates photos[${previousIdIndex}].id`,
           );
         } else {
-          idIndexes.set(canonicalId, index);
+          idIndexes.set(item.id, index);
         }
         const previousKeyIndex = keyIndexes.get(item.s3Key);
         if (previousKeyIndex !== undefined) {
@@ -932,15 +934,13 @@ export function parseManifestLenient(
       skipped.push({ index, issues });
     } else {
       const duplicateIssues: string[] = [];
-      const canonicalId = item.id.normalize("NFC").toLowerCase();
-      const previousIdIndex = idIndexes.get(canonicalId);
+      // 与严格路径同理：只有字节级相同的 id 才是重复（大小写变体是旧版
+      // builder 的合法产物，两张都必须保留）。
+      const previousIdIndex = idIndexes.get(item.id);
       if (previousIdIndex !== undefined) {
         const issue = `photos[${index}].id duplicates photos[${previousIdIndex}].id`;
         duplicateIssues.push(issue);
-        const previous = photos.find(
-          (candidate) =>
-            candidate.id.normalize("NFC").toLowerCase() === canonicalId,
-        );
+        const previous = photos.find((candidate) => candidate.id === item.id);
         if (previous) markRepaired(previousIdIndex, previous.s3Key, [issue]);
       }
       const previousKeyIndex = keyIndexes.get(item.s3Key);
@@ -957,7 +957,7 @@ export function parseManifestLenient(
         continue;
       }
 
-      idIndexes.set(canonicalId, index);
+      idIndexes.set(item.id, index);
       keyIndexes.set(item.s3Key, index);
       photos.push(item);
       if (issues.length > 0) markRepaired(index, item.s3Key, issues);

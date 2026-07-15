@@ -48,7 +48,7 @@ export const MasonryPhotoItem = memo(
     width: number;
     index: number;
     tabIndex?: number;
-    onFocus?: () => void;
+    onFocus?: (index: number) => void;
   }) => {
     const photos = useContextPhotos();
     const openViewer = useOpenPhotoViewer();
@@ -155,6 +155,33 @@ export const MasonryPhotoItem = memo(
       [handleClick],
     );
 
+    // 原生 <a> 只在 Enter 激活；这里曾是 role="button"（Enter+Space 都激活），
+    // 改回锚点后 Space 会变成滚动页面。补回 Space 激活并走 currentTarget.click()
+    // 复用同一条点击路径；带修饰键时不拦截，保留原生行为。
+    const handleLinkKeyDown = useCallback(
+      (event: React.KeyboardEvent<HTMLAnchorElement>) => {
+        if (
+          event.key !== " " ||
+          event.defaultPrevented ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.currentTarget.click();
+      },
+      [],
+    );
+
+    // onFocus 契约：回调自身身份稳定（由 MasonryRoot 提供单个 useCallback），
+    // 格子把自己的 index 传回去 —— 滚动热路径上 memo 不因新箭头函数失效。
+    const handleFocus = useCallback(() => {
+      onFocus?.(index);
+    }, [index, onFocus]);
+
     // 与虚拟布局同一个整数高度函数（守卫 aspectRatio 异常 + 整数几何，见 gallery-layout.ts），
     // 保证格子壳与照片内容逐像素一致、无小数 y 坐标（iOS 分块光栅化 hairline 的根源）。
     const calculatedHeight = computeMasonryItemHeight(width, data);
@@ -200,7 +227,8 @@ export const MasonryPhotoItem = memo(
         data-gallery-photo-link
         data-gallery-photo-index={index}
         onClick={handleLinkClick}
-        onFocus={onFocus}
+        onKeyDown={handleLinkKeyDown}
+        onFocus={handleFocus}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >

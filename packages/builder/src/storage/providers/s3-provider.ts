@@ -78,75 +78,6 @@ class S3BodyReadError extends Error {
   }
 }
 
-interface ByteBudgetWaiter {
-  bytes: number;
-  resolve: (release: () => void) => void;
-  reject: (error: Error) => void;
-  signal?: AbortSignal;
-  abortListener?: () => void;
-}
-
-/** Fair weighted semaphore used to cap provider-wide in-flight body buffers. */
-class ByteBudget {
-  private used = 0;
-  private readonly waiters: ByteBudgetWaiter[] = [];
-
-  constructor(private readonly limit: number) {}
-
-  async acquire(bytes: number, signal?: AbortSignal): Promise<() => void> {
-    if (bytes > this.limit) {
-      throw new DownloadLimitError(
-        `Download requires ${bytes} bytes, exceeding the global memory budget of ${this.limit} bytes`,
-      );
-    }
-    if (signal?.aborted) {
-      throw new Error("Download aborted while waiting for memory budget");
-    }
-    if (this.waiters.length === 0 && this.used + bytes <= this.limit) {
-      this.used += bytes;
-      return this.createRelease(bytes);
-    }
-
-    return await new Promise<() => void>((resolve, reject) => {
-      const waiter: ByteBudgetWaiter = { bytes, resolve, reject, signal };
-      if (signal) {
-        waiter.abortListener = () => {
-          const index = this.waiters.indexOf(waiter);
-          if (index !== -1) this.waiters.splice(index, 1);
-          reject(new Error("Download aborted while waiting for memory budget"));
-          this.drain();
-        };
-        signal.addEventListener("abort", waiter.abortListener, { once: true });
-      }
-      this.waiters.push(waiter);
-      this.drain();
-    });
-  }
-
-  private createRelease(bytes: number): () => void {
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      this.used = Math.max(0, this.used - bytes);
-      this.drain();
-    };
-  }
-
-  private drain(): void {
-    while (this.waiters.length > 0) {
-      const waiter = this.waiters[0];
-      if (this.used + waiter.bytes > this.limit) return;
-      this.waiters.shift();
-      if (waiter.signal && waiter.abortListener) {
-        waiter.signal.removeEventListener("abort", waiter.abortListener);
-      }
-      this.used += waiter.bytes;
-      waiter.resolve(this.createRelease(waiter.bytes));
-    }
-  }
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -221,7 +152,9 @@ export class S3StorageProvider implements StorageProvider {
   private readonly config: S3Config;
   private readonly s3Client: S3ClientLike;
   private readonly limiter: Semaphore;
-  private readonly byteBudget: ByteBudget;
+  /** Weighted semaphore capping provider-wide in-flight body buffer bytes. */
+  private readonly byteBudget: Semaphore;
+  private readonly memoryBudgetBytes: number;
   private readonly maxDownloadBytes: number;
   private readonly clientHandlesRetries: boolean;
   private disposed = false;
@@ -295,215 +228,233 @@ export class S3StorageProvider implements StorageProvider {
         "downloadMemoryBudgetBytes must be greater than or equal to maxDownloadBytes",
       );
     }
-    this.byteBudget = new ByteBudget(memoryBudget);
+    this.memoryBudgetBytes = memoryBudget;
+    this.byteBudget = new Semaphore(memoryBudget);
+  }
+
+  private async acquireByteBudget(
+    bytes: number,
+    signal: AbortSignal,
+  ): Promise<() => void> {
+    if (bytes > this.memoryBudgetBytes) {
+      throw new DownloadLimitError(
+        `Download requires ${bytes} bytes, exceeding the global memory budget of ${this.memoryBudgetBytes} bytes`,
+      );
+    }
+    return await this.byteBudget.acquire({ weight: bytes, signal });
   }
 
   async getFile(key: string, signal?: AbortSignal): Promise<Buffer | null> {
     signal?.throwIfAborted();
-    return await this.limiter.run(async () => {
-      try {
-        return await this.executeWithRetry(
-          `download ${key}`,
-          async () => {
-            const totalTimeoutMs = this.config.totalTimeoutMs ?? 60_000;
-            const idleTimeoutMs = this.config.idleTimeoutMs ?? 10_000;
-            const requestTimeoutMs = this.config.requestTimeoutMs ?? 20_000;
-            const startTime = Date.now();
-            const controller = new AbortController();
-            const abortFromCaller = () => controller.abort(signal?.reason);
-            signal?.addEventListener("abort", abortFromCaller, { once: true });
-            if (signal?.aborted) abortFromCaller();
-            const totalTimer = setTimeout(
-              () => controller.abort(),
-              totalTimeoutMs,
-            );
-            let idleTimer: NodeJS.Timeout | null = null;
-            let firstByteAt: number | null = null;
-            let releaseBudget: (() => void) | undefined;
-            const clearTimers = () => {
-              clearTimeout(totalTimer);
-              if (idleTimer) {
-                clearTimeout(idleTimer);
-                idleTimer = null;
-              }
-            };
-
-            try {
-              logger.s3.info(`Download started: ${key}`);
-
-              const command = new GetObjectCommand({
-                Bucket: this.config.bucket,
-                Key: key,
+    return await this.limiter.run(
+      async () => {
+        try {
+          return await this.executeWithRetry(
+            `download ${key}`,
+            async () => {
+              const totalTimeoutMs = this.config.totalTimeoutMs ?? 60_000;
+              const idleTimeoutMs = this.config.idleTimeoutMs ?? 10_000;
+              const requestTimeoutMs = this.config.requestTimeoutMs ?? 20_000;
+              const startTime = Date.now();
+              const controller = new AbortController();
+              const abortFromCaller = () => controller.abort(signal?.reason);
+              signal?.addEventListener("abort", abortFromCaller, {
+                once: true,
               });
-
-              const response = await this.s3Client.send(command, {
-                abortSignal: controller.signal,
-                requestTimeout: requestTimeoutMs,
-              });
-
-              if (!response.Body) {
-                logger.s3.error(`No Body in S3 response: ${key}`);
-                return null;
-              }
-
-              const declaredLength = response.ContentLength;
-              if (
-                declaredLength !== undefined &&
-                declaredLength > this.maxDownloadBytes
-              ) {
-                const error = new DownloadLimitError(
-                  `Refusing to download ${key}: declared size ${declaredLength} exceeds maxDownloadBytes=${this.maxDownloadBytes}`,
-                );
-                cancelUnreadBody(response.Body, error);
-                throw error;
-              }
-
-              // 如果 Body 已经是 Buffer
-              if (response.Body instanceof Buffer) {
-                if (response.Body.length > this.maxDownloadBytes) {
-                  throw new DownloadLimitError(
-                    `Refusing to download ${key}: body size ${response.Body.length} exceeds maxDownloadBytes=${this.maxDownloadBytes}`,
-                  );
-                }
-                releaseBudget = await this.byteBudget.acquire(
-                  Math.max(1, response.Body.length),
-                  controller.signal,
-                );
-                const duration = Date.now() - startTime;
-                const sizeKB = Math.round(response.Body.length / 1024);
-                logger.s3.success(
-                  `Download complete: ${key} (${sizeKB}KB, ${duration}ms)`,
-                );
-                return response.Body;
-              }
-
-              // 以流方式读取并监控首字节与空闲超时
-              const chunks: Uint8Array[] = [];
-              const stream = response.Body as NodeJS.ReadableStream;
-              const pausable = stream as NodeJS.ReadableStream & {
-                pause?: () => void;
-                resume?: () => void;
-                destroy?: (error?: Error) => void;
-              };
-              pausable.pause?.();
-              const reservedBytes = Math.max(
-                1,
-                declaredLength ?? this.maxDownloadBytes,
+              if (signal?.aborted) abortFromCaller();
+              const totalTimer = setTimeout(
+                () => controller.abort(),
+                totalTimeoutMs,
               );
-              try {
-                releaseBudget = await this.byteBudget.acquire(
-                  reservedBytes,
-                  controller.signal,
-                );
-              } catch (error) {
-                cancelUnreadBody(
-                  response.Body,
-                  error instanceof Error ? error : new Error(String(error)),
-                );
-                throw error;
-              }
-
-              const resetIdle = () => {
-                if (idleTimer) clearTimeout(idleTimer);
-                idleTimer = setTimeout(() => {
-                  controller.abort();
-                }, idleTimeoutMs);
+              let idleTimer: NodeJS.Timeout | null = null;
+              let firstByteAt: number | null = null;
+              let releaseBudget: (() => void) | undefined;
+              const clearTimers = () => {
+                clearTimeout(totalTimer);
+                if (idleTimer) {
+                  clearTimeout(idleTimer);
+                  idleTimer = null;
+                }
               };
 
-              resetIdle();
+              try {
+                logger.s3.info(`Download started: ${key}`);
 
-              const buffer: Buffer = await new Promise((resolve, reject) => {
-                let receivedBytes = 0;
-                stream.on("data", (chunk: Uint8Array) => {
-                  if (!firstByteAt) firstByteAt = Date.now();
-                  receivedBytes += chunk.byteLength;
-                  if (
-                    receivedBytes > this.maxDownloadBytes ||
-                    receivedBytes > reservedBytes
-                  ) {
-                    const error = new DownloadLimitError(
-                      `Refusing to download ${key}: streamed body exceeded its ${Math.min(this.maxDownloadBytes, reservedBytes)} byte reservation`,
+                const command = new GetObjectCommand({
+                  Bucket: this.config.bucket,
+                  Key: key,
+                });
+
+                const response = await this.s3Client.send(command, {
+                  abortSignal: controller.signal,
+                  requestTimeout: requestTimeoutMs,
+                });
+
+                if (!response.Body) {
+                  logger.s3.error(`No Body in S3 response: ${key}`);
+                  return null;
+                }
+
+                const declaredLength = response.ContentLength;
+                if (
+                  declaredLength !== undefined &&
+                  declaredLength > this.maxDownloadBytes
+                ) {
+                  const error = new DownloadLimitError(
+                    `Refusing to download ${key}: declared size ${declaredLength} exceeds maxDownloadBytes=${this.maxDownloadBytes}`,
+                  );
+                  cancelUnreadBody(response.Body, error);
+                  throw error;
+                }
+
+                // 如果 Body 已经是 Buffer
+                if (response.Body instanceof Buffer) {
+                  if (response.Body.length > this.maxDownloadBytes) {
+                    throw new DownloadLimitError(
+                      `Refusing to download ${key}: body size ${response.Body.length} exceeds maxDownloadBytes=${this.maxDownloadBytes}`,
+                    );
+                  }
+                  releaseBudget = await this.acquireByteBudget(
+                    Math.max(1, response.Body.length),
+                    controller.signal,
+                  );
+                  const duration = Date.now() - startTime;
+                  const sizeKB = Math.round(response.Body.length / 1024);
+                  logger.s3.success(
+                    `Download complete: ${key} (${sizeKB}KB, ${duration}ms)`,
+                  );
+                  return response.Body;
+                }
+
+                // 以流方式读取并监控首字节与空闲超时
+                const chunks: Uint8Array[] = [];
+                const stream = response.Body as NodeJS.ReadableStream;
+                const pausable = stream as NodeJS.ReadableStream & {
+                  pause?: () => void;
+                  resume?: () => void;
+                  destroy?: (error?: Error) => void;
+                };
+                pausable.pause?.();
+                const reservedBytes = Math.max(
+                  1,
+                  declaredLength ?? this.maxDownloadBytes,
+                );
+                try {
+                  releaseBudget = await this.acquireByteBudget(
+                    reservedBytes,
+                    controller.signal,
+                  );
+                } catch (error) {
+                  cancelUnreadBody(
+                    response.Body,
+                    error instanceof Error ? error : new Error(String(error)),
+                  );
+                  throw error;
+                }
+
+                const resetIdle = () => {
+                  if (idleTimer) clearTimeout(idleTimer);
+                  idleTimer = setTimeout(() => {
+                    controller.abort();
+                  }, idleTimeoutMs);
+                };
+
+                resetIdle();
+
+                const buffer: Buffer = await new Promise((resolve, reject) => {
+                  let receivedBytes = 0;
+                  stream.on("data", (chunk: Uint8Array) => {
+                    if (!firstByteAt) firstByteAt = Date.now();
+                    receivedBytes += chunk.byteLength;
+                    if (
+                      receivedBytes > this.maxDownloadBytes ||
+                      receivedBytes > reservedBytes
+                    ) {
+                      const error = new DownloadLimitError(
+                        `Refusing to download ${key}: streamed body exceeded its ${Math.min(this.maxDownloadBytes, reservedBytes)} byte reservation`,
+                      );
+                      pausable.destroy?.(error);
+                      reject(error);
+                      return;
+                    }
+                    chunks.push(chunk);
+                    resetIdle();
+                  });
+
+                  const removeAbortListener = () =>
+                    controller.signal.removeEventListener("abort", onAbort);
+                  const onAbort = () => {
+                    const error = new S3BodyReadError(
+                      `S3 response body was aborted while reading ${key}`,
+                      new Error("Request aborted"),
                     );
                     pausable.destroy?.(error);
                     reject(error);
-                    return;
+                  };
+                  controller.signal.addEventListener("abort", onAbort, {
+                    once: true,
+                  });
+
+                  stream.on("end", () => {
+                    removeAbortListener();
+                    clearTimers();
+                    const buf = Buffer.concat(chunks);
+                    resolve(buf);
+                  });
+
+                  stream.on("error", (error) => {
+                    removeAbortListener();
+                    clearTimers();
+                    reject(
+                      error instanceof DownloadLimitError ||
+                        error instanceof S3BodyReadError
+                        ? error
+                        : new S3BodyReadError(
+                            `S3 response body failed while reading ${key}`,
+                            error,
+                          ),
+                    );
+                  });
+                  // addEventListener does not replay an abort that won the race
+                  // immediately before registration. Check the state after all
+                  // handlers are installed so such a stream cannot remain
+                  // paused forever with both timeout timers already consumed.
+                  if (controller.signal.aborted) {
+                    onAbort();
+                  } else {
+                    pausable.resume?.();
                   }
-                  chunks.push(chunk);
-                  resetIdle();
                 });
 
-                const removeAbortListener = () =>
-                  controller.signal.removeEventListener("abort", onAbort);
-                const onAbort = () => {
-                  const error = new S3BodyReadError(
-                    `S3 response body was aborted while reading ${key}`,
-                    new Error("Request aborted"),
-                  );
-                  pausable.destroy?.(error);
-                  reject(error);
-                };
-                controller.signal.addEventListener("abort", onAbort, {
-                  once: true,
-                });
-
-                stream.on("end", () => {
-                  removeAbortListener();
-                  clearTimers();
-                  const buf = Buffer.concat(chunks);
-                  resolve(buf);
-                });
-
-                stream.on("error", (error) => {
-                  removeAbortListener();
-                  clearTimers();
-                  reject(
-                    error instanceof DownloadLimitError ||
-                      error instanceof S3BodyReadError
-                      ? error
-                      : new S3BodyReadError(
-                          `S3 response body failed while reading ${key}`,
-                          error,
-                        ),
-                  );
-                });
-                // addEventListener does not replay an abort that won the race
-                // immediately before registration. Check the state after all
-                // handlers are installed so such a stream cannot remain
-                // paused forever with both timeout timers already consumed.
-                if (controller.signal.aborted) {
-                  onAbort();
-                } else {
-                  pausable.resume?.();
-                }
-              });
-
-              const duration = Date.now() - startTime;
-              const ttfb = firstByteAt ? firstByteAt - startTime : duration;
-              const sizeKB = Math.round(buffer.length / 1024);
-              logger.s3.success(
-                `Download complete: ${key} (${sizeKB}KB, ${duration}ms, TTFB ${ttfb}ms)`,
-              );
-              return buffer;
-            } finally {
-              clearTimers();
-              signal?.removeEventListener("abort", abortFromCaller);
-              releaseBudget?.();
-            }
-          },
-          signal,
-        );
-      } catch (error) {
-        if (signal?.aborted) throw signal.reason;
-        if (isNotFoundError(error)) {
-          logger.s3.warn(`S3 object does not exist: ${key}`);
-        } else {
-          logger.s3.error(
-            `Download failed permanently: ${key}: ${errorMessage(error)}`,
+                const duration = Date.now() - startTime;
+                const ttfb = firstByteAt ? firstByteAt - startTime : duration;
+                const sizeKB = Math.round(buffer.length / 1024);
+                logger.s3.success(
+                  `Download complete: ${key} (${sizeKB}KB, ${duration}ms, TTFB ${ttfb}ms)`,
+                );
+                return buffer;
+              } finally {
+                clearTimers();
+                signal?.removeEventListener("abort", abortFromCaller);
+                releaseBudget?.();
+              }
+            },
+            signal,
           );
+        } catch (error) {
+          if (signal?.aborted) throw signal.reason;
+          if (isNotFoundError(error)) {
+            logger.s3.warn(`S3 object does not exist: ${key}`);
+          } else {
+            logger.s3.error(
+              `Download failed permanently: ${key}: ${errorMessage(error)}`,
+            );
+          }
+          return null;
         }
-        return null;
-      }
-    }, signal);
+      },
+      { signal },
+    );
   }
 
   private async executeWithRetry<T>(

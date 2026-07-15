@@ -1,6 +1,7 @@
 import type { PhotoManifestItem } from "@afilmory/schema";
 
 import type { SiteConfig } from "../../../../site.config";
+import { serializeJsonForHtml } from "./__internal__/html-inline-json";
 
 export interface HomeMetadata {
   description: string;
@@ -24,16 +25,6 @@ function escapeHtml(value: string): string {
 
 function escapeXml(value: string): string {
   return escapeHtml(value);
-}
-
-/** JSON embedded in HTML must not be able to terminate its script element. */
-function serializeJsonForHtml(value: unknown): string {
-  return JSON.stringify(value)
-    .replaceAll("&", "\\u0026")
-    .replaceAll("<", "\\u003c")
-    .replaceAll(">", "\\u003e")
-    .replaceAll("\u2028", "\\u2028")
-    .replaceAll("\u2029", "\\u2029");
 }
 
 export function normalizeBaseUrl(url: string): string {
@@ -65,7 +56,7 @@ function siteRootUrl(url: string): string {
   return `${normalizeBaseUrl(url)}/`;
 }
 
-function absoluteHttpUrl(value: string, baseUrl: string): string | null {
+export function absoluteHttpUrl(value: string, baseUrl: string): string | null {
   try {
     const url = new URL(value, siteRootUrl(baseUrl));
     return (url.protocol === "http:" || url.protocol === "https:") &&

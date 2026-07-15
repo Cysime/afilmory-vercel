@@ -1,9 +1,5 @@
 export type { GeocodingLookupResult } from "./geocoding-gps.js";
-export {
-  extractLocationFromGPS,
-  lookupLocationFromGPS,
-  parseGPSCoordinates,
-} from "./geocoding-gps.js";
+export { lookupLocationFromGPS, parseGPSCoordinates } from "./geocoding-gps.js";
 export type {
   GeocodingErrorKind,
   GeocodingProvider,

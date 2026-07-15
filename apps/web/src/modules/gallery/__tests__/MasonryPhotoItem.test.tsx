@@ -108,6 +108,7 @@ describe("MasonryPhotoItem", () => {
     data: PhotoManifest;
     width: number;
     index: number;
+    onFocus?: (index: number) => void;
   }) =>
     render(<MasonryPhotoItem {...props} />, {
       wrapper: ({ children }: PropsWithChildren) => (
@@ -162,6 +163,41 @@ describe("MasonryPhotoItem", () => {
       pathname: "/photos/photo-1",
       search: "?cameras=SONY+ILCE-7C",
     });
+  });
+
+  it("activates on Space like the former role=button (native anchors are Enter-only)", () => {
+    const { getByRole } = renderItem({ data: photo, width: 300, index: 0 });
+    const link = getByRole("link", { name: "A7C01202" });
+
+    // 带修饰键的 Space 不拦截（保留原生滚动/浏览器行为）。
+    fireEvent.keyDown(link, { key: " ", metaKey: true });
+    expect(navigate).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(link, { key: " " });
+
+    expect(navigate).toHaveBeenCalledWith({
+      pathname: "/photos/photo-1",
+      search: "?cameras=SONY+ILCE-7C",
+    });
+    expect(openViewer).toHaveBeenCalledWith(0, {
+      element: expect.any(HTMLElement),
+      sourceMode: "filtered",
+      sourcePhotoIds: ["photo-1"],
+    });
+  });
+
+  it("reports focus with its own index so the parent handler can stay identity-stable", () => {
+    const onFocus = vi.fn();
+    const { getByRole } = renderItem({
+      data: photo,
+      width: 300,
+      index: 7,
+      onFocus,
+    });
+
+    fireEvent.focus(getByRole("link", { name: "A7C01202" }));
+
+    expect(onFocus).toHaveBeenCalledWith(7);
   });
 
   it("still navigates when the current masonry index is temporarily missing from context photos", () => {
