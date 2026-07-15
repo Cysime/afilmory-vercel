@@ -4,6 +4,7 @@ import { needsUpdate } from "../manifest/manager.js";
 import type { StorageObject } from "../storage/interfaces.js";
 import type { PhotoManifestItem } from "../types/photo.js";
 import { getPhotoExecutionContext } from "./execution-context.js";
+import { hasStaleCoreProcessingStages } from "./processing-fingerprints.js";
 
 export interface PhotoWorkDecision {
   shouldProcess: boolean;
@@ -32,13 +33,24 @@ export async function decidePhotoWork(
     return { shouldProcess: true, reason: "force mode" };
   }
 
-  if (options.reprocessKeys?.includes(obj.key)) {
+  if (
+    options.reprocessKeySet?.has(obj.key) ||
+    (!options.reprocessKeySet && options.reprocessKeys?.includes(obj.key))
+  ) {
     return { shouldProcess: true, reason: "repaired manifest cache" };
+  }
+
+  if (options.derivedReprocessKeySet?.has(obj.key)) {
+    return { shouldProcess: true, reason: "derived processing changed" };
   }
 
   // 新照片总是需要处理
   if (!existingItem) {
     return { shouldProcess: true, reason: "new photo" };
+  }
+
+  if (options.plannedKeys?.has(obj.key)) {
+    return { shouldProcess: true, reason: "preplanned work" };
   }
 
   const fileNeedsUpdate = needsUpdate(existingItem, obj);
@@ -50,14 +62,24 @@ export async function decidePhotoWork(
     };
   }
 
-  // 检查缩略图是否存在
-  const thumbnailPresent = await hasThumbnail();
-  if (!thumbnailPresent || options.isForceThumbnails) {
+  if (hasStaleCoreProcessingStages(existingItem, options.locationMode)) {
+    return { shouldProcess: true, reason: "processing fingerprint changed" };
+  }
+
+  // Force-thumbnails must short-circuit before any filesystem probe.
+  if (options.isForceThumbnails) {
     return {
       shouldProcess: true,
-      reason: options.isForceThumbnails
-        ? "force regenerate thumbnail"
-        : "thumbnail missing",
+      reason: "force regenerate thumbnail",
+    };
+  }
+
+  // 检查缩略图是否存在
+  const thumbnailPresent = await hasThumbnail();
+  if (!thumbnailPresent) {
+    return {
+      shouldProcess: true,
+      reason: "thumbnail missing",
     };
   }
 

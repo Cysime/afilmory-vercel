@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { ThumbnailImage } from "~/components/ui/ThumbnailImage";
 import { useMobile } from "~/hooks/useMobile";
 import { nextFrame } from "~/lib/dom";
+import { getPhotoAccessibleLabel } from "~/lib/photo-accessibility";
 import type { PhotoManifest } from "~/types/photo";
 
 import {
@@ -22,7 +23,7 @@ export const GalleryThumbnail: FC<{
   visible?: boolean;
 }> = ({ currentIndex, photos, onIndexChange, visible = true }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const isMobile = useMobile();
 
@@ -158,6 +159,7 @@ export const GalleryThumbnail: FC<{
         {/* Only render thumbnails within visible range */}
         {photos.slice(startIndex, endIndex + 1).map((photo, sliceIndex) => {
           const index = startIndex + sliceIndex;
+          const photoLabel = getPhotoAccessibleLabel(photo, t, i18n.language);
           return (
             <button
               type="button"
@@ -184,15 +186,15 @@ export const GalleryThumbnail: FC<{
               }
               aria-current={index === currentIndex ? "true" : undefined}
               aria-label={t("photo.thumbnail.open", {
-                title: photo.title || photo.id,
+                title: photoLabel,
               })}
-              title={photo.title || photo.id}
+              title={photoLabel}
               onClick={() => onIndexChange(index)}
             >
               <ThumbnailImage
                 photoId={photo.id}
                 src={photo.thumbnailUrl}
-                alt={photo.title || photo.id}
+                alt={photoLabel}
                 width={photo.width}
                 height={photo.height}
                 thumbHash={photo.thumbHash}

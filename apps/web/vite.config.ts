@@ -18,6 +18,7 @@ import { createDependencyChunksPlugin } from "./plugins/vite/deps";
 import { localesJsonPlugin } from "./plugins/vite/locales-json";
 import { photosStaticPlugin } from "./plugins/vite/photos-static";
 import { createAfilmoryPwaPlugin } from "./plugins/vite/pwa";
+import { virtualRoutesPlugin } from "./plugins/vite/routes";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -113,6 +114,7 @@ export default defineConfig(async ({ command }) => {
       }),
 
       tsconfigPaths(),
+      virtualRoutesPlugin(),
       checker({
         typescript: true,
         enableBuild: true,

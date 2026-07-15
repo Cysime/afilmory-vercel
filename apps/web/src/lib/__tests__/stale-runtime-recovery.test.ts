@@ -55,6 +55,7 @@ describe("stale-runtime-recovery", () => {
         "gstatic-fonts-cache",
         "images-cache",
         "s3-images-cache",
+        "afilmory-videos-v1",
         "unrelated-cache",
       ]),
     });
@@ -75,6 +76,7 @@ describe("stale-runtime-recovery", () => {
         "gstatic-fonts-cache",
         "images-cache",
         "s3-images-cache",
+        "afilmory-videos-v1",
       ],
       reason: "reload-requested",
       registrationsUnregistered: 1,

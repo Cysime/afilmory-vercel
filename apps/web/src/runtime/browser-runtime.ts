@@ -1,6 +1,8 @@
 import type { AfilmoryManifest } from "@afilmory/schema";
 import type { SiteConfig } from "@config";
 
+import type { WebDeliveryRuntimeDescriptor } from "../data-runtime/delivery-manifest";
+
 export type StartupMetricDetail = Record<string, unknown>;
 
 export type StartupReporter = {
@@ -20,18 +22,25 @@ export type AfilmoryManifestRuntime =
       mode: "inline";
       data: unknown;
       promise?: Promise<unknown>;
+      delivery?: WebDeliveryRuntimeDescriptor;
     }
   | {
       mode: "external";
       url: string;
       data?: unknown;
       promise?: Promise<unknown>;
+      delivery?: WebDeliveryRuntimeDescriptor;
     };
 
 export type AfilmoryBuildInfo = {
   appName?: string;
+  version?: string;
   builtDate?: string;
   gitCommitHash?: string;
+  sourceUrl?: string;
+  sourceDirty?: boolean;
+  sourceExact?: boolean;
+  licenseUrl?: string;
   devCwd?: string;
 };
 
@@ -63,6 +72,11 @@ export function ensureBrowserRuntime(): AfilmoryBrowserRuntime {
 
 export function setRuntimeManifest(manifest: AfilmoryManifest): void {
   const runtime = ensureBrowserRuntime();
+  if (runtime.manifest) {
+    runtime.manifest.data = manifest;
+    runtime.manifest.promise = Promise.resolve(manifest);
+    return;
+  }
   runtime.manifest = {
     mode: "inline",
     data: manifest,

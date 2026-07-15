@@ -3,6 +3,7 @@ import process from "node:process";
 import { AfilmoryBuilder } from "./builder/builder.js";
 import { ExifService } from "./image/exif.js";
 import { configureLoggerObservability } from "./logger/index.js";
+import { toProcessorOptions } from "./photo/processor.js";
 import type {
   BatchTaskMessage,
   BatchTaskResult,
@@ -55,13 +56,12 @@ export async function runAsWorker() {
 
     taskRuntime = {
       workerId,
-      taskTimeoutMs:
-        sharedData.builderConfig.system.observability.performance.worker
-          .timeout,
+      taskTimeoutMs: sharedData.builderConfig.system.processing.worker.timeout,
       imageObjects: sharedData.imageObjects,
       existingManifestMap: sharedData.existingManifestMap,
       livePhotoMap: sharedData.livePhotoMap,
       builderOptions: sharedData.builderOptions,
+      processorOptions: toProcessorOptions(sharedData.builderOptions),
       services: builder.services,
       runState: builder.createPluginRunState(),
       emitPluginEvent: (runState, event, payload) =>

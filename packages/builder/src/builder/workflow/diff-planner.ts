@@ -1,4 +1,4 @@
-import { thumbnailExists } from "../../image/thumbnail.js";
+import { createThumbnailInventory } from "../../image/thumbnail.js";
 import { logger } from "../../logger/index.js";
 import { findPhotoIdCollisionKeys } from "../../photo/id.js";
 import { getStorageObjectVersion } from "../../photo/live-photo-handler.js";
@@ -73,6 +73,9 @@ export class DiffPlanner {
 
     const tasksToProcess: StorageObject[] = [];
     const reprocessKeys = new Set(options.reprocessKeys ?? []);
+    let thumbnailInventoryPromise: ReturnType<
+      typeof createThumbnailInventory
+    > | null = null;
     let addedLivePhotoReprocessKey = false;
 
     // 与 worker 侧的 shouldProcessPhoto 共享同一判定实现（decidePhotoWork），
@@ -86,12 +89,16 @@ export class DiffPlanner {
         obj,
         options,
         // 主进程规划阶段没有照片上下文，缩略图目录走 session 配置显式传入。
-        () =>
-          thumbnailExists(
-            session.getPhotoIdForKey(key, existingItem),
+        async () => {
+          thumbnailInventoryPromise ??= createThumbnailInventory(
             session.config.output.thumbnailsDir,
+          );
+          const inventory = await thumbnailInventoryPromise;
+          return inventory.has(
+            session.getPhotoIdForKey(key, existingItem),
             existingItem?.thumbnailUrl,
-          ),
+          );
+        },
       );
 
       const currentLivePhoto = livePhotoMap.get(key);
@@ -122,6 +129,8 @@ export class DiffPlanner {
     if (addedLivePhotoReprocessKey) {
       options.reprocessKeys = [...reprocessKeys];
     }
+
+    options.plannedKeys = new Set(tasksToProcess.map((task) => task.key));
 
     return tasksToProcess;
   }

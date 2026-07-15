@@ -124,8 +124,9 @@ Manifest runtime：
 
 - `dataInjectPlugin` 会注入 manifest source。
 - 开发默认在 `window.__AFILMORY__.manifest` 内联 manifest。
-- 生产默认生成 `assets/photos-manifest.<hash>.json` 并通过 `window.__AFILMORY__.manifest.promise` fetch。
+- 生产默认生成 Web Delivery Manifest v3：`assets/gallery-index.<hash>.json` 只携带首屏摘要，完整 EXIF/tone/location 按稳定 ID-hash 分片，地图数据独立分片；`window.__AFILMORY__.manifest.promise` 先 fetch index。
 - `AFILMORY_EMBED_MANIFEST=true|false` 可覆盖默认策略。
+- `PhotoRepository` 对分片做深层校验、并发去重、Abort/重试和原子合并。不要直接 fetch 或 cast 分片 JSON。
 
 PhotoRepository 用法：
 
@@ -176,7 +177,9 @@ workspace 包直接从 TS 源码消费，部署构建不需要额外的 package 
 apps/web/dist/
 ├── index.html
 ├── assets/
-│   ├── photos-manifest.<hash>.json
+│   ├── gallery-index.<hash>.json
+│   ├── photo-details.<stable-prefix>.<hash>.json
+│   ├── map-details.<hash>.json
 │   └── vendor / app chunks
 ├── thumbnails/
 ├── photos/<photo-id>/index.html # 每张照片的可抓取静态 HTML shell
@@ -195,7 +198,7 @@ apps/web/dist/
 - 使用 schema strict validation 读取 manifest；旧 manifest schema 不再迁移。
 - 注入 `window.__AFILMORY__.config`。
 - 根据 `AFILMORY_EMBED_MANIFEST` 和 serve/build 模式选择内联或外置 manifest。
-- 外置 manifest 会添加 preload link，并通过 `window.__AFILMORY__.manifest.promise` 加载。
+- 外置模式通过解析期内联脚本尽早 fetch gallery index；不要再添加参数不一致、会造成重复下载的 preload link。
 
 ### `photosStaticPlugin`
 
@@ -212,8 +215,9 @@ apps/web/dist/
 
 ### `createDependencyChunksPlugin`
 
-- 将 React、i18n、Motion、Map、HEIC、EXIF、state、UI、masonry 等依赖拆成稳定 vendor chunk。
-- 会阻止 vendor chunk 依赖 entry chunk，避免生产启动时出现 ESM bootstrap cycle。
+- 将 React、i18n、Motion、Map、HEIC、EXIF、state、UI 等依赖拆成稳定 vendor chunk。
+- Radix/overlay 内部 scope 紧密耦合，必须留在同一个 UI chunk。
+- 会阻止 vendor→entry 和跨 vendor 静态循环，避免生产启动时出现 ESM bootstrap cycle。
 
 ## 国际化
 

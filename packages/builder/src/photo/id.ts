@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 
+import type { PhotoManifestItem } from "../types/photo.js";
+
 export const DEFAULT_COLLISION_DIGEST_LENGTH = 8;
 const MAX_BASE_ID_BYTES = 96;
 
@@ -74,6 +76,27 @@ export function createPhotoId(
     .digest("hex")
     .slice(0, digestLength);
   return `${baseName}_${digestSuffix}`;
+}
+
+/**
+ * Published photo IDs are permanent URLs. Once a storage key has an ID in a
+ * valid manifest, later basename collisions or digest-length configuration
+ * changes must never rename it. Only newly discovered photos are allocated a
+ * new base/digest ID.
+ */
+export function resolveStablePhotoId(
+  storageKey: string,
+  existingItem?: Pick<PhotoManifestItem, "id">,
+  options: {
+    digestSuffixLength?: number;
+    hasCollision?: boolean;
+  } = {},
+): string {
+  if (existingItem?.id) return existingItem.id;
+  return createPhotoId(storageKey, {
+    digestSuffixLength: options.digestSuffixLength,
+    forceDigest: options.hasCollision,
+  });
 }
 
 export function findPhotoIdCollisionKeys(storageKeys: string[]): Set<string> {

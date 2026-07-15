@@ -25,6 +25,7 @@ import { isMobileDevice } from "~/lib/device-viewport";
 import { getEssentialExif } from "~/lib/essential-exif";
 import { buildGalleryFilterSearch } from "~/lib/gallery-filter-url";
 import { getImageFormat } from "~/lib/image-utils";
+import { getPhotoAccessibleLabel } from "~/lib/photo-accessibility";
 import { buildPhotoDetailPathname } from "~/lib/photo-detail-route";
 import { flushStartupMetrics, markStartupOnce } from "~/lib/startup-metrics";
 import {
@@ -35,39 +36,19 @@ import type { PhotoManifest } from "~/types/photo";
 
 import { computeMasonryItemHeight } from "./gallery-layout";
 
-// 未命名照片兜底 aria-label 用的日期格式化：Intl.DateTimeFormat 构造不便宜
-// （做法同 useVisiblePhotosDateRange），瀑布流单元是热路径，按 locale 缓存。
-const untitledDateFormatters = new Map<string, Intl.DateTimeFormat>();
-
-const formatUntitledPhotoDate = (
-  locale: string,
-  dateTaken: string,
-): string | null => {
-  const date = new Date(dateTaken);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-  let formatter = untitledDateFormatters.get(locale);
-  if (!formatter) {
-    formatter = new Intl.DateTimeFormat(locale, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-    untitledDateFormatters.set(locale, formatter);
-  }
-  return formatter.format(date);
-};
-
 export const MasonryPhotoItem = memo(
   ({
     data,
     width,
     index,
+    tabIndex = -1,
+    onFocus,
   }: {
     data: PhotoManifest;
     width: number;
     index: number;
+    tabIndex?: number;
+    onFocus?: () => void;
   }) => {
     const photos = useContextPhotos();
     const openViewer = useOpenPhotoViewer();
@@ -200,13 +181,7 @@ export const MasonryPhotoItem = memo(
 
     // 标题和描述都缺失时，aria-label 不能是 undefined —— 那会让整格照片对
     // 读屏器变成一个无名按钮；回退到"摄于某日的照片"，日期无效再退到通用文案。
-    let ariaLabel = data.title || data.description;
-    if (!ariaLabel) {
-      const takenDate = formatUntitledPhotoDate(i18n.language, data.dateTaken);
-      ariaLabel = takenDate
-        ? t("photo.untitled.taken-on", { date: takenDate })
-        : t("photo.untitled.fallback");
-    }
+    const ariaLabel = getPhotoAccessibleLabel(data, t, i18n.language);
 
     return (
       // 纯 div：入场动画由 MasonryRoot 的包裹层负责，这里不用任何 motion 能力。
@@ -214,6 +189,7 @@ export const MasonryPhotoItem = memo(
       <a
         href={photoHref}
         aria-label={ariaLabel}
+        tabIndex={tabIndex}
         // ring-inset：格子 overflow-hidden 且边贴边，外扩的 ring 会被裁掉/被相邻格子盖住
         className="bg-fill-quaternary focus-visible:ring-accent/45 group relative w-full cursor-pointer overflow-hidden focus-visible:ring-2 focus-visible:ring-inset"
         style={{
@@ -221,7 +197,10 @@ export const MasonryPhotoItem = memo(
           height: calculatedHeight,
         }}
         data-photo-id={data.id}
+        data-gallery-photo-link
+        data-gallery-photo-index={index}
         onClick={handleLinkClick}
+        onFocus={onFocus}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
@@ -231,7 +210,7 @@ export const MasonryPhotoItem = memo(
             ref={imageRef}
             photoId={data.id}
             src={data.thumbnailUrl}
-            alt={data.title}
+            alt={ariaLabel}
             width={data.width}
             height={data.height}
             thumbHash={data.thumbHash}

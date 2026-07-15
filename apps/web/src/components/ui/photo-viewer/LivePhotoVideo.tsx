@@ -1,5 +1,5 @@
 import { clsxm } from "@afilmory/ui";
-import { m, useAnimationControls } from "motion/react";
+import { m, useAnimationControls, useReducedMotion } from "motion/react";
 import {
   useCallback,
   useEffect,
@@ -62,6 +62,7 @@ export const LivePhotoVideo = ({
   const [isPlayingLivePhoto, setIsPlayingLivePhoto] = useState(false);
   const [livePhotoVideoLoaded, setLivePhotoVideoLoaded] = useState(false);
   const [isConvertingVideo, setIsConvertingVideo] = useState(false);
+  const shouldReduceMotion = useReducedMotion() === true;
   const hasAutoPlayedRef = useRef(false);
   const isConvertingVideoRef = useRef(false);
   const loadedVideoSourceKeyRef = useRef<string | null>(null);
@@ -186,7 +187,10 @@ export const LivePhotoVideo = ({
       playTimerRef.current = null;
       await videoAnimateController.start({
         opacity: 1,
-        transition: { duration: 0.15, ease: "easeOut" },
+        transition: {
+          duration: shouldReduceMotion ? 0 : 0.15,
+          ease: "easeOut",
+        },
       });
       const video = videoRef.current;
       if (video) {
@@ -206,6 +210,7 @@ export const LivePhotoVideo = ({
     isConvertingVideo,
     videoAnimateController,
     clearPlayTimer,
+    shouldReduceMotion,
   ]);
 
   const stop = useCallback(async () => {
@@ -219,15 +224,24 @@ export const LivePhotoVideo = ({
     }
     await videoAnimateController.start({
       opacity: 0,
-      transition: { duration: 0.2, ease: "easeIn" },
+      transition: {
+        duration: shouldReduceMotion ? 0 : 0.2,
+        ease: "easeIn",
+      },
     });
     setIsPlayingLivePhoto(false);
-  }, [isPlayingLivePhoto, videoAnimateController, clearPlayTimer]);
+  }, [
+    isPlayingLivePhoto,
+    videoAnimateController,
+    clearPlayTimer,
+    shouldReduceMotion,
+  ]);
 
   // Auto-play effect - play once when video is loaded
   useEffect(() => {
     if (
       shouldAutoPlayOnce &&
+      !shouldReduceMotion &&
       isCurrentImage &&
       livePhotoVideoLoaded &&
       !isPlayingLivePhoto &&
@@ -244,6 +258,7 @@ export const LivePhotoVideo = ({
     isPlayingLivePhoto,
     isConvertingVideo,
     play,
+    shouldReduceMotion,
   ]);
 
   useImperativeHandle(ref, () => ({

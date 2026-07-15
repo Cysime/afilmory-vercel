@@ -139,23 +139,24 @@ export function isValidGPSCoordinates(
   );
 }
 
-/**
- * Convert PhotoManifestItem to PhotoMarker if it has GPS coordinates in EXIF
- */
+/** Convert a photo to a marker, using publication-safe location as fallback. */
 export function convertPhotoToMarkerFromEXIF(
   photo: PhotoManifestItem,
 ): PhotoMarker | null {
   const { exif } = photo;
-
-  if (!exif) {
-    return null;
-  }
-
-  // Use the common GPS conversion function
   const gpsData = convertExifGPSToDecimal(exif);
-  if (!gpsData) {
-    return null;
+  if (!gpsData && isValidGPSCoordinates(photo.location)) {
+    const { latitude, longitude } = photo.location;
+    return {
+      id: photo.id,
+      longitude,
+      latitude,
+      latitudeRef: latitude < 0 ? GPSDirection.South : GPSDirection.North,
+      longitudeRef: longitude < 0 ? GPSDirection.West : GPSDirection.East,
+      photo,
+    };
   }
+  if (!gpsData) return null;
 
   const {
     latitude,
@@ -179,7 +180,7 @@ export function convertPhotoToMarkerFromEXIF(
 }
 
 /**
- * Convert array of PhotoManifestItem to PhotoMarker array using EXIF data
+ * Convert photos to markers from EXIF or publication-safe locations.
  */
 export function convertPhotosToMarkersFromEXIF(
   photos: PhotoManifestItem[],

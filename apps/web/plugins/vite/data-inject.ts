@@ -1,12 +1,23 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { assertManifest } from "@afilmory/schema";
+import type { AfilmoryManifest } from "@afilmory/schema";
+import {
+  applyManifestLocationPrivacy,
+  assertManifest,
+  createEmptyManifest,
+} from "@afilmory/schema";
 import { DOMParser } from "linkedom";
 import type { Plugin } from "vite";
 
+import { env } from "../../../../env";
 import { siteConfig } from "../../../../site.config.build";
+import type { ProjectPackageMetadata } from "./__internal__/build-metadata";
+import {
+  assertPublishableSourceMetadata,
+  resolveBuildMetadata,
+} from "./__internal__/build-metadata";
 import { MANIFEST_PATH } from "./__internal__/constants";
+import { createWebDeliveryArtifacts } from "./__internal__/delivery-manifest-build";
 import { buildExternalManifestScriptContent } from "./__internal__/manifest-inline-snippet";
 
 // ── manifest helpers ──────────────────────────────────────────────────────────
@@ -18,11 +29,12 @@ function resolveEmbedPreference(command: "serve" | "build"): boolean {
   return command === "serve";
 }
 
-function getManifestContent(command: "serve" | "build"): string {
+function getManifest(command: "serve" | "build"): AfilmoryManifest {
   try {
-    return JSON.stringify(
-      assertManifest(JSON.parse(readFileSync(MANIFEST_PATH, "utf-8"))),
+    const manifest = assertManifest(
+      JSON.parse(readFileSync(MANIFEST_PATH, "utf-8")),
     );
+    return applyManifestLocationPrivacy(manifest, env.PHOTO_LOCATION_MODE);
   } catch (error) {
     if (command === "build") {
       throw new Error(
@@ -34,8 +46,12 @@ function getManifestContent(command: "serve" | "build"): string {
       "[data-inject] Failed to read manifest file (dev mode, using empty object):",
       error,
     );
-    return "{}";
+    return createEmptyManifest();
   }
+}
+
+function getManifestContent(command: "serve" | "build"): string {
+  return JSON.stringify(getManifest(command));
 }
 
 function escapeInlineScriptJson(json: string): string {
@@ -55,11 +71,27 @@ function buildRuntimeAssignment(path: string, json: string): string {
   return `${ensureRuntimeScript()}window.__AFILMORY__.${path} = ${escapeInlineScriptJson(json)};`;
 }
 
+function getBuildMetadata() {
+  let metadata: ProjectPackageMetadata = {};
+  try {
+    metadata = JSON.parse(
+      readFileSync(
+        new URL("../../../../package.json", import.meta.url),
+        "utf8",
+      ),
+    ) as ProjectPackageMetadata;
+  } catch {
+    // A missing package file should not make a downstream source checkout
+    // impossible to build; the UI still exposes the generic project URL.
+  }
+  return resolveBuildMetadata({ metadata });
+}
+
 // ── site-config helpers ───────────────────────────────────────────────────────
 
 const CONFIG_SCRIPT_ID = "config";
 const INJECTED_SCRIPT_ID = "config-runtime";
-const MANIFEST_DEV_PUBLIC_PATH = "/__afilmory/photos-manifest.json";
+const MANIFEST_DEV_PUBLIC_PATH = "/__afilmory/gallery-index.json";
 
 function buildInlineManifestScriptContent(manifestJson: string): string {
   return [
@@ -79,13 +111,20 @@ function buildInlineManifestScriptContent(manifestJson: string): string {
 
 export function dataInjectPlugin(): Plugin {
   let embedManifest: boolean | undefined;
+  let resolvedCommand: "serve" | "build" | undefined;
   let emittedManifestAssetFileName: string | null = null;
+  let devDeliveryAssets = new Map<string, string>();
 
+  const buildMetadata = getBuildMetadata();
   const siteConfigScriptContent = buildRuntimeAssignment(
     "config",
     JSON.stringify({
       site: siteConfig,
     }),
+  );
+  const buildInfoScriptContent = buildRuntimeAssignment(
+    "build",
+    JSON.stringify(buildMetadata),
   );
   const parser = new DOMParser();
   const getBuildManifestAssetPublicPath = () => {
@@ -102,12 +141,13 @@ export function dataInjectPlugin(): Plugin {
     enforce: "pre",
 
     configResolved(config) {
-      embedManifest = resolveEmbedPreference(
-        config.command as "serve" | "build",
-      );
+      resolvedCommand = config.command as "serve" | "build";
+      embedManifest = resolveEmbedPreference(resolvedCommand);
     },
 
     buildStart() {
+      if (resolvedCommand === "serve") return;
+      assertPublishableSourceMetadata(buildMetadata);
       const shouldEmbed = embedManifest ?? resolveEmbedPreference("build");
       emittedManifestAssetFileName = null;
 
@@ -115,18 +155,28 @@ export function dataInjectPlugin(): Plugin {
         return;
       }
 
-      const manifestContent = getManifestContent("build");
-      const manifestHash = createHash("sha256")
-        .update(manifestContent)
-        .digest("hex")
-        .slice(0, 10);
-      emittedManifestAssetFileName = `assets/photos-manifest.${manifestHash}.json`;
-
-      this.emitFile({
-        type: "asset",
-        fileName: emittedManifestAssetFileName,
-        source: manifestContent,
-      });
+      const delivery = createWebDeliveryArtifacts(
+        getManifest("build"),
+        undefined,
+        env.PHOTO_LOCATION_MODE,
+      );
+      emittedManifestAssetFileName = delivery.indexFileName;
+      for (const asset of delivery.assets) {
+        this.emitFile({
+          type: "asset",
+          fileName: asset.fileName,
+          source: asset.source,
+        });
+      }
+      const savedPercent =
+        delivery.fullManifestBytes > 0
+          ? Math.round(
+              (1 - delivery.indexBytes / delivery.fullManifestBytes) * 100,
+            )
+          : 0;
+      this.info(
+        `Emitted Web Delivery Manifest v3 (${delivery.indexBytes} bytes, ${savedPercent}% smaller startup payload)`,
+      );
     },
 
     configureServer(server) {
@@ -151,9 +201,21 @@ export function dataInjectPlugin(): Plugin {
         return;
       }
 
+      const refreshDevDeliveryAssets = () => {
+        const delivery = createWebDeliveryArtifacts(
+          getManifest("serve"),
+          undefined,
+          env.PHOTO_LOCATION_MODE,
+        );
+        devDeliveryAssets = new Map(
+          delivery.assets.map((asset) => [`/${asset.fileName}`, asset.source]),
+        );
+        return devDeliveryAssets.get(`/${delivery.indexFileName}`) ?? "{}";
+      };
+
       server.middlewares.use(MANIFEST_DEV_PUBLIC_PATH, (_req, res) => {
         try {
-          const manifestContent = getManifestContent("serve");
+          const manifestContent = refreshDevDeliveryAssets();
           res.setHeader("Content-Type", "application/json; charset=utf-8");
           res.setHeader("Cache-Control", "no-store");
           res.end(manifestContent);
@@ -161,6 +223,19 @@ export function dataInjectPlugin(): Plugin {
           res.statusCode = 500;
           res.end(JSON.stringify({ error: String(error) }));
         }
+      });
+      server.middlewares.use((req, res, next) => {
+        const pathname = req.url
+          ? new URL(req.url, "http://localhost").pathname
+          : "";
+        const source = devDeliveryAssets.get(pathname);
+        if (source === undefined) {
+          next();
+          return;
+        }
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.setHeader("Cache-Control", "no-store");
+        res.end(source);
       });
     },
 
@@ -192,7 +267,7 @@ export function dataInjectPlugin(): Plugin {
       if (!document.querySelector(`#${INJECTED_SCRIPT_ID}`)) {
         const scriptEl = document.createElement("script", "text/javascript");
         scriptEl.id = INJECTED_SCRIPT_ID;
-        scriptEl.textContent = siteConfigScriptContent;
+        scriptEl.textContent = `${siteConfigScriptContent}${buildInfoScriptContent}`;
 
         const configScript = document.querySelector(`#${CONFIG_SCRIPT_ID}`);
         if (configScript?.parentNode) {

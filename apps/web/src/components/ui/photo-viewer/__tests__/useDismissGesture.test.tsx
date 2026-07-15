@@ -1,5 +1,5 @@
 import { cleanup, render } from "@testing-library/react";
-import { useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import type { Swiper as SwiperType } from "swiper";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -76,10 +76,12 @@ interface HarnessOptions {
   isImageZoomed?: boolean;
   onDismiss?: (t: DismissTransform) => void;
   onClaim?: () => DismissSeed | void;
+  onLayoutReady?: (el: HTMLDivElement) => void;
 }
 
 function setup(opts: HarnessOptions = {}) {
   const onDismiss = opts.onDismiss ?? vi.fn();
+  const { onLayoutReady } = opts;
   // hook 只读 allowTouchMove，用最小 fixture 即可
   const swiper = { allowTouchMove: true } as Partial<SwiperType> as SwiperType;
 
@@ -101,6 +103,13 @@ function setup(opts: HarnessOptions = {}) {
     contentX = values.contentX;
     contentY = values.contentY;
     contentScale = values.contentScale;
+
+    // Registered after useDismissGesture's layout effects. Tests can dispatch
+    // input in this same commit, before passive effects have a chance to run.
+    useLayoutEffect(() => {
+      if (targetRef.current) onLayoutReady?.(targetRef.current);
+    }, [targetRef]);
+
     return <div ref={targetRef} data-testid="media" />;
   };
 
@@ -147,6 +156,33 @@ describe("useDismissGesture", () => {
     expect(arg.y).toBeGreaterThan(100);
     expect(arg.x).toBe(0); // 普通关闭无水平偏移
     expect(arg.scale).toBeLessThan(1); // 拖拽中缩小
+  });
+
+  it("首个可交互布局提交时监听已就绪，不丢失立即开始的触摸", () => {
+    const onDismiss = vi.fn();
+    const t = setup({
+      onDismiss,
+      onLayoutReady: (el) => {
+        firePointer(el, "pointerdown", 200, 200);
+        firePointer(el, "pointermove", 200, 216);
+        firePointer(el, "pointermove", 200, 200 + OVER);
+        firePointer(el, "pointerup", 200, 200 + OVER);
+      },
+    });
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(t.el.dataset.photoViewerDismissReady).toBe("true");
+  });
+
+  it("触摸移动被合并时使用 pointerup 的最终触点完成阈值判定", () => {
+    const t = setup();
+    firePointer(t.el, "pointerdown", 200, 200, { timeStamp: 0 });
+    firePointer(t.el, "pointermove", 200, 216, { timeStamp: 10 });
+    firePointer(t.el, "pointermove", 200, 240, { timeStamp: 20 });
+    // 最后的 move 未送达，但 pointerup 保留了真实释放坐标。
+    firePointer(t.el, "pointerup", 200, 200 + OVER, { timeStamp: 30 });
+
+    expect(t.onDismiss).toHaveBeenCalledTimes(1);
   });
 
   it("向下拖不过阈值 → 不关闭（弹回）", () => {
@@ -206,6 +242,19 @@ describe("useDismissGesture", () => {
     firePointer(t.el, "pointermove", 200, 216);
     firePointer(t.el, "pointermove", 200, 200 + OVER);
     firePointer(t.el, "pointerup", 200, 200 + OVER);
+    expect(t.onDismiss).not.toHaveBeenCalled();
+    expect(t.swiper.allowTouchMove).toBe(true);
+  });
+
+  it("does not claim gestures that start on viewer controls", () => {
+    const t = setup();
+    const control = document.createElement("button");
+    t.el.append(control);
+
+    firePointer(control, "pointerdown", 200, 200);
+    firePointer(control, "pointermove", 200, 200 + OVER);
+    firePointer(control, "pointerup", 200, 200 + OVER);
+
     expect(t.onDismiss).not.toHaveBeenCalled();
     expect(t.swiper.allowTouchMove).toBe(true);
   });

@@ -371,7 +371,9 @@
   "photo.webgl.creatingTexture": "正在建立紋理…",
   "photo.webgl.loadingImage": "正在載入圖像…",
   "photo.webgl.unavailable": "WebGL 不可用，無法渲染圖像",
+  "photo.zoom.controls": "縮放控制",
   "photo.zoom.hint": "雙擊或捏合縮放",
+  "photo.zoom.reset": "重設縮放",
   "slider.auto": "自動",
   "slider.columns": "{{count}} 列",
   "video.motion-photo.extracting": "正在提取嵌入的影片…"

@@ -59,7 +59,10 @@ export class SourceScanner {
     // 避免对存储桶做第二次全量 ListObjectsV2 分页；同时 allObjects 与 imageObjects
     // 观察到的是同一份桶快照，不会因两次列举之间的写入而彼此不一致。
     const imageObjects = allObjects.filter((object) =>
-      isSupportedImageKey(object.key),
+      isSupportedImageKey(
+        object.key,
+        session.config.system.processing.supportedFormats,
+      ),
     );
     logger.main.info(`Found ${imageObjects.length} photos in storage`);
 

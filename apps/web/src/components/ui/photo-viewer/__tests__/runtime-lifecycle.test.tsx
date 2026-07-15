@@ -78,6 +78,7 @@ vi.mock("motion/react", async () => {
 
   return {
     m: { video: MotionVideo },
+    useReducedMotion: () => false,
 
     useAnimationControls: () => ({
       start: (...args: unknown[]) => animationStartMock(...args),

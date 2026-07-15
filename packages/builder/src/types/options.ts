@@ -6,6 +6,12 @@ export interface BuilderOptions {
   progressListener?: BuildProgressListener;
   /** @internal Cached records normalized by lenient parsing must be rebuilt. */
   reprocessKeys?: readonly string[];
+  /** @internal Derived-stage invalidation that does not imply source bytes changed. */
+  derivedReprocessKeys?: readonly string[];
+  /** @internal Main-process decisions already made for this run. */
+  plannedKeys?: ReadonlySet<string>;
+  /** @internal Resolved privacy policy copied from builder config. */
+  locationMode?: "strip" | "coarse" | "exact";
 }
 
 export interface BuilderResult {

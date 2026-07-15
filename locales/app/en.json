@@ -371,7 +371,9 @@
   "photo.webgl.creatingTexture": "Creating texture…",
   "photo.webgl.loadingImage": "Loading image…",
   "photo.webgl.unavailable": "WebGL is unavailable, unable to render image",
+  "photo.zoom.controls": "Zoom controls",
   "photo.zoom.hint": "Double-tap or pinch to zoom",
+  "photo.zoom.reset": "Reset zoom",
   "slider.auto": "Auto",
   "slider.columns": "{{count}} column",
   "video.motion-photo.extracting": "Extracting embedded video…"

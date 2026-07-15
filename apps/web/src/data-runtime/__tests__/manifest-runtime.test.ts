@@ -4,6 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AfilmoryBrowserRuntime } from "~/runtime/browser-runtime";
 import type { PhotoManifest } from "~/types/photo";
 
+import {
+  WEB_DELIVERY_MANIFEST_SCHEMA,
+  WEB_DELIVERY_MANIFEST_VERSION,
+} from "../delivery-manifest";
 import { loadManifestRuntime } from "../manifest-runtime";
 
 const originalFetch = globalThis.fetch;
@@ -81,6 +85,50 @@ describe("loadManifestRuntime", () => {
     const manifest = await loadManifestRuntime();
 
     expect(manifest.photos[0]?.id).toBe("2");
+  });
+
+  it("loads Web Delivery Manifest v3 while exposing its shard descriptor", async () => {
+    const galleryManifest = createManifest({ photos: [createPhoto("v3")] });
+    const runtime: AfilmoryBrowserRuntime = {
+      version: 1,
+      manifest: {
+        mode: "external",
+        url: "/assets/gallery-index.deadbeef.json",
+        promise: Promise.resolve({
+          schema: WEB_DELIVERY_MANIFEST_SCHEMA,
+          version: WEB_DELIVERY_MANIFEST_VERSION,
+          kind: "gallery-index",
+          manifest: galleryManifest,
+          delivery: {
+            detailShards: [
+              {
+                url: "/assets/photo-details.0.deadbeef.json",
+                photoIds: ["v3"],
+              },
+            ],
+            mapUrl: "/assets/map-details.deadbeef.json",
+          },
+        }),
+      },
+    };
+    (
+      globalThis as typeof globalThis & {
+        __AFILMORY__?: AfilmoryBrowserRuntime;
+      }
+    ).__AFILMORY__ = runtime;
+
+    const manifest = await loadManifestRuntime();
+
+    expect(manifest.photos[0]?.id).toBe("v3");
+    expect(runtime.manifest?.delivery).toEqual({
+      detailShards: [
+        {
+          url: "/assets/photo-details.0.deadbeef.json",
+          photoIds: ["v3"],
+        },
+      ],
+      mapUrl: "/assets/map-details.deadbeef.json",
+    });
   });
 
   it("fetches the external manifest when only a URL is injected", async () => {

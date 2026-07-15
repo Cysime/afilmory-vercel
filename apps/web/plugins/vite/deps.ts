@@ -2,10 +2,61 @@ import { gzipSync } from "node:zlib";
 
 import type { Plugin, UserConfig } from "vite";
 
+import { setCriticalPrecacheFiles } from "./__internal__/precache-policy";
+
 export type DependencyChunkGroup = {
   name: string;
   patterns: string[];
 };
+
+/**
+ * Cross-vendor static cycles are unsafe with manual chunks: evaluation may
+ * reach an imported binding before the exporting vendor chunk initializes it.
+ * Return the first dangerous cycle so the production build can fail closed.
+ */
+export function findStaticVendorChunkCycle(
+  importsByChunk: ReadonlyMap<string, readonly string[]>,
+): string[] | null {
+  const states = new Map<string, "visiting" | "visited">();
+  const stack: string[] = [];
+
+  const visit = (fileName: string): string[] | null => {
+    states.set(fileName, "visiting");
+    stack.push(fileName);
+
+    for (const importedFile of importsByChunk.get(fileName) ?? []) {
+      if (!importsByChunk.has(importedFile)) continue;
+
+      const state = states.get(importedFile);
+      if (!state) {
+        const nestedCycle = visit(importedFile);
+        if (nestedCycle) return nestedCycle;
+        continue;
+      }
+
+      if (state === "visiting") {
+        const cycleStart = stack.lastIndexOf(importedFile);
+        const cycle = [...stack.slice(cycleStart), importedFile];
+        const vendorChunks = new Set(
+          cycle.filter((item) => item.startsWith("vendor/")),
+        );
+        if (vendorChunks.size >= 2) return cycle;
+      }
+    }
+
+    stack.pop();
+    states.set(fileName, "visited");
+    return null;
+  };
+
+  for (const fileName of importsByChunk.keys()) {
+    if (states.has(fileName)) continue;
+    const cycle = visit(fileName);
+    if (cycle) return cycle;
+  }
+
+  return null;
+}
 
 function getNodeModulePackageName(id: string): string | null {
   const modulePath = id.split("/node_modules/").at(-1);
@@ -32,8 +83,48 @@ function matchesPattern(packageName: string, pattern: string): boolean {
 export function createDependencyChunksPlugin(
   groups: DependencyChunkGroup[],
 ): Plugin {
+  const renderedImports = new Map<string, string[]>();
+  const renderedEntries = new Set<string>();
+  const renderedCriticalRoutes = new Set<string>();
+
+  const publishRenderedPrecacheGraph = () => {
+    const files = new Set<string>();
+    const visit = (fileName: string) => {
+      if (files.has(fileName)) return;
+      files.add(fileName);
+      for (const importedFile of renderedImports.get(fileName) ?? []) {
+        visit(importedFile);
+      }
+    };
+    for (const fileName of renderedEntries) visit(fileName);
+    for (const fileName of renderedCriticalRoutes) visit(fileName);
+    if (files.size > 0) setCriticalPrecacheFiles(files);
+  };
+
   return {
     name: "dependency-chunks",
+    renderStart() {
+      renderedImports.clear();
+      renderedEntries.clear();
+      renderedCriticalRoutes.clear();
+      setCriticalPrecacheFiles([]);
+    },
+    renderChunk(_code, chunk) {
+      renderedImports.set(chunk.fileName, [...chunk.imports]);
+      if (chunk.isEntry) renderedEntries.add(chunk.fileName);
+      if (
+        chunk.facadeModuleId
+          ?.replaceAll("\\", "/")
+          .endsWith("/src/pages/(main)/layout.tsx")
+      ) {
+        renderedCriticalRoutes.add(chunk.fileName);
+      }
+      // renderChunk runs before Workbox starts generating the service worker.
+      // Publishing incrementally avoids a generateBundle hook ordering race
+      // between Rollup and vite-plugin-pwa.
+      publishRenderedPrecacheGraph();
+      return null;
+    },
     config(config: UserConfig) {
       config.build = config.build || {};
       // The HEIC codec bundle is intentionally loaded on demand and remains large.
@@ -100,6 +191,27 @@ export function createDependencyChunksPlugin(
         chunks.filter((chunk) => chunk.isEntry).map((chunk) => chunk.fileName),
       );
 
+      const vendorCycle = findStaticVendorChunkCycle(
+        new Map(chunks.map((chunk) => [chunk.fileName, chunk.imports])),
+      );
+      if (vendorCycle) {
+        this.error(
+          `Static vendor chunk cycle detected: ${vendorCycle.join(" -> ")}. ` +
+            "Keep tightly coupled dependencies in one manual chunk.",
+        );
+      }
+
+      const leakedPrivateRoute = chunks.find((chunk) =>
+        /\/src\/pages\/\((?:debug|data)\)\//.test(
+          chunk.facadeModuleId?.replaceAll("\\", "/") ?? "",
+        ),
+      );
+      if (leakedPrivateRoute) {
+        this.error(
+          `Private route leaked into production output: ${leakedPrivateRoute.facadeModuleId}`,
+        );
+      }
+
       for (const item of Object.values(bundle)) {
         if (item.type !== "chunk" || !item.fileName.startsWith("vendor/")) {
           continue;
@@ -133,12 +245,51 @@ export function createDependencyChunksPlugin(
       };
       for (const entryFile of entryFiles) visitInitialImport(entryFile);
 
+      // The gallery layout is a route-lazy chunk, but bootstrap explicitly
+      // awaits it before the first React render. Treat it as part of the real
+      // startup closure for both the gzip budget and the PWA app shell.
+      const preRenderFiles = new Set(initialFiles);
+      const visitPreRenderImport = (fileName: string) => {
+        if (preRenderFiles.has(fileName)) return;
+        preRenderFiles.add(fileName);
+        const chunk = chunksByFileName.get(fileName);
+        for (const importedFile of chunk?.imports ?? []) {
+          visitPreRenderImport(importedFile);
+        }
+      };
+      const criticalRouteChunks = chunks.filter((chunk) =>
+        chunk.facadeModuleId
+          ?.replaceAll("\\", "/")
+          .endsWith("/src/pages/(main)/layout.tsx"),
+      );
+      if (criticalRouteChunks.length !== 1) {
+        this.error(
+          `Expected one critical gallery layout chunk, found ${criticalRouteChunks.length}.`,
+        );
+      }
+      for (const chunk of criticalRouteChunks) {
+        visitPreRenderImport(chunk.fileName);
+      }
+
+      // Vite records CSS referenced by each chunk outside Rollup's imports
+      // graph. Include it in the offline shell allow-list.
+      const criticalCss = new Set<string>();
+      for (const fileName of preRenderFiles) {
+        const metadata = chunksByFileName.get(fileName)?.viteMetadata as
+          | { importedCss?: Set<string> }
+          | undefined;
+        for (const cssFile of metadata?.importedCss ?? []) {
+          criticalCss.add(cssFile);
+        }
+      }
+      setCriticalPrecacheFiles([...preRenderFiles, ...criticalCss]);
+
       const forbiddenInitialPrefixes = [
         "vendor/map-",
         "vendor/heic-",
         "vendor/exiftool-",
       ];
-      const leakedLazyChunk = [...initialFiles].find((fileName) =>
+      const leakedLazyChunk = [...preRenderFiles].find((fileName) =>
         forbiddenInitialPrefixes.some((prefix) => fileName.startsWith(prefix)),
       );
       if (leakedLazyChunk) {
@@ -164,6 +315,30 @@ export function createDependencyChunksPlugin(
           `Initial JavaScript closure is ${(initialGzipBytes / 1024).toFixed(1)} KiB gzip; budget is ${initialJsBudget / 1024} KiB.`,
         );
       }
+
+      const preRenderGzipBytes = [...preRenderFiles].reduce(
+        (total, fileName) => {
+          const item = bundle[fileName];
+          if (!item) return total;
+          const source =
+            item.type === "chunk"
+              ? item.code
+              : typeof item.source === "string"
+                ? item.source
+                : Buffer.from(item.source);
+          return total + gzipSync(source).byteLength;
+        },
+        0,
+      );
+      const preRenderBudget = 420 * 1024;
+      if (preRenderGzipBytes > preRenderBudget) {
+        this.error(
+          `Pre-render JavaScript closure is ${(preRenderGzipBytes / 1024).toFixed(1)} KiB gzip; budget is ${preRenderBudget / 1024} KiB.`,
+        );
+      }
+      this.info(
+        `Startup budgets: static ${(initialGzipBytes / 1024).toFixed(1)} KiB gzip; pre-render ${(preRenderGzipBytes / 1024).toFixed(1)} KiB gzip.`,
+      );
     },
   };
 }

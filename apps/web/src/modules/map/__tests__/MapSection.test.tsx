@@ -63,12 +63,9 @@ const createPhoto = (
   s3Key: `${id}.jpg`,
   lastModified: new Date().toISOString(),
   size: 1,
-  exif: {
-    GPSLatitude: latitude,
-    GPSLongitude: longitude,
-    GPSLatitudeRef: "N",
-    GPSLongitudeRef: "E",
-  },
+  // Web Delivery v3 keeps coordinates in the lightweight location summary;
+  // GPS EXIF arrives later with the optional map shard.
+  exif: { Make: "Synthetic camera" },
   toneAnalysis: null,
   location: {
     latitude,
@@ -91,10 +88,12 @@ const photos = [
 const photoRepository = {
   getPhotos: () => photos,
   getPhoto: (id: string) => photos.find((photo) => photo.id === id),
+  ensureMapDetails: vi.fn(async () => {}),
 };
 
 vi.mock("~/runtime/app-runtime", () => ({
   usePhotoRepository: () => photoRepository,
+  usePhotoRepositoryVersion: () => 0,
 }));
 
 describe("MapSection", () => {
@@ -131,5 +130,6 @@ describe("MapSection", () => {
     expect(firstRender.regions.map((region) => region.label)).toEqual([
       "China",
     ]);
+    expect(photoRepository.ensureMapDetails).toHaveBeenCalledTimes(1);
   });
 });

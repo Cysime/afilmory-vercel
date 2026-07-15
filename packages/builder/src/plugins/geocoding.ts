@@ -31,6 +31,7 @@ import type { BuilderPlugin } from "./types.js";
 const PLUGIN_NAME = "afilmory:geocoding";
 const RUN_STATE_KEY = "geocodingState";
 const CACHE_DELTA_PLUGIN_DATA_KEY = "afilmory:geocoding:cache-delta";
+const GEOCODING_PROCESSING_VERSION = "geocoding:v2";
 
 type LocationLogger = Logger["main"];
 
@@ -58,6 +59,18 @@ function buildProviderKey(
   locale: string,
 ): string {
   return `${settings.provider}:${settings.mapboxToken ?? ""}:${settings.nominatimBaseUrl ?? ""}:${settings.nominatimUserAgent ?? ""}:${settings.requestTimeoutMs}:${locale}`;
+}
+
+function getLocationFingerprint(settings: ResolvedGeocodingSettings): string {
+  // Credentials, cache paths and timeout policy do not affect the derived
+  // location data contract and therefore are deliberately excluded.
+  return [
+    GEOCODING_PROCESSING_VERSION,
+    settings.provider,
+    settings.cachePrecision,
+    settings.locales.join(","),
+    settings.nominatimBaseUrl ?? "",
+  ].join(":");
 }
 
 function ensureProvider(
@@ -127,6 +140,20 @@ export default function geocodingPlugin(
       onInit: () => {
         settings = createResolvedGeocodingSettings(normalizedOptions);
       },
+      afterManifestLoad: ({ payload }) => {
+        if (!settings || !normalizedOptions.enable) return;
+        const fingerprint = getLocationFingerprint(settings);
+        const staleKeys = payload.manifest.photos
+          .filter((item) => item.processing?.location !== fingerprint)
+          .map((item) => item.s3Key);
+        if (staleKeys.length === 0) return;
+        payload.options.derivedReprocessKeys = [
+          ...new Set([
+            ...(payload.options.derivedReprocessKeys ?? []),
+            ...staleKeys,
+          ]),
+        ];
+      },
       afterPhotoProcess: async ({
         services,
         emitPluginEvent,
@@ -139,8 +166,13 @@ export default function geocodingPlugin(
         const { item } = payload.result;
         if (!item) return;
 
+        const privacyModeChanged =
+          payload.context.existingItem?.processing?.privacy !==
+          item.processing?.privacy;
         const shouldOverwriteExisting =
-          payload.options.isForceMode || payload.options.isForceManifest;
+          payload.options.isForceMode ||
+          payload.options.isForceManifest ||
+          privacyModeChanged;
         const currentSettings = settings;
 
         await ensurePhotoContext(services, emitPluginEvent, async () => {
@@ -164,6 +196,8 @@ export default function geocodingPlugin(
             payload.result.pluginData[CACHE_DELTA_PLUGIN_DATA_KEY] =
               resolution.cacheDelta;
           }
+          item.processing ??= {};
+          item.processing.location = getLocationFingerprint(currentSettings);
         });
       },
       afterProcessTasks: async ({
@@ -220,6 +254,9 @@ export default function geocodingPlugin(
                 ) &&
                 !shouldOverwriteExisting
               ) {
+                item.processing ??= {};
+                item.processing.location =
+                  getLocationFingerprint(currentSettings);
                 continue;
               }
 
@@ -246,6 +283,9 @@ export default function geocodingPlugin(
                   updated++;
                 }
               }
+              item.processing ??= {};
+              item.processing.location =
+                getLocationFingerprint(currentSettings);
             }
 
             if (attempted > 0) {

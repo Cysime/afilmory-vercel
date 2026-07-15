@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createPhotoId, findPhotoIdCollisionKeys } from "./id.js";
+import {
+  createPhotoId,
+  findPhotoIdCollisionKeys,
+  resolveStablePhotoId,
+} from "./id.js";
 
 describe("photo id helpers", () => {
   it("detects basename collisions across different directories", () => {
@@ -41,5 +45,30 @@ describe("photo id helpers", () => {
       "d/Caf\u00e9.png",
     ];
     expect(findPhotoIdCollisionKeys(keys)).toEqual(new Set(keys));
+  });
+
+  it("keeps published IDs stable through a 1 → 2 → 1 basename collision", () => {
+    const originalKey = "album-a/sunset.jpg";
+    const newcomerKey = "album-b/sunset.jpg";
+    const original = { id: resolveStablePhotoId(originalKey) };
+    expect(original.id).toBe("sunset");
+
+    const collisionKeys = findPhotoIdCollisionKeys([originalKey, newcomerKey]);
+    const originalDuringCollision = resolveStablePhotoId(
+      originalKey,
+      original,
+      { hasCollision: collisionKeys.has(originalKey) },
+    );
+    const newcomer = resolveStablePhotoId(newcomerKey, undefined, {
+      hasCollision: collisionKeys.has(newcomerKey),
+    });
+
+    expect(originalDuringCollision).toBe("sunset");
+    expect(newcomer).toMatch(/^sunset_[a-f0-9]{8}$/);
+    expect(newcomer).not.toBe(originalDuringCollision);
+    // Removing the conflicting photo does not migrate the surviving ID or its
+    // thumbnail basename back and forth.
+    expect(resolveStablePhotoId(originalKey, original)).toBe("sunset");
+    expect(resolveStablePhotoId(newcomerKey, { id: newcomer })).toBe(newcomer);
   });
 });

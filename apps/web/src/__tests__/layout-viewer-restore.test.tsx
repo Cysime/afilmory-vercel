@@ -120,6 +120,7 @@ vi.mock("~/runtime/app-runtime", () => ({
 describe("main layout viewer URL restore", () => {
   afterEach(() => {
     vi.useRealTimers();
+    window.history.replaceState(null, "", "/");
   });
 
   beforeEach(() => {
@@ -295,6 +296,11 @@ describe("main layout viewer URL restore", () => {
       pathname: "/photos/visible-photo",
       search: "?cameras=SONY+ILCE-7C",
     };
+    window.history.replaceState(
+      null,
+      "",
+      "/photos/visible-photo?cameras=SONY+ILCE-7C",
+    );
     gallerySetting = {
       selectedTags: [],
       selectedCameras: [],
@@ -369,6 +375,11 @@ describe("main layout viewer URL restore", () => {
       pathname: "/photos/visible-photo",
       search: "?lenses=FE+35mm",
     };
+    window.history.replaceState(
+      null,
+      "",
+      "/photos/visible-photo?lenses=FE+35mm",
+    );
     gallerySetting = {
       selectedTags: [],
       selectedCameras: [],
@@ -400,6 +411,7 @@ describe("main layout viewer URL restore", () => {
       pathname: "/photos/visible-photo",
       search: "",
     };
+    window.history.replaceState(null, "", "/photos/visible-photo");
     rerender(<Component />);
 
     act(() => {
@@ -425,6 +437,11 @@ describe("main layout viewer URL restore", () => {
       pathname: "/photos/visible-photo",
       search: "?cameras=SONY+ILCE-7C",
     };
+    window.history.replaceState(
+      null,
+      "",
+      "/photos/visible-photo?cameras=SONY+ILCE-7C",
+    );
     gallerySetting = {
       selectedTags: [],
       selectedCameras: [],
@@ -458,6 +475,7 @@ describe("main layout viewer URL restore", () => {
       pathname: "/",
       search: "",
     };
+    window.history.replaceState(null, "", "/");
     rerender(<Component />);
 
     // 仅剩 URL 恢复效应的一次筛选同步；不应有延迟返回的第二次
@@ -469,5 +487,82 @@ describe("main layout viewer URL restore", () => {
 
     expect(navigate).not.toHaveBeenCalled();
     expect(hoisted.setGallerySetting).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let a deferred close return overwrite newer browser history before React rerenders", async () => {
+    vi.useFakeTimers();
+    viewerState = {
+      currentIndex: 0,
+      isOpen: true,
+    };
+    paramsState = {
+      photoId: "visible-photo",
+    };
+    locationState = {
+      pathname: "/photos/visible-photo",
+      search: "",
+    };
+    window.history.replaceState(null, "", "/photos/visible-photo");
+    getViewerPhotos.mockReturnValue([visiblePhoto]);
+
+    const { rerender } = render(<Component />);
+    vi.clearAllMocks();
+    viewerState = {
+      currentIndex: 0,
+      isOpen: false,
+    };
+    rerender(<Component />);
+
+    // BrowserRouter writes history before its React transition commits, so
+    // useLocation can still expose the detail route during this interval.
+    window.history.replaceState(null, "", "/explore");
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(navigate).not.toHaveBeenCalled();
+    expect(hoisted.setGallerySetting).not.toHaveBeenCalled();
+  });
+
+  it("does not commit stale gallery URL migration after browser history leaves the gallery", async () => {
+    locationState = {
+      pathname: "/",
+      search: "?rating=5",
+    };
+    paramsState = {};
+    viewerState = {
+      currentIndex: 0,
+      isOpen: false,
+    };
+    window.history.replaceState(null, "", "/explore");
+
+    try {
+      render(<Component />);
+      await act(async () => {});
+
+      expect(setSearchParams).not.toHaveBeenCalled();
+      expect(navigate).not.toHaveBeenCalled();
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  it("does not let gallery URL synchronization mutate the explore route", async () => {
+    locationState = {
+      pathname: "/explore",
+      search: "?country=fictional",
+    };
+    paramsState = {};
+    viewerState = {
+      currentIndex: 0,
+      isOpen: false,
+    };
+
+    render(<Component />);
+    await act(async () => {});
+
+    expect(hoisted.setGallerySetting).not.toHaveBeenCalled();
+    expect(setSearchParams).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

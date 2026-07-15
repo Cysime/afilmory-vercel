@@ -4,6 +4,7 @@ import type { PhotoProcessorOptions } from "../core/contracts/photo-processing.j
 import { thumbnailExists } from "../image/thumbnail.js";
 import type { StorageObject } from "../storage/interfaces.js";
 import type { PhotoManifestItem } from "../types/photo.js";
+import { CURRENT_CORE_PROCESSING_FINGERPRINTS } from "./processing-fingerprints.js";
 import { decidePhotoWork, shouldProcessPhoto } from "./work-decision.js";
 
 vi.mock("../image/thumbnail.js", () => ({
@@ -43,6 +44,7 @@ function createExistingPhoto(
     exif: null,
     toneAnalysis: null,
     location: null,
+    processing: { ...CURRENT_CORE_PROCESSING_FINGERPRINTS },
     ...overrides,
   };
 }
@@ -162,6 +164,29 @@ describe("decidePhotoWork", () => {
       shouldProcess: false,
       reason: "no processing needed",
     });
+  });
+
+  it("reprocesses unchanged photos when a derived-stage fingerprint is stale", async () => {
+    const hasThumbnail = vi.fn(async () => true);
+    const existing = createExistingPhoto({
+      processing: {
+        ...CURRENT_CORE_PROCESSING_FINGERPRINTS,
+        tone: "tone:old",
+      },
+    });
+
+    await expect(
+      decidePhotoWork(
+        existing,
+        createStorageObject(),
+        createOptions(),
+        hasThumbnail,
+      ),
+    ).resolves.toEqual({
+      shouldProcess: true,
+      reason: "processing fingerprint changed",
+    });
+    expect(hasThumbnail).not.toHaveBeenCalled();
   });
 
   it("always processes in force mode without probing thumbnails", async () => {

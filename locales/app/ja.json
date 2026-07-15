@@ -371,7 +371,9 @@
   "photo.webgl.creatingTexture": "テクスチャを作成中…",
   "photo.webgl.loadingImage": "画像を読み込み中…",
   "photo.webgl.unavailable": "WebGL が利用できないため、画像をレンダリングできません",
+  "photo.zoom.controls": "ズームコントロール",
   "photo.zoom.hint": "ダブルタップまたはピンチしてズーム",
+  "photo.zoom.reset": "ズームをリセット",
   "slider.auto": "自動",
   "slider.columns": "{{count}} 列",
   "video.motion-photo.extracting": "埋め込み動画を抽出しています…"

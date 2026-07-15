@@ -18,4 +18,10 @@ describe("isSupportedImageKey", () => {
     // eslint-disable-next-line unicorn/no-useless-undefined
     expect(isSupportedImageKey(undefined)).toBe(false);
   });
+
+  it("honors a caller-provided supported format set", () => {
+    const formats = new Set([".avif"]);
+    expect(isSupportedImageKey("custom.avif", formats)).toBe(true);
+    expect(isSupportedImageKey("default.jpg", formats)).toBe(false);
+  });
 });

@@ -52,8 +52,8 @@ describe("resolveBuilderConfig — old merge semantics preserved", () => {
           defaultConcurrency: 12,
           enableLivePhotoDetection: false,
           digestSuffixLength: 6,
-          // worker 的用户侧路径已迁到 processing 下；resolved config 仍存放在
-          // observability.performance.worker（见 schema.ts 的 mergeSystemSection）
+          locationMode: "coarse",
+          // worker 的输入与 resolved config 都使用 processing.worker。
           worker: { workerCount: 4, useClusterMode: false },
         },
         observability: {
@@ -74,19 +74,20 @@ describe("resolveBuilderConfig — old merge semantics preserved", () => {
           defaultConcurrency: 12,
           enableLivePhotoDetection: false,
           digestSuffixLength: 6,
+          locationMode: "coarse",
+          worker: {
+            processCount: 4,
+            globalTaskConcurrency: 4,
+            workerCount: 4,
+            timeout: 300_000,
+            useClusterMode: false,
+            workerConcurrency: 2,
+          },
         },
         observability: {
           showProgress: false,
           showDetailedStats: true,
           logging: { verbose: false, level: "debug", outputToFile: false },
-          performance: {
-            worker: {
-              workerCount: 4,
-              timeout: 300_000,
-              useClusterMode: false,
-              workerConcurrency: 2,
-            },
-          },
         },
       },
       user: { storage },
@@ -265,9 +266,7 @@ describe("loadBuilderConfig", () => {
       // 未覆盖的部分保持默认值
       expect(config.system.processing.defaultConcurrency).toBe(10);
       // 新路径 system.processing.worker 端到端落到内部 worker 配置
-      expect(config.system.observability.performance.worker.workerCount).toBe(
-        3,
-      );
+      expect(config.system.processing.worker.workerCount).toBe(3);
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

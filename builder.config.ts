@@ -114,24 +114,37 @@ export default defineBuilderConfig(() => ({
 
   system: {
     processing: {
-      defaultConcurrency: 10,
+      defaultConcurrency: Math.min(
+        8,
+        typeof os.availableParallelism === "function"
+          ? os.availableParallelism()
+          : os.cpus().length,
+      ),
       enableLivePhotoDetection: true,
       digestSuffixLength: 0,
+      locationMode: env.PHOTO_LOCATION_MODE,
       worker: {
-        // An environment variable can temporarily lower concurrency: when local
-        // bandwidth is limited, CPU x 2 workers x concurrency 2 can push large
-        // S3 downloads into the 60s timeout (see the s3-provider retry logs).
-        workerCount: env.BUILDER_WORKER_COUNT
+        // Child processes are deliberately conservative: Sharp and ExifTool
+        // both have their own native memory/thread costs.
+        processCount: env.BUILDER_WORKER_COUNT
           ? Number(env.BUILDER_WORKER_COUNT)
           : Math.min(
-              1_024,
+              4,
               Math.max(
                 1,
-                (typeof os.availableParallelism === "function"
-                  ? os.availableParallelism()
-                  : os.cpus().length) * 2,
+                Math.ceil(
+                  (typeof os.availableParallelism === "function"
+                    ? os.availableParallelism()
+                    : os.cpus().length) / 2,
+                ),
               ),
             ),
+        globalTaskConcurrency: Math.min(
+          8,
+          typeof os.availableParallelism === "function"
+            ? os.availableParallelism()
+            : os.cpus().length,
+        ),
         // Covers download retries plus decode/EXIF/thumbnail work. This must
         // remain above the S3 provider's 60s total request deadline.
         timeout: 300_000,
@@ -151,7 +164,8 @@ export default defineBuilderConfig(() => ({
   },
   plugins: [
     geocodingPlugin({
-      enable: env.GEOCODING_ENABLED !== "false",
+      // Reverse geocoding contacts a third party, so it is explicit opt-in.
+      enable: env.GEOCODING_ENABLED === "true",
       provider: env.GEOCODING_PROVIDER || "nominatim",
       mapboxToken: env.MAPBOX_TOKEN,
       nominatimBaseUrl: env.GEOCODING_NOMINATIM_BASE_URL,

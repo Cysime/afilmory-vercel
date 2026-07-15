@@ -5,6 +5,7 @@ import {
   createSerializableBuilderConfigForWorker,
   toSerializablePluginConfigEntry,
 } from "./serializable.js";
+import thumbnailStoragePlugin from "./thumbnail-storage/plugin.js";
 import type {
   BuilderPlugin,
   BuilderPluginConfigEntry,
@@ -50,6 +51,13 @@ describe("toSerializablePluginConfigEntry", () => {
 
     // It returns the *reference*, not the original inline object.
     expect(toSerializablePluginConfigEntry(inline)).toBe(reference);
+  });
+
+  it("serializes the official thumbnail storage plugin for cluster workers", () => {
+    expect(toSerializablePluginConfigEntry(thumbnailStoragePlugin())).toEqual({
+      plugin: "thumbnail-storage",
+      options: {},
+    });
   });
 
   it("throws and quotes the plugin name for a named inline plugin without a reference", () => {

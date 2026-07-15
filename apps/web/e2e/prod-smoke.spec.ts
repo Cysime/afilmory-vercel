@@ -12,9 +12,10 @@ import { expect, test } from "@playwright/test";
 // 原图域名是虚构的 .test 域，打开查看器后必然加载失败（降级回缩略图态），
 // 因此 console error 断言只覆盖首屏加载 + SW 注册阶段。
 
-// 外部 manifest 的 hashed 资产路径（data-inject 插件 buildStart 里 emitFile 的
-// fileName 格式：assets/photos-manifest.<sha256 前 10 位>.json）。
-const EXTERNAL_MANIFEST_ASSET = /\/assets\/photos-manifest\.[0-9a-f]{10}\.json/;
+// Web Delivery Manifest v3 的轻量 gallery index 与按需详情分片。
+const EXTERNAL_MANIFEST_ASSET = /\/assets\/gallery-index\.[0-9a-f]{10}\.json/;
+const PHOTO_DETAIL_ASSET =
+  /\/assets\/photo-details\.(?:root|[01]+(?:-\d+)?)\.[0-9a-f]{10}\.json/;
 
 test("production bundle serves gallery, viewer route, and service worker", async ({
   page,
@@ -29,10 +30,13 @@ test("production bundle serves gallery, viewer route, and service worker", async
     consoleErrors.push(`pageerror: ${error.message}`);
   });
   const manifestRequests: string[] = [];
+  const detailRequests: string[] = [];
   page.on("request", (request) => {
     if (EXTERNAL_MANIFEST_ASSET.test(request.url())) {
       manifestRequests.push(request.url());
     }
+    if (PHOTO_DETAIL_ASSET.test(request.url()))
+      detailRequests.push(request.url());
   });
 
   await page.goto("/");
@@ -44,6 +48,13 @@ test("production bundle serves gallery, viewer route, and service worker", async
   const photoItems = page.locator("[data-photo-id]");
   await expect(photoItems.first()).toBeVisible();
   expect(await photoItems.count()).toBeGreaterThan(0);
+  await expect(
+    page.getByText("Powered by Afilmory", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: /^Source \(/ })).toHaveAttribute(
+    "href",
+    /github\.com\/vsxd\/afilmory-vercel(?:\/tree\/[^/]+)?$/,
+  );
 
   // 生产专属：manifest 以外部 hashed 资产 + 内联 fetch 脚本交付（dev server
   // 走 /__afilmory/ 中间件、内嵌模式则完全无请求）。不能断言
@@ -58,6 +69,8 @@ test("production bundle serves gallery, viewer route, and service worker", async
     ),
   ).toMatch(EXTERNAL_MANIFEST_ASSET);
   expect(manifestRequests).not.toEqual([]);
+  // Full EXIF/tone/location records are not part of the startup request graph.
+  expect(detailRequests).toEqual([]);
 
   // 生产专属：Service Worker 注册并激活（registerType: autoUpdate）。
   await expect
@@ -92,4 +105,5 @@ test("production bundle serves gallery, viewer route, and service worker", async
     page.getByRole("dialog", { name: "Photo viewer" }),
   ).toBeVisible();
   await expect(page).toHaveURL(/\/photos\/[^/?]+/);
+  await expect.poll(() => detailRequests.length).toBeGreaterThan(0);
 });

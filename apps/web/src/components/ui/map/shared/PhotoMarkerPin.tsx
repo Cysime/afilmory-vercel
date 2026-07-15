@@ -1,19 +1,16 @@
-import {
-  GlassButton,
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@afilmory/ui";
+import { GlassButton } from "@afilmory/ui";
 import { m } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { Marker } from "react-map-gl/maplibre";
 import { Link, useLocation } from "react-router";
 
 import { ThumbnailImage } from "~/components/ui/ThumbnailImage";
+import { getPhotoAccessibleLabel } from "~/lib/photo-accessibility";
 import { getPhotoDate } from "~/lib/photo-date";
 import { buildPhotoDetailPathname } from "~/lib/photo-detail-route";
 import { buildPhotoDetailSearch } from "~/lib/return-to";
 
+import { MapPopover, MapPopoverContent, MapPopoverTrigger } from "./MapPopover";
 import type { PhotoMarkerPinProps } from "./types";
 
 export const PhotoMarkerPin = ({
@@ -25,6 +22,7 @@ export const PhotoMarkerPin = ({
   const { t, i18n } = useTranslation();
   const location = useLocation();
   const returnTo = `${location.pathname}${location.search}`;
+  const photoLabel = getPhotoAccessibleLabel(marker.photo, t, i18n.language);
   const latitudeDirection =
     marker.latitudeRef === "S"
       ? t("explore.coordinates.south")
@@ -40,7 +38,11 @@ export const PhotoMarkerPin = ({
 
   const handleClose = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onClose?.();
+    e.currentTarget
+      .closest('[role="dialog"]')
+      ?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
   };
 
   return (
@@ -49,12 +51,13 @@ export const PhotoMarkerPin = ({
       longitude={marker.longitude}
       latitude={marker.latitude}
     >
-      <HoverCard
-        open={isSelected ? true : undefined} // 当选中时强制打开
-        openDelay={isSelected ? 0 : 400} // 选中时立即打开
-        closeDelay={isSelected ? 0 : 100} // 选中时不自动关闭
+      <MapPopover
+        open={isSelected}
+        onOpenChange={(open) => {
+          if (!open) onClose?.();
+        }}
       >
-        <HoverCardTrigger asChild>
+        <MapPopoverTrigger>
           <m.button
             type="button"
             className="focus-visible:ring-accent/45 group focus-visible:ring-offset-background relative flex h-11 w-11 cursor-pointer items-center justify-center rounded-full focus-visible:ring-2 focus-visible:ring-offset-2"
@@ -68,7 +71,7 @@ export const PhotoMarkerPin = ({
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
             onClick={handleClick}
-            aria-label={marker.photo.title || marker.photo.id}
+            aria-label={photoLabel}
           >
             {/* Selection ring - 只有选中时显示 */}
             {isSelected && (
@@ -80,7 +83,7 @@ export const PhotoMarkerPin = ({
               <ThumbnailImage
                 photoId={marker.photo.id}
                 src={marker.photo.thumbnailUrl || marker.photo.originalUrl}
-                alt={marker.photo.title || marker.photo.id}
+                alt=""
                 width={marker.photo.width}
                 height={marker.photo.height}
                 thumbHash={marker.photo.thumbHash}
@@ -117,19 +120,11 @@ export const PhotoMarkerPin = ({
               <div className="absolute inset-0 rounded-full shadow-inner shadow-black/5" />
             </div>
           </m.button>
-        </HoverCardTrigger>
+        </MapPopoverTrigger>
 
-        <HoverCardContent
+        <MapPopoverContent
+          aria-label={photoLabel}
           className="w-[min(20rem,calc(100vw-2rem))] overflow-hidden border-white/20 bg-white/95 p-0 shadow-xl backdrop-blur-2xl dark:bg-black/95"
-          side="top"
-          align="center"
-          portal={false}
-          sideOffset={8}
-          // 当选中时阻止点击外部关闭
-          onPointerDownOutside={
-            isSelected ? (e) => e.preventDefault() : undefined
-          }
-          onEscapeKeyDown={isSelected ? (e) => e.preventDefault() : undefined}
         >
           <div className="relative">
             {/* 选中时显示关闭按钮 */}
@@ -152,7 +147,7 @@ export const PhotoMarkerPin = ({
               <ThumbnailImage
                 photoId={marker.photo.id}
                 src={marker.photo.thumbnailUrl || marker.photo.originalUrl}
-                alt={marker.photo.title || marker.photo.id}
+                alt=""
                 width={marker.photo.width}
                 height={marker.photo.height}
                 thumbHash={marker.photo.thumbHash}
@@ -178,9 +173,9 @@ export const PhotoMarkerPin = ({
               >
                 <h3
                   className="text-text flex-1 truncate text-sm font-semibold"
-                  title={marker.photo.title || marker.photo.id}
+                  title={photoLabel}
                 >
-                  {marker.photo.title || marker.photo.id}
+                  {photoLabel}
                 </h3>
                 <i
                   className="i-mingcute-arrow-right-line text-text-secondary transition-transform group-hover/link:translate-x-0.5"
@@ -253,8 +248,8 @@ export const PhotoMarkerPin = ({
               </div>
             </div>
           </div>
-        </HoverCardContent>
-      </HoverCard>
+        </MapPopoverContent>
+      </MapPopover>
     </Marker>
   );
 };

@@ -4,6 +4,7 @@ export type {
   LocationInfo,
   PhotoInfo,
   PhotoManifestItem,
+  PhotoProcessingFingerprints,
   PickedExif,
   SonyRecipe,
   ToneAnalysis,
@@ -15,4 +16,11 @@ export interface ProcessPhotoResult {
   item: import("@afilmory/schema/types").PhotoManifestItem | null;
   type: "processed" | "skipped" | "new" | "failed";
   pluginData?: Record<string, unknown>;
+  failure?: PhotoProcessingFailure;
+}
+
+export interface PhotoProcessingFailure {
+  code: string;
+  message: string;
+  stage: string;
 }

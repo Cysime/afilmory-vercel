@@ -227,6 +227,36 @@ test("applies and resets command-palette camera filters through URL state", asyn
   expect(diagnostics).toEqual([]);
 });
 
+test("does not let pending gallery URL canonicalization undo map navigation", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    let didClickMap = false;
+    const clickMapAsSoonAsItMounts = () => {
+      if (didClickMap) return;
+      const mapButton = [...document.querySelectorAll("button")].find(
+        (button) => button.getAttribute("aria-label") === "Map Explore",
+      );
+      if (!mapButton) return;
+      didClickMap = true;
+      mapButton.click();
+    };
+
+    new MutationObserver(clickMapAsSoonAsItMounts).observe(document, {
+      childList: true,
+      subtree: true,
+    });
+  });
+
+  // `rating` is a removed legacy parameter. Its canonicalization used to
+  // run in a passive gallery effect after the page was already interactive;
+  // when map navigation won the preceding microtask, that stale effect could
+  // still resolve its route-relative setSearchParams call back to `/`.
+  await page.goto(`/?e2e=${Date.now()}&rating=5`);
+
+  await expect(page).toHaveURL(/\/explore$/);
+});
+
 test("opens the map route and renders MapLibre data from runtime services", async ({
   page,
 }) => {

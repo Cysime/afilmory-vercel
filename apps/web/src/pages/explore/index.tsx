@@ -12,7 +12,11 @@ const MapSection = lazy(() =>
 export const Component = () => {
   return (
     <Suspense fallback={<ExploryPageSkeleton />}>
-      <ErrorBoundary fallback={<MapErrorState />}>
+      <ErrorBoundary
+        fallbackRender={({ resetErrorBoundary }) => (
+          <MapErrorState onRetry={resetErrorBoundary} />
+        )}
+      >
         <MapSection />
       </ErrorBoundary>
     </Suspense>

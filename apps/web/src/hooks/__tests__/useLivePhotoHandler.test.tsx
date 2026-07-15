@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  waitFor,
+} from "@testing-library/react";
 import {
   afterAll,
   afterEach,
@@ -134,6 +140,79 @@ describe("useLivePhotoHandler", () => {
 
     expect(runtimeMock.imageLoading.createLoader).not.toHaveBeenCalled();
     expect(processVideoMock).not.toHaveBeenCalled();
+  });
+
+  it("requires a 200ms hover dwell and cancels a passing pointer", async () => {
+    vi.useFakeTimers();
+    const { getByTestId } = render(
+      <LivePhotoHandlerHarness data={photoData} tick={0} />,
+    );
+
+    fireEvent.click(getByTestId("enter"));
+    await act(() => vi.advanceTimersByTimeAsync(199));
+    expect(runtimeMock.imageLoading.createLoader).not.toHaveBeenCalled();
+
+    fireEvent.click(getByTestId("leave"));
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    expect(runtimeMock.imageLoading.createLoader).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("cancels an unfinished request when the pointer leaves", async () => {
+    processVideoMock.mockImplementation(() => new Promise(() => {}));
+    const { getByTestId } = render(
+      <LivePhotoHandlerHarness data={photoData} tick={0} />,
+    );
+
+    fireEvent.click(getByTestId("enter"));
+    await waitFor(() => expect(processVideoMock).toHaveBeenCalledTimes(1));
+    fireEvent.click(getByTestId("leave"));
+
+    await waitFor(() => expect(cleanupMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("limits grid video processing to two concurrent requests", async () => {
+    const resolvers: Array<() => void> = [];
+    processVideoMock.mockImplementation(
+      () =>
+        new Promise<object>((resolve) => {
+          resolvers.push(() => resolve({}));
+        }),
+    );
+    const { getAllByTestId } = render(
+      <>
+        <LivePhotoHandlerHarness data={photoData} tick={0} />
+        <LivePhotoHandlerHarness
+          data={{
+            ...photoData,
+            id: "photo-2",
+            video: {
+              ...photoData.video,
+              videoUrl: "https://example.com/2.mov",
+            },
+          }}
+          tick={0}
+        />
+        <LivePhotoHandlerHarness
+          data={{
+            ...photoData,
+            id: "photo-3",
+            video: {
+              ...photoData.video,
+              videoUrl: "https://example.com/3.mov",
+            },
+          }}
+          tick={0}
+        />
+      </>,
+    );
+
+    getAllByTestId("enter").forEach((button) => fireEvent.click(button));
+    await waitFor(() => expect(processVideoMock).toHaveBeenCalledTimes(2));
+
+    await act(async () => resolvers.shift()?.());
+    await waitFor(() => expect(processVideoMock).toHaveBeenCalledTimes(3));
+    await act(async () => resolvers.splice(0).forEach((resolve) => resolve()));
   });
 
   it("loads once on first hover and keeps the video source across re-renders", async () => {

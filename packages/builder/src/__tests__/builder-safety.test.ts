@@ -43,7 +43,7 @@ async function createFixture() {
     originalsDir: path.join(outputDir, "originals"),
   };
   config.plugins = [];
-  config.system.observability.performance.worker.useClusterMode = false;
+  config.system.processing.worker.useClusterMode = false;
   return { config, manifestPath, sourceDir, thumbnailsDir };
 }
 
@@ -88,6 +88,18 @@ afterEach(async () => {
 });
 
 describe("builder artifact safety", () => {
+  it("preflights cluster plugin serialization before scanning storage", async () => {
+    const { config } = await createFixture();
+    config.system.processing.worker.useClusterMode = true;
+    config.plugins = [{ name: "inline-only", hooks: {} }];
+    const listSpy = vi.spyOn(StorageManager.prototype, "listAllFilesDetailed");
+
+    await expect(makeBuilder(config).buildManifest(OPTIONS)).rejects.toThrow(
+      /Cluster mode cannot serialize inline plugin "inline-only"/,
+    );
+    expect(listSpy).not.toHaveBeenCalled();
+  });
+
   it("preserves the committed gallery when a source listing is incomplete", async () => {
     const { config, manifestPath, thumbnailsDir } = await createFixture();
     const photo = createPhoto();

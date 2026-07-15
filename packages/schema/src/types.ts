@@ -96,6 +96,22 @@ export interface PhotoInfo {
   description: string;
 }
 
+/**
+ * Version signatures for build-time derived data.
+ *
+ * The field is optional so manifest v2 files produced by older builders stay
+ * valid.  A missing or different signature tells a newer builder to refresh
+ * only the affected processing stage on the next healthy incremental build.
+ */
+export interface PhotoProcessingFingerprints {
+  thumbnail?: string;
+  exif?: string;
+  tone?: string;
+  media?: string;
+  location?: string;
+  privacy?: string;
+}
+
 export interface PhotoManifestItem extends PhotoInfo {
   id: string;
   originalUrl: string;
@@ -113,6 +129,7 @@ export interface PhotoManifestItem extends PhotoInfo {
   location: LocationInfo | null;
   isHDR?: boolean;
   video?: VideoSource;
+  processing?: PhotoProcessingFingerprints;
 }
 
 export type ManifestExifValue =
@@ -184,6 +201,7 @@ export interface PickedExif {
   FocalPlaneXResolution?: number;
   FocalPlaneYResolution?: number;
   GPSAltitude?: string | number;
+  GPSCoordinates?: string;
   GPSLatitude?: string | number;
   GPSLongitude?: string | number;
   GPSAltitudeRef?: string | number;

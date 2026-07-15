@@ -115,13 +115,13 @@ Configuration:
       `   Photo suffix digest length: ${config.system.processing.digestSuffixLength}`,
     );
     logger.main.info(
-      `   Worker count: ${config.system.observability.performance.worker.workerCount}`,
+      `   Process count: ${config.system.processing.worker.processCount}`,
     );
     logger.main.info(
-      `   Worker timeout: ${config.system.observability.performance.worker.timeout}ms`,
+      `   Worker timeout: ${config.system.processing.worker.timeout}ms`,
     );
     logger.main.info(
-      `   Cluster mode: ${config.system.observability.performance.worker.useClusterMode ? "enabled" : "disabled"}`,
+      `   Cluster mode: ${config.system.processing.worker.useClusterMode ? "enabled" : "disabled"}`,
     );
     logger.main.info("");
     cliBuilder.dispose();
@@ -157,15 +157,13 @@ Configuration:
 
   const config = cliBuilder.getConfig();
   const concurrencyLimit =
-    config.system.observability.performance.worker.workerCount;
+    config.system.processing.worker.globalTaskConcurrency;
   const finalConcurrency =
     concurrencyLimit ?? config.system.processing.defaultConcurrency;
-  const processingMode = config.system.observability.performance.worker
-    .useClusterMode
+  const processingMode = config.system.processing.worker.useClusterMode
     ? "multi-process cluster"
     : "single-process concurrency pool";
-  const processingModeKey = config.system.observability.performance.worker
-    .useClusterMode
+  const processingModeKey = config.system.processing.worker.useClusterMode
     ? "cluster"
     : "worker";
 

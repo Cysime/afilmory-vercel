@@ -1,4 +1,5 @@
 import { clsxm } from "@afilmory/ui";
+import { useReducedMotion } from "motion/react";
 import type { FC } from "react";
 import { useCallback, useEffect, useRef } from "react";
 import type {
@@ -22,6 +23,7 @@ export const DOMImageViewer: FC<DOMImageViewerProps> = ({
   children,
 }) => {
   const transformRef = useRef<ReactZoomPanPinchRef>(null);
+  const shouldReduceMotion = useReducedMotion() === true;
   // 兼容外部 ref
   const activeRef = ref || transformRef;
   const safeFitScale = Math.min(Math.max(fitScale, 0.1), 1);
@@ -96,13 +98,25 @@ export const DOMImageViewer: FC<DOMImageViewerProps> = ({
         const scale1 = 1 / fit;
         const x1 = pointerX - (pointerX - x0) * (scale1 / scale0);
         const y1 = pointerY - (pointerY - y0) * (scale1 / scale0);
-        activeRef.current?.setTransform(x1, y1, scale1, 200, "easeInOutCubic");
+        activeRef.current?.setTransform(
+          x1,
+          y1,
+          scale1,
+          shouldReduceMotion ? 0 : 200,
+          "easeInOutCubic",
+        );
       } else if (isAt1x) {
         // 1x -> 回到 fitToScreen
-        activeRef.current?.setTransform(0, 0, 1, 200, "easeInOutCubic");
+        activeRef.current?.setTransform(
+          0,
+          0,
+          1,
+          shouldReduceMotion ? 0 : 200,
+          "easeInOutCubic",
+        );
       }
     },
-    [activeRef, safeFitScale],
+    [activeRef, safeFitScale, shouldReduceMotion],
   );
 
   return (
@@ -126,13 +140,15 @@ export const DOMImageViewer: FC<DOMImageViewerProps> = ({
         }}
         limitToBounds={true}
         centerOnInit={true}
-        smooth={true}
+        smooth={!shouldReduceMotion}
         alignmentAnimation={{
+          disabled: shouldReduceMotion,
           sizeX: 0,
           sizeY: 0,
           velocityAlignmentTime: 0.2,
         }}
         velocityAnimation={{
+          disabled: shouldReduceMotion,
           sensitivity: 1,
           animationTime: 0.2,
         }}

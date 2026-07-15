@@ -61,6 +61,16 @@ export const WebGLImageViewer = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<WebGLImageViewerEngine | null>(null);
   const [tileOutlineEnabled, setTileOutlineEnabled] = useState(false);
+  const [shouldReduceMotion, setShouldReduceMotion] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    if (!media) return;
+    const update = () => setShouldReduceMotion(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
+  }, []);
 
   const setDebugInfo = useRef<(debugInfo: DebugInfo) => void>(() => {});
 
@@ -119,7 +129,7 @@ export const WebGLImageViewer = ({
       panning: { disabled: panningDisabled },
       limitToBounds,
       centerOnInit,
-      smooth,
+      smooth: smooth && !shouldReduceMotion,
       onZoomChange: (originalScale, relativeScale) =>
         callbacksRef.current.onZoomChange?.(originalScale, relativeScale),
       onLoadingStateChange: (isLoading, state, quality) =>
@@ -147,6 +157,7 @@ export const WebGLImageViewer = ({
       limitToBounds,
       centerOnInit,
       smooth,
+      shouldReduceMotion,
       debug,
     ],
   );

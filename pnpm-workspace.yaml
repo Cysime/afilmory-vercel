@@ -9,6 +9,7 @@ catalog:
   "@tailwindcss/postcss": 4.1.16
   "@tailwindcss/typography": 0.5.19
   clsx: 2.1.1
+  dotenv: 17.2.3
   dotenv-expand: 12.0.3
   exiftool-vendored: 35.20.0
   motion: 12.23.24
@@ -23,15 +24,21 @@ catalog:
   zod: 4.1.12
 
 onlyBuiltDependencies:
+  # Vite/tsx toolchain binary.
   - esbuild
-  - puppeteer
+  # Direct image-processing dependency of the root, builder and build-assets.
   - sharp
+  # Native resolver pulled by eslint/import resolution; napi-postinstall selects
+  # the already integrity-pinned platform binding from the lockfile.
   - unrs-resolver
 
 ignoredBuiltDependencies:
   - simple-git-hooks
 
 overrides:
+  # Patched source-map handling; older transitive copies are vulnerable to
+  # GHSA-4x5r-pxfx-6jf8 when compiling attacker-controlled input.
+  "@babel/core": 7.29.6
   defu: 6.1.7
   eslint-config-hyoban>eslint-plugin-react-hooks: 7.1.1
   workbox-build>source-map: 0.7.6

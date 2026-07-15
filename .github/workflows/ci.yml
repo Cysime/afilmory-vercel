@@ -17,6 +17,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -26,12 +27,15 @@ jobs:
         uses: ./.github/actions/setup
       - name: Check formatting
         run: pnpm format:check
+      - name: Check workspace contracts
+        run: pnpm contracts
       - name: Lint
         run: pnpm lint
 
   type-check:
     name: Type-check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -45,6 +49,7 @@ jobs:
   test:
     name: Test + coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -54,6 +59,10 @@ jobs:
         uses: ./.github/actions/setup
       - name: Run unit tests with coverage
         run: pnpm test:coverage
+      - name: Check architectural coverage partitions
+        run: pnpm coverage:check:partitions
+      - name: Check synthetic fixture drift
+        run: pnpm check:fixtures
       - name: Coverage summary
         if: always()
         run: |
@@ -71,6 +80,7 @@ jobs:
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -87,8 +97,9 @@ jobs:
         run: pnpm audit:prod
 
   build:
-    name: Build
+    name: Deployment entrypoint smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -96,14 +107,13 @@ jobs:
           persist-credentials: false
       - name: Setup
         uses: ./.github/actions/setup
-      - name: Create manifest fixture
-        run: pnpm exec tsx scripts/ci-create-manifest-fixture.ts
-      - name: Build
-        run: SKIP_MANIFEST_BUILD=true pnpm build
+      - name: Run the real static deployment entrypoint
+        run: pnpm deploy:smoke
 
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -145,3 +155,57 @@ jobs:
             playwright-report/
             playwright-report-prod/
           retention-days: 7
+
+  cross-browser:
+    name: WebKit + iPhone smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Install WebKit
+        run: pnpm exec playwright install --with-deps webkit
+      - name: Run WebKit desktop and iPhone smoke
+        run: pnpm test:e2e:webkit
+
+  node20:
+    name: Node 20 compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Setup Node 20
+        uses: ./.github/actions/setup
+        with:
+          node-version: "20.19.0"
+      - name: Check contracts and types
+        run: pnpm contracts && pnpm type-check
+
+  supply-chain:
+    name: Secrets + SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Scan tracked source for high-confidence secrets
+        run: pnpm security:secrets
+      - name: Generate CycloneDX production SBOM
+        run: pnpm sbom
+      - name: Upload SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-cyclonedx
+          path: artifacts/sbom.cdx.json
+          retention-days: 30

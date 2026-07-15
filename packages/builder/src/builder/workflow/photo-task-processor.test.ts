@@ -188,8 +188,10 @@ function createSession(options: Partial<BuilderOptions> = {}): BuildSession {
     storage: { provider: "s3", bucket: "photos" },
   };
   config.system.processing.defaultConcurrency = 2;
-  config.system.observability.performance.worker.useClusterMode = false;
-  config.system.observability.performance.worker.workerConcurrency = 3;
+  config.system.processing.worker.globalTaskConcurrency = 2;
+  config.system.processing.worker.processCount = 2;
+  config.system.processing.worker.useClusterMode = false;
+  config.system.processing.worker.workerConcurrency = 3;
   const storageManager = createStorageManagerFixture();
   const services = createBuilderServicesFixture(config);
 
@@ -302,6 +304,11 @@ describe("PhotoTaskProcessor", () => {
         emitPluginEvent: expect.any(Function),
         runState: session.runState,
         builderOptions: session.options,
+        processorOptions: {
+          isForceMode: false,
+          isForceManifest: true,
+          isForceThumbnails: true,
+        },
       },
     );
 
@@ -348,7 +355,8 @@ describe("PhotoTaskProcessor", () => {
       concurrencyLimit: 2,
       isForceMode: true,
     });
-    session.config.system.observability.performance.worker.useClusterMode = true;
+    session.config.system.processing.worker.useClusterMode = true;
+    session.config.system.processing.worker.workerConcurrency = 1;
     const tasks: StorageObject[] = [
       { key: "a.jpg" },
       { key: "b.jpg" },
@@ -398,7 +406,7 @@ describe("PhotoTaskProcessor", () => {
       concurrency: 2,
       totalTasks: tasks.length,
       timeoutMs: 300_000,
-      workerConcurrency: 3,
+      workerConcurrency: 1,
     });
     expect(processorMocks.clusterPoolInstances[0].options.sharedData).toEqual({
       builderConfig: session.getConfig(),
@@ -417,7 +425,8 @@ describe("PhotoTaskProcessor", () => {
       // TTY 运行时 CLI 会注入函数回调；必须在进入 IPC 共享数据前被剥离。
       progressListener: { onProgress: vi.fn() },
     });
-    session.config.system.observability.performance.worker.useClusterMode = true;
+    session.config.system.processing.worker.useClusterMode = true;
+    session.config.system.processing.worker.workerConcurrency = 1;
     session.config.plugins = [
       geocodingPlugin({
         enable: true,

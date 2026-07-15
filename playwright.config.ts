@@ -20,6 +20,7 @@ if (process.env.FORCE_COLOR !== undefined) delete process.env.NO_COLOR;
 const prodSmoke =
   process.env.E2E_PROD_SMOKE === "true" ||
   process.argv.some((arg) => arg.includes("prod-smoke"));
+const crossBrowserSmoke = process.env.E2E_CROSS_BROWSER_SMOKE === "true";
 
 const devPort = process.env.E2E_DEV_PORT ?? "1925";
 const prodPort = process.env.E2E_PROD_PORT ?? "4174";
@@ -96,21 +97,34 @@ export default defineConfig({
           testMatch: /prod-smoke\.spec\.ts/,
         },
       ]
-    : [
-        {
-          name: "chromium",
-          use: { ...devices["Desktop Chrome"] },
-          testIgnore: /prod-smoke\.spec\.ts/,
-        },
-        {
-          // 触摸 + 移动布局（viewport <1024 → useMobile() 为真）。用于下滑关闭的触摸路径，
-          // 触摸拖拽经 CDP Input.dispatchTouchEvent 派发（见 e2e/dismiss-gesture.spec.ts）。
-          // 仅跑手势 spec；runtime-state 等桌面 spec 只在 chromium 上跑。
-          name: "mobile",
-          use: { ...devices["Pixel 5"] },
-          testMatch: /dismiss-gesture\.spec\.ts/,
-        },
-      ],
+    : crossBrowserSmoke
+      ? [
+          {
+            name: "webkit-smoke",
+            use: { ...devices["Desktop Safari"] },
+            testMatch: /browser-smoke\.spec\.ts/,
+          },
+          {
+            name: "iphone-smoke",
+            use: { ...devices["iPhone 15"] },
+            testMatch: /browser-smoke\.spec\.ts/,
+          },
+        ]
+      : [
+          {
+            name: "chromium",
+            use: { ...devices["Desktop Chrome"] },
+            testIgnore: /(?:browser-smoke|prod-smoke)\.spec\.ts/,
+          },
+          {
+            // 触摸 + 移动布局（viewport <1024 → useMobile() 为真）。用于下滑关闭的触摸路径，
+            // 触摸拖拽经 CDP Input.dispatchTouchEvent 派发（见 e2e/dismiss-gesture.spec.ts）。
+            // 仅跑手势 spec；runtime-state 等桌面 spec 只在 chromium 上跑。
+            name: "mobile",
+            use: { ...devices["Pixel 5"] },
+            testMatch: /dismiss-gesture\.spec\.ts/,
+          },
+        ],
 });
 
 // 两种模式先后运行时（本地验证、CI 同一 job 两个 step）互不覆盖 HTML 报告。

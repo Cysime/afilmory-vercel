@@ -14,7 +14,10 @@ import {
   getInitialViewStateForMarkers,
 } from "~/lib/map-utils";
 import { MapProvider } from "~/modules/map/MapProvider";
-import { usePhotoRepository } from "~/runtime/app-runtime";
+import {
+  usePhotoRepository,
+  usePhotoRepositoryVersion,
+} from "~/runtime/app-runtime";
 import type {
   GeographicRegion,
   GeographicRegionLevel,
@@ -36,15 +39,24 @@ export const MapSection = () => {
 const MapSectionContent = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const photoRepository = usePhotoRepository();
+  usePhotoRepositoryVersion();
+  const repositoryPhotos = photoRepository.getPhotos();
   const displayMode: MapDisplayMode =
     searchParams.get("mode") === "photos" ? "photos" : "regions";
 
   // Geo data is a pure, synchronous function of the repository's stable
   // photos array; getPhotoGeoData memoizes by array identity, so this is a
   // cache hit on remounts. Failures propagate to the route-level ErrorBoundary.
-  const { markers, regionsByLevel } = getPhotoGeoData(
-    photoRepository.getPhotos(),
-  );
+  const { markers, regionsByLevel } = getPhotoGeoData(repositoryPhotos);
+
+  useEffect(() => {
+    void photoRepository.ensureMapDetails().catch((error) => {
+      console.warn(
+        "Failed to hydrate map details; using gallery summaries:",
+        error,
+      );
+    });
+  }, [photoRepository]);
   const [regionLevel, setRegionLevel] =
     useState<GeographicRegionLevel>("country");
 

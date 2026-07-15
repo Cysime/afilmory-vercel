@@ -58,11 +58,25 @@ export function ErrorElement() {
   }, [message]);
 
   if (isReloading) {
-    return null;
+    return (
+      <div
+        className="flex min-h-screen items-center justify-center px-6 text-center"
+        role="status"
+        aria-live="polite"
+      >
+        <div>
+          <i
+            className="i-mingcute-loading-line text-accent mx-auto mb-3 block text-3xl motion-safe:animate-spin"
+            aria-hidden="true"
+          />
+          <p className="text-text-secondary">{i18n.t("error.reload")}</p>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen flex-col" role="alert">
       {/* Header spacer */}
       <div className="h-16" />
 

@@ -13,10 +13,12 @@ import { applyAccentTransitionStyle } from "~/lib/accent-transition-style";
 import { deriveAccentFromSources } from "~/lib/color";
 import { getReadableTextColor } from "~/lib/color-contrast";
 import { usePhotoRouteUnavailable } from "~/providers/photo-route-availability";
+import { usePhotoRepository } from "~/runtime/app-runtime";
 
 export const Component = () => {
   const { t } = useTranslation();
   const { photoId } = useParams();
+  const photoRepository = usePhotoRepository();
   const photos = useViewerPhotos(photoId);
   const photoViewer = usePhotoViewer(photos.length);
 
@@ -37,6 +39,52 @@ export const Component = () => {
       photoIndex !== -1 && photos[photoIndex] ? photos[photoIndex] : null;
     return photo;
   }, [photos, photoIndex]);
+
+  useEffect(() => {
+    if (!photoId || photoIndex < 0) return;
+    let cancelled = false;
+    let idleCallbackId: number | undefined;
+    let prefetchTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    const neighborIds = [
+      photos[photoIndex - 1]?.id,
+      photos[photoIndex + 1]?.id,
+    ].flatMap((id) => (id ? [id] : []));
+
+    void photoRepository
+      .ensurePhotoDetails(photoId)
+      .then(() => {
+        if (cancelled || neighborIds.length === 0) return;
+        const prefetch = () => {
+          void photoRepository.prefetchPhotoDetails(neighborIds).catch(() => {
+            // Adjacent-photo prefetch is opportunistic; navigation still has
+            // its own foreground hydration path.
+          });
+        };
+        if (typeof requestIdleCallback === "function") {
+          idleCallbackId = requestIdleCallback(prefetch, { timeout: 1_500 });
+        } else {
+          prefetchTimeoutId = setTimeout(prefetch, 200);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn(
+            `Failed to hydrate photo details for ${photoId}:`,
+            error,
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      if (idleCallbackId !== undefined) {
+        cancelIdleCallback(idleCallbackId);
+      }
+      if (prefetchTimeoutId !== undefined) {
+        clearTimeout(prefetchTimeoutId);
+      }
+    };
+  }, [photoId, photoIndex, photoRepository, photos]);
   const isPhotoRouteUnavailable = !currentPhoto || photoIndex === -1;
   usePhotoRouteUnavailable(isPhotoRouteUnavailable);
 

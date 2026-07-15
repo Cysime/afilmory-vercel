@@ -12,6 +12,11 @@ import {
 export interface MasonryRef {
   getLayoutMetrics: () => MasonryLayoutMetrics | null;
   getItemRect: (index: number) => DOMRect | null;
+  pinIndex: (index: number) => void;
+  scrollToIndex: (
+    index: number,
+    options?: { focus?: boolean; align?: "start" | "center" | "end" },
+  ) => void;
 }
 
 export interface MasonryLayoutMetrics {
@@ -65,6 +70,8 @@ export interface MasonryProps<Item> {
   ) => void;
   role?: string;
   tabIndex?: number;
+  "aria-label"?: string;
+  onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -92,6 +99,8 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
     onRender,
     role,
     tabIndex,
+    "aria-label": ariaLabel,
+    onKeyDown,
     className,
     style,
   } = props;
@@ -103,6 +112,8 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
   const [viewportHeight, setViewportHeight] = React.useState(0);
   const [containerWidth, setContainerWidth] = React.useState(0);
   const [containerScrollOffset, setContainerScrollOffset] = React.useState(0);
+  const [pinnedIndex, setPinnedIndex] = React.useState<number | null>(null);
+  const pendingFocusIndexRef = React.useRef<number | null>(null);
   // 需 measure 的 item（如桌面 header）：index -> measured height。
   const [measuredHeights, setMeasuredHeights] = React.useState<
     ReadonlyMap<number, number>
@@ -260,24 +271,50 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
   const overscanPx =
     Math.max(viewportHeight || targetColumnWidth, 1) * overscanBy;
   const masonryScrollTop = scrollTop - containerScrollOffset;
-  const { visible } = React.useMemo(
-    () =>
-      selectVisibleMasonryCells({
-        cells: layout.cells,
-        columns: layout.columns,
-        scrollTop: masonryScrollTop,
-        viewportHeight: viewportHeight || targetColumnWidth,
-        overscanPx,
-      }),
-    [
-      layout.cells,
-      layout.columns,
-      masonryScrollTop,
-      viewportHeight,
+  const { visible } = React.useMemo(() => {
+    const selection = selectVisibleMasonryCells({
+      cells: layout.cells,
+      columns: layout.columns,
+      scrollTop: masonryScrollTop,
+      viewportHeight: viewportHeight || targetColumnWidth,
       overscanPx,
-      targetColumnWidth,
-    ],
-  );
+    });
+    if (
+      pinnedIndex === null ||
+      selection.visible.some((cell) => cell.index === pinnedIndex)
+    ) {
+      return selection;
+    }
+    const pinnedCell = layout.cells[pinnedIndex];
+    return pinnedCell
+      ? {
+          ...selection,
+          visible: [...selection.visible, pinnedCell].sort(
+            (left, right) => left.index - right.index,
+          ),
+        }
+      : selection;
+  }, [
+    layout.cells,
+    layout.columns,
+    masonryScrollTop,
+    viewportHeight,
+    overscanPx,
+    targetColumnWidth,
+    pinnedIndex,
+  ]);
+
+  React.useLayoutEffect(() => {
+    const index = pendingFocusIndexRef.current;
+    if (index === null) return;
+    const container = containerRef.current;
+    const target = container?.querySelector<HTMLElement>(
+      `[data-masonry-cell-index="${index}"] [data-gallery-photo-link]`,
+    );
+    if (!target) return;
+    pendingFocusIndexRef.current = null;
+    target.focus({ preventScroll: true });
+  }, [visible]);
 
   const viewportSelection = React.useMemo(
     () =>
@@ -359,8 +396,50 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
           cell.height,
         );
       },
+      pinIndex: (index: number) => {
+        if (layout.cells[index]) setPinnedIndex(index);
+      },
+      scrollToIndex: (index, options = {}) => {
+        const cell = layout.cells[index];
+        if (!cell || !scrollElement) return;
+        setPinnedIndex(index);
+        if (options.focus) pendingFocusIndexRef.current = index;
+
+        const align = options.align ?? "center";
+        const viewport = Math.max(
+          viewportHeight,
+          scrollElement.clientHeight,
+          1,
+        );
+        const alignmentOffset =
+          align === "start"
+            ? 0
+            : align === "end"
+              ? viewport - cell.height
+              : (viewport - cell.height) / 2;
+        const top = Math.max(
+          0,
+          containerScrollOffset + cell.top - alignmentOffset,
+        );
+        const reduceMotion =
+          typeof window !== "undefined" &&
+          window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+        scrollElement.scrollTo({
+          top,
+          behavior: reduceMotion ? "auto" : "smooth",
+        });
+      },
     }),
-    [columnGutter, effectiveColumnWidth, renderColumnWidth, layout, rowGutter],
+    [
+      columnGutter,
+      effectiveColumnWidth,
+      renderColumnWidth,
+      layout,
+      rowGutter,
+      scrollElement,
+      viewportHeight,
+      containerScrollOffset,
+    ],
   );
 
   return (
@@ -368,6 +447,8 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
       ref={containerRef}
       role={role}
       tabIndex={tabIndex}
+      aria-label={ariaLabel}
+      onKeyDown={onKeyDown}
       className={className}
       style={{
         position: "relative",
@@ -385,6 +466,7 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
           <MasonryCell
             key={key}
             cell={cell}
+            role={role === "grid" ? "gridcell" : undefined}
             needsMeasure={needsMeasure}
             onMeasure={handleMeasure}
           >
@@ -398,6 +480,7 @@ export const Masonry = <Item,>(props: MasonryProps<Item>) => {
 
 interface MasonryCellProps {
   cell: MasonryCellLayout;
+  role?: string;
   needsMeasure: boolean;
   onMeasure: (index: number, height: number) => void;
   children: React.ReactNode;
@@ -405,6 +488,7 @@ interface MasonryCellProps {
 
 const MasonryCell = ({
   cell,
+  role,
   needsMeasure,
   onMeasure,
   children,
@@ -426,6 +510,8 @@ const MasonryCell = ({
   return (
     <div
       ref={ref}
+      role={role}
+      data-masonry-cell-index={index}
       style={{
         position: "absolute",
         top: 0,

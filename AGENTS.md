@@ -68,7 +68,7 @@ Builder 主流程使用 `packages/builder/src/builder/workflow` 分层：`BuildS
 
 - 提供静态 SPA、瀑布流、WebGL 查看器、地图、RSS/sitemap/OG 资产与逐照片静态 HTML shell。
 - 构建期通过 `site.config.build.ts` 合并环境变量和 `site.config.ts` 默认值，再注入 `window.__AFILMORY__.config`。
-- 运行时通过 `window.__AFILMORY__.manifest` 加载 manifest。生产构建默认外置 `assets/photos-manifest.<hash>.json`，开发默认内联；`AFILMORY_EMBED_MANIFEST` 可覆盖。
+- 运行时通过 `window.__AFILMORY__.manifest` 加载数据。生产构建默认把 Builder 的 manifest v2 转成 Web Delivery Manifest v3：轻量 `assets/gallery-index.<hash>.json`、稳定 ID-hash 详情分片和独立地图分片；开发默认内联，`AFILMORY_EMBED_MANIFEST` 可覆盖。
 
 前端长生命周期能力挂在 app runtime：图片加载由 `ImageLoaderManager` 编排，fetch/cache/conversion/video 分别在独立 service 中实现；`CommandPalette` 的 command index 与过滤逻辑在模型层构建；`PhotoViewer` 将 toolbar、媒体 carousel、EXIF/share 等子模块分开维护。
 
@@ -119,6 +119,7 @@ Manifest shape 来自 `@afilmory/schema`：
 - 顶层字段：`schema`、`version`、`generatedAt`、`source`、`photos`、`indexes`。
 - 单张照片包含 `id`、`originalUrl`、`thumbnailUrl`、`thumbHash`、`s3Key`、`exif`、`toneAnalysis`、`location`、可选 `video` 和 `isHDR`。
 - `parseManifest` 只接受 manifest v2；旧 schema 不做迁移，无法解析时返回空 manifest fallback。
+- manifest v2 是 Builder 的磁盘/共享 schema；v3 仅是 Web 发布协议。`PhotoRepository` 负责按路由懒加载、去重和原子合并详情/地图分片。
 
 前端运行时不要直接读取构建脚本目录。使用 `apps/web/src/data-runtime/manifest-runtime.ts`；构建期读 manifest 用 `@afilmory/build-assets` 的 `buildTimePhotoLoader`。
 

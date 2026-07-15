@@ -1,11 +1,13 @@
+import { Button } from "@afilmory/ui";
 import { m } from "motion/react";
 import { useTranslation } from "react-i18next";
 
-export const MapErrorState = () => {
+export const MapErrorState = ({ onRetry }: { onRetry?: () => void }) => {
   const { t } = useTranslation();
 
   return (
     <m.div
+      role="alert"
       className="flex h-full w-full items-center justify-center"
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
@@ -36,6 +38,21 @@ export const MapErrorState = () => {
         >
           {t("explore.map.error.description")}
         </m.p>
+        <div className="mt-5 flex justify-center gap-3">
+          <Button
+            type="button"
+            className="bg-accent text-[var(--color-accent-content)]"
+            onClick={() => {
+              if (onRetry) onRetry();
+              else window.location.reload();
+            }}
+          >
+            {t("error.reload")}
+          </Button>
+          <Button type="button" onClick={() => window.history.back()}>
+            {t("error.go.back")}
+          </Button>
+        </div>
       </div>
     </m.div>
   );

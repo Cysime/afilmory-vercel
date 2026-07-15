@@ -139,6 +139,50 @@ export interface ExistingThumbnail {
   url: string;
 }
 
+export interface ThumbnailInventory {
+  has: (photoId: string, preferredUrl?: string) => boolean;
+}
+
+/** Snapshot the thumbnail directory once for the planning phase. */
+export async function createThumbnailInventory(
+  thumbnailsDir: string,
+): Promise<ThumbnailInventory> {
+  const entries = await fs
+    .readdir(thumbnailsDir, { withFileTypes: true })
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
+  const safeFileNames = new Set(
+    entries.filter((entry) => entry.isFile()).map((entry) => entry.name),
+  );
+  const countsByPhotoId = new Map<string, number>();
+  for (const fileName of safeFileNames) {
+    const photoId = getThumbnailPhotoIdFromFileName(fileName);
+    if (!photoId) continue;
+    countsByPhotoId.set(photoId, (countsByPhotoId.get(photoId) ?? 0) + 1);
+  }
+
+  return {
+    has(photoId, preferredUrl) {
+      const preferredName = preferredUrl
+        ? getThumbnailFileNameFromUrl(preferredUrl)
+        : null;
+      if (
+        preferredName &&
+        isThumbnailFileNameForPhoto(preferredName, photoId) &&
+        safeFileNames.has(preferredName)
+      ) {
+        return true;
+      }
+      if (safeFileNames.has(`${photoId}.jpg`)) return true;
+      // A rewritten CDN basename is reusable only when exactly one local
+      // artifact belongs to this photo; multiple versions are ambiguous.
+      return countsByPhotoId.get(photoId) === 1;
+    },
+  };
+}
+
 async function isSafeRegularThumbnail(thumbnailPath: string): Promise<boolean> {
   try {
     const stats = await fs.lstat(thumbnailPath);

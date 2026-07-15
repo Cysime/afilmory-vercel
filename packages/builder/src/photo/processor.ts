@@ -40,6 +40,7 @@ export interface PhotoTaskRuntime {
   emitPluginEvent: EmitPluginEventFn;
   runState: PluginRunState;
   builderOptions: BuilderOptions;
+  processorOptions: PhotoProcessorOptions;
 }
 
 // PhotoProcessorOptions 是 BuilderOptions 的投影；推导只发生在这一处，
@@ -51,8 +52,22 @@ export function toProcessorOptions(
     isForceMode: builderOptions.isForceMode,
     isForceManifest: builderOptions.isForceManifest,
     isForceThumbnails: builderOptions.isForceThumbnails,
+    ...(builderOptions.locationMode
+      ? { locationMode: builderOptions.locationMode }
+      : {}),
     ...(builderOptions.reprocessKeys
-      ? { reprocessKeys: builderOptions.reprocessKeys }
+      ? {
+          reprocessKeys: builderOptions.reprocessKeys,
+          reprocessKeySet: new Set(builderOptions.reprocessKeys),
+        }
+      : {}),
+    ...(builderOptions.plannedKeys
+      ? { plannedKeys: builderOptions.plannedKeys }
+      : {}),
+    ...(builderOptions.derivedReprocessKeys
+      ? {
+          derivedReprocessKeySet: new Set(builderOptions.derivedReprocessKeys),
+        }
       : {}),
   };
 }
@@ -67,7 +82,15 @@ export async function processPhoto(
   const { key } = obj;
   if (!key) {
     logger.image.warn(`Skipping object without a key`);
-    return { item: null, type: "failed" };
+    return {
+      item: null,
+      type: "failed",
+      failure: {
+        code: "missing_storage_key",
+        stage: "task-input",
+        message: "Storage object has no key",
+      },
+    };
   }
 
   const existingItem = runtime.existingManifestMap.get(key);
@@ -78,7 +101,7 @@ export async function processPhoto(
     obj,
     existingItem,
     livePhotoMap: runtime.livePhotoMap,
-    options: toProcessorOptions(runtime.builderOptions),
+    options: runtime.processorOptions,
     pluginData: {},
     signal,
   };

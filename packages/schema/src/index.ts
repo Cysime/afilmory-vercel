@@ -1,3 +1,11 @@
+export type { LocationPrivacyMode } from "./location-privacy.ts";
+export {
+  applyExifLocationPrivacy,
+  applyLocationPrivacy,
+  applyManifestLocationPrivacy,
+  applyPhotoLocationPrivacy,
+  COARSE_LOCATION_DECIMAL_PLACES,
+} from "./location-privacy.ts";
 export type {
   LenientManifestParseResult,
   ManifestValidationResult,

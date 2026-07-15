@@ -6,6 +6,10 @@ export interface PhotoProcessorOptions {
   isForceManifest: boolean;
   isForceThumbnails: boolean;
   reprocessKeys?: readonly string[];
+  reprocessKeySet?: ReadonlySet<string>;
+  derivedReprocessKeySet?: ReadonlySet<string>;
+  plannedKeys?: ReadonlySet<string>;
+  locationMode?: "strip" | "coarse" | "exact";
 }
 
 export interface PhotoProcessingContext {

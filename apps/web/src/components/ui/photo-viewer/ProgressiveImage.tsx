@@ -1,6 +1,6 @@
 import { clsxm, Thumbhash } from "@afilmory/ui";
 import { WebGLImageViewer } from "@afilmory/webgl-viewer";
-import { AnimatePresence, m } from "motion/react";
+import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
@@ -63,6 +63,7 @@ export const ProgressiveImage = ({
   loadingIndicatorRef,
 }: ProgressiveImageProps) => {
   const { t } = useTranslation();
+  const shouldReduceMotion = useReducedMotion() === true;
 
   const thumbnailCacheKey =
     photoId && thumbnailSrc
@@ -203,9 +204,79 @@ export const ProgressiveImage = ({
   const shouldUseDomImageViewer =
     hasVideo || shouldUseHDR || !canUseWebGL || useDomFallback;
 
+  const zoomIn = useCallback(() => {
+    if (shouldUseDomImageViewer) {
+      domImageViewerRef.current?.zoomIn(
+        undefined,
+        shouldReduceMotion ? 0 : 180,
+      );
+    } else {
+      webglImageViewerRef.current?.zoomIn(!shouldReduceMotion);
+    }
+  }, [shouldReduceMotion, shouldUseDomImageViewer]);
+
+  const zoomOut = useCallback(() => {
+    if (shouldUseDomImageViewer) {
+      domImageViewerRef.current?.zoomOut(
+        undefined,
+        shouldReduceMotion ? 0 : 180,
+      );
+    } else {
+      webglImageViewerRef.current?.zoomOut(!shouldReduceMotion);
+    }
+  }, [shouldReduceMotion, shouldUseDomImageViewer]);
+
+  const resetZoom = useCallback(() => {
+    if (shouldUseDomImageViewer) {
+      domImageViewerRef.current?.resetTransform(shouldReduceMotion ? 0 : 180);
+    } else {
+      webglImageViewerRef.current?.resetView();
+    }
+  }, [shouldReduceMotion, shouldUseDomImageViewer]);
+
+  const handleZoomKeyboard = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (
+        event.defaultPrevented ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey
+      ) {
+        return;
+      }
+      switch (event.key) {
+        case "+":
+        case "=": {
+          event.preventDefault();
+          zoomIn();
+
+          break;
+        }
+        case "-": {
+          event.preventDefault();
+          zoomOut();
+
+          break;
+        }
+        case "0": {
+          event.preventDefault();
+          resetZoom();
+
+          break;
+        }
+        // No default
+      }
+    },
+    [resetZoom, zoomIn, zoomOut],
+  );
+
   return (
     <div
       className={clsxm("relative overflow-hidden", className)}
+      role="group"
+      aria-label={alt}
+      tabIndex={isActiveImage ? 0 : -1}
+      onKeyDown={handleZoomKeyboard}
       onMouseDown={handleLongPressStart}
       onMouseUp={handleLongPressEnd}
       onMouseLeave={handleLongPressEnd}
@@ -304,7 +375,7 @@ export const ProgressiveImage = ({
               maxScale={maxZoom}
               limitToBounds={true}
               centerOnInit={true}
-              smooth={true}
+              smooth={!shouldReduceMotion}
               onZoomChange={onTransformed}
               onLoadingStateChange={handleWebGLLoadingStateChange}
               onImagePainted={handleHighResRendered}
@@ -325,6 +396,44 @@ export const ProgressiveImage = ({
 
       {shouldUseHDR && highResLoaded && blobSrc && isActiveImage && !error && (
         <HDRBadge />
+      )}
+
+      {highResLoaded && blobSrc && isActiveImage && !error && (
+        <div
+          data-photo-viewer-gesture-ignore
+          className="absolute right-4 bottom-4 z-30 flex overflow-hidden rounded-full bg-black/55 text-white shadow-lg backdrop-blur-xl"
+          role="toolbar"
+          aria-label={t("photo.zoom.controls")}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="focus-visible:ring-accent/60 flex size-11 items-center justify-center hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-inset"
+            aria-label={t("explore.controls.zoom.out")}
+            title={`${t("explore.controls.zoom.out")} (-)`}
+            onClick={zoomOut}
+          >
+            <i className="i-mingcute-zoom-out-line" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="focus-visible:ring-accent/60 flex size-11 items-center justify-center border-x border-white/10 hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-inset"
+            aria-label={t("photo.zoom.reset")}
+            title={`${t("photo.zoom.reset")} (0)`}
+            onClick={resetZoom}
+          >
+            <i className="i-mingcute-refresh-2-line" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="focus-visible:ring-accent/60 flex size-11 items-center justify-center hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-inset"
+            aria-label={t("explore.controls.zoom.in")}
+            title={`${t("explore.controls.zoom.in")} (+)`}
+            onClick={zoomIn}
+          >
+            <i className="i-mingcute-zoom-in-line" aria-hidden="true" />
+          </button>
+        </div>
       )}
 
       {/* 备用图片（当 WebGL 不可用时） - 只在非错误状态时显示 */}

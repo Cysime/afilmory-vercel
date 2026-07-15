@@ -97,6 +97,10 @@ async function instantiateBuiltinPlugin(
       const mod = await import("./geocoding.js");
       return await instantiatePlugin(mod, descriptor.options);
     }
+    case "thumbnail-storage": {
+      const mod = await import("./thumbnail-storage/plugin.js");
+      return await instantiatePlugin(mod, descriptor.options);
+    }
   }
 
   const unsupportedPlugin: never = descriptor.plugin;

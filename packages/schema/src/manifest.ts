@@ -7,6 +7,7 @@ import type {
   ManifestIndexes,
   ManifestSource,
   PhotoManifestItem,
+  PhotoProcessingFingerprints,
   PickedExif,
   ToneAnalysis,
   ToneType,
@@ -591,6 +592,41 @@ const photoShape: Shape = {
   description: str(),
   isHDR: optionalField(isBoolean, "must be a boolean", true),
   video: videoField,
+  processing: {
+    check: (value) => {
+      if (value === undefined) return [];
+      if (!isRecord(value)) return [" must be an object when present"];
+      const allowed = [
+        "thumbnail",
+        "exif",
+        "tone",
+        "media",
+        "location",
+        "privacy",
+      ];
+      return allowed.flatMap((key) =>
+        value[key] === undefined || isNonEmptyString(value[key])
+          ? []
+          : [`.${key} must be a non-empty string when present`],
+      );
+    },
+    normalize: (value) => {
+      if (!isRecord(value)) return;
+      const result: PhotoProcessingFingerprints = {};
+      for (const key of [
+        "thumbnail",
+        "exif",
+        "tone",
+        "media",
+        "location",
+        "privacy",
+      ] as const) {
+        if (isNonEmptyString(value[key])) result[key] = value[key];
+      }
+      return Object.keys(result).length > 0 ? result : undefined;
+    },
+    omitUndefined: true,
+  },
 } satisfies ShapeFor<PhotoManifestItem>;
 
 function validatePhoto(

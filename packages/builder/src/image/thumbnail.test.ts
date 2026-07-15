@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createThumbnailFileName,
+  createThumbnailInventory,
   getThumbnailPublicUrl,
   resolveExistingThumbnail,
   THUMBNAIL_ENCODING_VERSION,
@@ -68,6 +69,38 @@ describe("thumbnail URL helpers", () => {
       await expect(
         resolveExistingThumbnail("photo", directory, "/thumbnails/photo.jpg"),
       ).resolves.toBeNull();
+    } finally {
+      await fs.rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("builds one ambiguity-safe inventory for rewritten CDN URLs", async () => {
+    const directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "afilmory-thumbnail-inventory-"),
+    );
+    try {
+      const single = createThumbnailFileName("single", Buffer.from("one"));
+      const first = createThumbnailFileName("ambiguous", Buffer.from("first"));
+      const second = createThumbnailFileName(
+        "ambiguous",
+        Buffer.from("second"),
+      );
+      await Promise.all(
+        [single, first, second].map((name) =>
+          fs.writeFile(path.join(directory, name), name),
+        ),
+      );
+
+      const inventory = await createThumbnailInventory(directory);
+      expect(
+        inventory.has("single", "https://cdn.example.com/assets/rewritten.jpg"),
+      ).toBe(true);
+      expect(
+        inventory.has(
+          "ambiguous",
+          "https://cdn.example.com/assets/rewritten.jpg",
+        ),
+      ).toBe(false);
     } finally {
       await fs.rm(directory, { force: true, recursive: true });
     }

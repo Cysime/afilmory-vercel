@@ -151,7 +151,7 @@ beforeAll(async () => {
   config.output = { manifestPath, thumbnailsDir, originalsDir };
   // 强制非 cluster：本测试图片数很少（< concurrency*2 本就不会进 cluster），但显式关掉
   // useClusterMode，锁定走主进程内的并发池路径，避免依赖"任务数阈值"这种隐式条件。
-  config.system.observability.performance.worker.useClusterMode = false;
+  config.system.processing.worker.useClusterMode = false;
   // 无插件：不加载 geocoding（否则会走网络），也不挂远端缩略图存储——缩略图只落本地。
   config.plugins = [];
 });

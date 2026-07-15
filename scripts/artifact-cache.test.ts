@@ -8,12 +8,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ArtifactCacheConfig } from "./artifact-cache";
 import {
+  assertSafeCacheTarget,
   createAskpassRepoUrl,
+  createConfig,
+  DEFAULT_CACHE_BRANCH,
   restoreArtifacts,
   saveArtifacts,
 } from "./artifact-cache";
 
 const TOKEN = "secret-token";
+const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 
 interface RecordedSpawnEnv {
   // spawn 时刻 GIT_ASKPASS 指向的文件是否存在、其权限位和内容——askpass
@@ -91,6 +95,7 @@ describe("createAskpassRepoUrl", () => {
 
   it("keeps a user-supplied username but strips any embedded password", () => {
     expect(
+      // secret-scan: allow -- synthetic credential-stripping fixture
       createAskpassRepoUrl("https://alice:hunter2@github.com/owner/repo.git"),
     ).toBe("https://alice@github.com/owner/repo.git");
   });
@@ -113,6 +118,52 @@ describe("createAskpassRepoUrl", () => {
   });
 });
 
+describe("artifact cache destination safety", () => {
+  const baseConfig: ArtifactCacheConfig = {
+    allowHistoryRewrite: false,
+    cacheDir: "/tmp/cache",
+    locationMode: "exact",
+    repoBranch: DEFAULT_CACHE_BRANCH,
+    repoToken: TOKEN,
+    repoUrl: "https://github.com/owner/cache.git",
+    rootDir: "/tmp/source",
+  };
+
+  it("uses a dedicated branch and non-destructive history by default", () => {
+    expect(
+      createConfig({
+        REPO_TOKEN: TOKEN,
+        REPO_URL: "https://github.com/owner/cache.git",
+      }),
+    ).toMatchObject({
+      allowHistoryRewrite: false,
+      locationMode: "coarse",
+      repoBranch: DEFAULT_CACHE_BRANCH,
+    });
+  });
+
+  it.each(["main", "master", "production", "develop"])(
+    "rejects protected cache branch %s",
+    (repoBranch) => {
+      expect(() =>
+        assertSafeCacheTarget({ ...baseConfig, repoBranch }),
+      ).toThrow(/protected branch/);
+    },
+  );
+
+  it("rejects the source repository even when URL syntaxes differ", () => {
+    expect(() =>
+      assertSafeCacheTarget(
+        {
+          ...baseConfig,
+          repoUrl: "https://github.com/Owner/Afilmory.git",
+        },
+        "git@github.com:owner/afilmory.git",
+      ),
+    ).toThrow(/source repository/);
+  });
+});
+
 describe("saveArtifacts", () => {
   let rootDir: string;
   let config: ArtifactCacheConfig;
@@ -123,19 +174,25 @@ describe("saveArtifacts", () => {
       .map(([, ...args]) => args);
 
   const setRespond = (overrides: {
+    populateClone?: (cacheDir: string) => void;
+    remoteHead?: string;
     status?: string;
-    symbolicRef?: string;
     failPushWith?: string;
   }): void => {
     spawnState.respond = (args) => {
+      if (args[0] === "clone" && overrides.populateClone) {
+        const cloneDir = args.at(-1)!;
+        mkdirSync(cloneDir, { recursive: true });
+        overrides.populateClone(cloneDir);
+      }
       if (args[0] === "status") {
         return { code: 0, stderr: "", stdout: overrides.status ?? "" };
       }
-      if (args[0] === "symbolic-ref") {
+      if (args[0] === "rev-parse") {
         return {
           code: 0,
           stderr: "",
-          stdout: overrides.symbolicRef ?? "main\n",
+          stdout: overrides.remoteHead ?? "0123456789abcdef\n",
         };
       }
       if (args[0] === "push" && overrides.failPushWith !== undefined) {
@@ -151,8 +208,10 @@ describe("saveArtifacts", () => {
     setRespond({});
     rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "artifact-cache-test-"));
     config = {
+      allowHistoryRewrite: false,
       cacheDir: path.join(rootDir, "apps/web/assets-git"),
-      repoBranch: undefined,
+      locationMode: "exact",
+      repoBranch: DEFAULT_CACHE_BRANCH,
       repoToken: TOKEN,
       repoUrl: "https://github.com/owner/cache.git",
       rootDir,
@@ -173,7 +232,7 @@ describe("saveArtifacts", () => {
     });
     await fs.writeFile(
       path.join(rootDir, "apps/web/public/thumbnails/example.jpg"),
-      "jpeg-bytes",
+      JPEG_BYTES,
     );
   });
 
@@ -181,15 +240,18 @@ describe("saveArtifacts", () => {
     await fs.rm(rootDir, { force: true, recursive: true });
   });
 
-  it("publishes a single orphan commit and force-pushes to the clone's branch", async () => {
-    setRespond({ status: " M geocoding-cache.json\n", symbolicRef: "main\n" });
+  it("commits and pushes without rewriting history by default", async () => {
+    setRespond({ status: " M geocoding-cache.json\n" });
 
     await saveArtifacts(config);
 
     const commands = gitCommands();
-    expect(commands[0].slice(0, 2)).toEqual(["clone", "--depth=1"]);
+    const cloneCommand = commands.find((args) => args[0] === "clone")!;
+    expect(cloneCommand.slice(0, 2)).toEqual(["clone", "--depth=1"]);
+    expect(cloneCommand).toContain("--single-branch");
+    expect(cloneCommand).toContain(DEFAULT_CACHE_BRANCH);
     // token 不再嵌入 clone URL——argv 里只允许出现无凭据 URL。
-    expect(commands[0]).toContain(
+    expect(cloneCommand).toContain(
       "https://x-access-token@github.com/owner/cache.git",
     );
 
@@ -205,31 +267,70 @@ describe("saveArtifacts", () => {
       "afilmory-cache@users.noreply.github.com",
     ]);
 
-    // orphan 提交序列：checkout --orphan -> add --all -> commit -> push --force。
     const names = commands.map((args) => args.join(" "));
-    const orphanIndex = names.findIndex((c) =>
-      c.startsWith("checkout --orphan"),
-    );
-    const addAllIndex = names.indexOf("add --all");
     const commitIndex = names.findIndex((c) => c.startsWith("commit"));
     const pushIndex = names.findIndex((c) => c.startsWith("push"));
-    expect(orphanIndex).toBeGreaterThan(-1);
-    expect(addAllIndex).toBeGreaterThan(orphanIndex);
-    expect(commitIndex).toBeGreaterThan(addAllIndex);
+    expect(names.some((c) => c.startsWith("checkout --orphan"))).toBe(false);
+    expect(names).toContain("add --all");
+    expect(commitIndex).toBeGreaterThan(-1);
     expect(pushIndex).toBeGreaterThan(commitIndex);
 
     expect(commands[pushIndex]).toEqual([
       "push",
-      "--force",
       "origin",
-      "HEAD:refs/heads/main",
+      `HEAD:refs/heads/${DEFAULT_CACHE_BRANCH}`,
     ]);
-    // 不再向旧历史追加普通 push。
-    expect(names).not.toContain("push --set-upstream origin HEAD");
   });
 
+  it("compacts history only with opt-in and a precise force-with-lease", async () => {
+    config.allowHistoryRewrite = true;
+    setRespond({
+      remoteHead: "fedcba9876543210\n",
+      status: " M geocoding-cache.json\n",
+    });
+
+    await saveArtifacts(config);
+
+    const commands = gitCommands();
+    const names = commands.map((args) => args.join(" "));
+    expect(names).toContain("rev-parse HEAD");
+    expect(names.some((c) => c.startsWith("checkout --orphan"))).toBe(true);
+    expect(commands.at(-1)).toEqual([
+      "push",
+      `--force-with-lease=refs/heads/${DEFAULT_CACHE_BRANCH}:fedcba9876543210`,
+      "origin",
+      `HEAD:refs/heads/${DEFAULT_CACHE_BRANCH}`,
+    ]);
+  });
+
+  it.each(["coarse", "strip"] as const)(
+    "removes legacy exact-coordinate caches when saving in %s mode",
+    async (locationMode) => {
+      config.locationMode = locationMode;
+      setRespond({
+        populateClone: (cacheDir) => {
+          writeFileSync(
+            path.join(cacheDir, "geocoding-cache.json"),
+            '{"31.2304,121.4737":{"city":"private"}}',
+          );
+        },
+        status: " D geocoding-cache.json\n",
+      });
+
+      await saveArtifacts(config);
+
+      await expect(
+        fs.access(path.join(rootDir, "generated/geocoding-cache.json")),
+      ).rejects.toThrow();
+      await expect(
+        fs.access(path.join(config.cacheDir, "geocoding-cache.json")),
+      ).rejects.toThrow();
+      expect(gitCommands()).toContainEqual(["add", "--all"]);
+    },
+  );
+
   it("never puts the token into argv; it travels only via the askpass env", async () => {
-    setRespond({ status: " M geocoding-cache.json\n", symbolicRef: "main\n" });
+    setRespond({ status: " M geocoding-cache.json\n" });
 
     await saveArtifacts(config);
 
@@ -252,7 +353,7 @@ describe("saveArtifacts", () => {
   });
 
   it("creates the askpass helper as an owner-only file and removes it afterwards", async () => {
-    setRespond({ status: " M geocoding-cache.json\n", symbolicRef: "main\n" });
+    setRespond({ status: " M geocoding-cache.json\n" });
 
     await saveArtifacts(config);
 
@@ -286,19 +387,19 @@ describe("saveArtifacts", () => {
     await expect(fs.access(askpassPath)).rejects.toThrow();
   });
 
-  it("uses the configured branch and skips the symbolic-ref lookup", async () => {
+  it("uses the configured dedicated branch", async () => {
     setRespond({ status: " M geocoding-cache.json\n" });
     config.repoBranch = "cache";
 
     await saveArtifacts(config);
 
     const commands = gitCommands();
-    expect(commands[0]).toContain("--branch");
-    expect(commands[0]).toContain("cache");
+    const cloneCommand = commands.find((args) => args[0] === "clone")!;
+    expect(cloneCommand).toContain("--branch");
+    expect(cloneCommand).toContain("cache");
     expect(commands.some((args) => args[0] === "symbolic-ref")).toBe(false);
     expect(commands.at(-1)).toEqual([
       "push",
-      "--force",
       "origin",
       "HEAD:refs/heads/cache",
     ]);
@@ -320,7 +421,7 @@ describe("saveArtifacts", () => {
   it("sanitizes the token out of failed subprocess output", async () => {
     setRespond({
       status: " M geocoding-cache.json\n",
-      failPushWith: `fatal: could not push https://x:${TOKEN}@github.com/owner/cache.git`,
+      failPushWith: `fatal: could not push https://x:${TOKEN}@github.com/owner/cache.git`, // secret-scan: allow -- sanitizer fixture
     });
 
     let message = "";
@@ -363,8 +464,10 @@ describe("restoreArtifacts", () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
     rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "artifact-cache-test-"));
     config = {
+      allowHistoryRewrite: false,
       cacheDir: path.join(rootDir, "apps/web/assets-git"),
-      repoBranch: undefined,
+      locationMode: "exact",
+      repoBranch: DEFAULT_CACHE_BRANCH,
       repoToken: TOKEN,
       repoUrl: "https://github.com/owner/cache.git",
       rootDir,
@@ -382,7 +485,7 @@ describe("restoreArtifacts", () => {
       writeFileSync(path.join(cacheDir, "photos-manifest.json"), manifest);
       writeFileSync(path.join(cacheDir, "geocoding-cache.json"), "{}");
       mkdirSync(path.join(cacheDir, "thumbnails"));
-      writeFileSync(path.join(cacheDir, "thumbnails/a.jpg"), "jpeg-bytes");
+      writeFileSync(path.join(cacheDir, "thumbnails/a.jpg"), JPEG_BYTES);
     });
 
     await restoreArtifacts(config);
@@ -400,13 +503,132 @@ describe("restoreArtifacts", () => {
       ),
     ).resolves.toBe("{}");
     await expect(
-      fs.readFile(
-        path.join(rootDir, "apps/web/public/thumbnails/a.jpg"),
-        "utf-8",
-      ),
-    ).resolves.toBe("jpeg-bytes");
+      fs.readFile(path.join(rootDir, "apps/web/public/thumbnails/a.jpg")),
+    ).resolves.toEqual(JPEG_BYTES);
     expect(warnings()).toEqual([]);
   });
+
+  it("keeps the existing manifest when the staging copy fails", async () => {
+    const targetPath = path.join(rootDir, "generated/photos-manifest.json");
+    const existingManifest = JSON.stringify({
+      ...createEmptyManifest(),
+      generatedAt: "2025-01-01T00:00:00.000Z",
+    });
+    const cachedManifest = JSON.stringify({
+      ...createEmptyManifest(),
+      generatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, existingManifest);
+    setCloneFixtures((cacheDir) => {
+      writeFileSync(
+        path.join(cacheDir, "photos-manifest.json"),
+        cachedManifest,
+      );
+    });
+    vi.spyOn(fs, "cp").mockRejectedValueOnce(
+      Object.assign(new Error("simulated staging ENOSPC"), { code: "ENOSPC" }),
+    );
+
+    await restoreArtifacts(config);
+
+    await expect(fs.readFile(targetPath, "utf-8")).resolves.toBe(
+      existingManifest,
+    );
+    expect(warnings()).toContainEqual(
+      expect.stringContaining("simulated staging ENOSPC"),
+    );
+    const generatedEntries = await fs.readdir(path.dirname(targetPath));
+    expect(
+      generatedEntries.some((name) => name.includes("afilmory-staging")),
+    ).toBe(false);
+  });
+
+  it("rolls back an existing thumbnail directory when the atomic swap fails", async () => {
+    const targetPath = path.join(rootDir, "apps/web/public/thumbnails");
+    await fs.mkdir(targetPath, { recursive: true });
+    await fs.writeFile(path.join(targetPath, "existing.jpg"), JPEG_BYTES);
+    setCloneFixtures((cacheDir) => {
+      mkdirSync(path.join(cacheDir, "thumbnails"));
+      writeFileSync(
+        path.join(cacheDir, "thumbnails/replacement.jpg"),
+        JPEG_BYTES,
+      );
+    });
+
+    const realRename = fs.rename.bind(fs);
+    let rejectedStagingCommit = false;
+    vi.spyOn(fs, "rename").mockImplementation(
+      async (sourcePath, destinationPath) => {
+        if (
+          !rejectedStagingCommit &&
+          String(sourcePath).includes(".thumbnails.afilmory-staging-") &&
+          path.resolve(String(destinationPath)) === path.resolve(targetPath)
+        ) {
+          rejectedStagingCommit = true;
+          throw Object.assign(new Error("simulated directory rename failure"), {
+            code: "EIO",
+          });
+        }
+        await realRename(sourcePath, destinationPath);
+      },
+    );
+
+    await restoreArtifacts(config);
+
+    expect(rejectedStagingCommit).toBe(true);
+    await expect(
+      fs.readFile(path.join(targetPath, "existing.jpg")),
+    ).resolves.toEqual(JPEG_BYTES);
+    await expect(
+      fs.access(path.join(targetPath, "replacement.jpg")),
+    ).rejects.toThrow();
+    expect(warnings()).toContainEqual(
+      expect.stringContaining("simulated directory rename failure"),
+    );
+    const publicEntries = await fs.readdir(path.dirname(targetPath));
+    expect(
+      publicEntries.some(
+        (name) =>
+          name.includes("afilmory-staging") ||
+          name.includes("afilmory-artifact-cache"),
+      ),
+    ).toBe(false);
+  });
+
+  it.each(["coarse", "strip"] as const)(
+    "ignores remote and deletes local legacy exact caches in %s mode",
+    async (locationMode) => {
+      config.locationMode = locationMode;
+      await fs.mkdir(path.join(rootDir, "generated"), { recursive: true });
+      await fs.writeFile(
+        path.join(rootDir, "generated/geocoding-cache.json"),
+        '{"31.2304,121.4737":{"city":"private"}}',
+      );
+      const manifest = JSON.stringify(createEmptyManifest());
+      setCloneFixtures((cacheDir) => {
+        writeFileSync(path.join(cacheDir, "photos-manifest.json"), manifest);
+        writeFileSync(
+          path.join(cacheDir, "geocoding-cache.json"),
+          '{"31.2304,121.4737":{"city":"private"}}',
+        );
+        mkdirSync(path.join(cacheDir, "thumbnails"));
+        writeFileSync(path.join(cacheDir, "thumbnails/a.jpg"), JPEG_BYTES);
+      });
+
+      await restoreArtifacts(config);
+
+      await expect(
+        fs.access(path.join(rootDir, "generated/geocoding-cache.json")),
+      ).rejects.toThrow();
+      await expect(
+        fs.access(path.join(rootDir, "generated/photos-manifest.json")),
+      ).resolves.toBeUndefined();
+      await expect(
+        fs.access(path.join(rootDir, "apps/web/public/thumbnails/a.jpg")),
+      ).resolves.toBeUndefined();
+    },
+  );
 
   it("keeps a corrupt cached manifest out of generated/ but still restores later pairs", async () => {
     setCloneFixtures((cacheDir) => {
@@ -416,7 +638,7 @@ describe("restoreArtifacts", () => {
         '{"not":"a manifest"}',
       );
       mkdirSync(path.join(cacheDir, "thumbnails"));
-      writeFileSync(path.join(cacheDir, "thumbnails/a.jpg"), "jpeg-bytes");
+      writeFileSync(path.join(cacheDir, "thumbnails/a.jpg"), JPEG_BYTES);
     });
 
     await restoreArtifacts(config);
@@ -439,7 +661,7 @@ describe("restoreArtifacts", () => {
     setCloneFixtures((cacheDir) => {
       writeFileSync(secretPath, "not-for-public");
       mkdirSync(path.join(cacheDir, "thumbnails"));
-      writeFileSync(path.join(cacheDir, "thumbnails/real.jpg"), "jpeg-bytes");
+      writeFileSync(path.join(cacheDir, "thumbnails/real.jpg"), JPEG_BYTES);
       // 缓存仓库可被恶意 push：symlink 指向服务目录之外的文件，跟随复制的话
       // 会被静态站点从 public/ 直接对外提供。
       symlinkSync(secretPath, path.join(cacheDir, "thumbnails/evil.jpg"));
@@ -447,12 +669,67 @@ describe("restoreArtifacts", () => {
 
     await restoreArtifacts(config);
 
+    // Reject the whole directory atomically; do not restore a partial cache
+    // after encountering an unsupported entry.
     await expect(
       fs.access(path.join(rootDir, "apps/web/public/thumbnails/real.jpg")),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow();
     await expect(
       fs.lstat(path.join(rootDir, "apps/web/public/thumbnails/evil.jpg")),
     ).rejects.toThrow();
+    expect(warnings()).toContainEqual(
+      expect.stringContaining("unsupported thumbnail cache entry"),
+    );
+  });
+
+  it("rejects thumbnail files whose extension and magic bytes disagree", async () => {
+    setCloneFixtures((cacheDir) => {
+      mkdirSync(path.join(cacheDir, "thumbnails"));
+      writeFileSync(path.join(cacheDir, "thumbnails/fake.jpg"), "not-a-jpeg");
+    });
+
+    await restoreArtifacts(config);
+
+    await expect(
+      fs.access(path.join(rootDir, "apps/web/public/thumbnails/fake.jpg")),
+    ).rejects.toThrow();
+    expect(warnings()).toContainEqual(
+      expect.stringContaining("invalid magic bytes"),
+    );
+  });
+
+  it("rejects nested or unexpected thumbnail cache entries", async () => {
+    setCloneFixtures((cacheDir) => {
+      mkdirSync(path.join(cacheDir, "thumbnails/nested"), { recursive: true });
+      writeFileSync(
+        path.join(cacheDir, "thumbnails/nested/photo.jpg"),
+        JPEG_BYTES,
+      );
+    });
+
+    await restoreArtifacts(config);
+
+    await expect(
+      fs.access(path.join(rootDir, "apps/web/public/thumbnails")),
+    ).rejects.toThrow();
+    expect(warnings()).toContainEqual(
+      expect.stringContaining("unsupported thumbnail cache entry"),
+    );
+  });
+
+  it("rejects a geocoding cache that is not a JSON object", async () => {
+    setCloneFixtures((cacheDir) => {
+      writeFileSync(path.join(cacheDir, "geocoding-cache.json"), "[]");
+    });
+
+    await restoreArtifacts(config);
+
+    await expect(
+      fs.access(path.join(rootDir, "generated/geocoding-cache.json")),
+    ).rejects.toThrow();
+    expect(warnings()).toContainEqual(
+      expect.stringContaining("must contain a JSON object"),
+    );
   });
 
   it("warns and continues when cached artifacts are missing", async () => {

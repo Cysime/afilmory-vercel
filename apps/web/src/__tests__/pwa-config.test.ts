@@ -5,8 +5,8 @@ import {
   createAfilmoryPwaPlugin,
   createNavigateFallbackDenylist,
   matchImageRequest,
+  matchManifestShardRequest,
   matchThumbnailRequest,
-  matchVideoRequest,
 } from "../../plugins/vite/pwa";
 import { AFILMORY_RUNTIME_CACHE_NAMES } from "../runtime/cache-names";
 
@@ -44,36 +44,38 @@ describe("PWA runtime caching", () => {
         request: request(""),
       }),
     ).toBe(true);
+  });
+
+  it("matches stable hash-prefix detail shard names", () => {
     expect(
-      matchVideoRequest({
-        url: new URL("https://cdn.example.com/live.MOV?signature=abc"),
-        request: request(""),
-      }),
-    ).toBe(true);
-    expect(
-      matchVideoRequest({
-        url: new URL("https://cdn.example.com/stream?id=1"),
-        request: request("video"),
+      matchManifestShardRequest({
+        url: new URL(
+          "/assets/photo-details.101.0123456789.json",
+          window.location.origin,
+        ),
       }),
     ).toBe(true);
   });
 
-  it("uses range-aware video caching and excludes photo shells from precache", () => {
+  it("does not claim an unfillable video cache and excludes photo shells from precache", () => {
     createAfilmoryPwaPlugin(siteConfig);
     const options = vitePwa.mock.calls[0]?.[0] as {
       workbox: {
         globIgnores: string[];
         navigateFallbackDenylist: RegExp[];
         runtimeCaching: Array<{
-          options?: { cacheName?: string; rangeRequests?: boolean };
+          options?: { cacheName?: string };
         }>;
       };
     };
-    const videoRoute = options.workbox.runtimeCaching.find(
-      (route) => route.options?.cacheName === AFILMORY_RUNTIME_CACHE_NAMES[2],
+    const configuredCacheNames = options.workbox.runtimeCaching.map(
+      (route) => route.options?.cacheName,
     );
 
-    expect(videoRoute?.options?.rangeRequests).toBe(true);
+    expect(configuredCacheNames).toEqual(
+      expect.arrayContaining(Object.values(AFILMORY_RUNTIME_CACHE_NAMES)),
+    );
+    expect(configuredCacheNames).not.toContain("afilmory-videos-v1");
     expect(options.workbox.globIgnores).toContain("photos/**/index.html");
     expect(
       options.workbox.navigateFallbackDenylist.some((pattern) =>

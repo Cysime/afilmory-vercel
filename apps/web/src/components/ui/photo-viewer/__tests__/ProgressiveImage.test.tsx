@@ -20,6 +20,9 @@ import { ProgressiveImage } from "../ProgressiveImage";
 const hoisted = vi.hoisted(() => ({
   canUseWebGL: false,
   failWebGL: false,
+  zoomIn: vi.fn(),
+  zoomOut: vi.fn(),
+  resetView: vi.fn(),
   runtime: {
     imageCache: {},
     imageLoading: {
@@ -60,7 +63,24 @@ vi.mock("@afilmory/webgl-viewer", async () => {
   const React = await import("react");
 
   return {
-    WebGLImageViewer: ({ onError }: { onError?: (error: unknown) => void }) => {
+    WebGLImageViewer: ({
+      onError,
+      ref,
+    }: {
+      onError?: (error: unknown) => void;
+      ref?: React.RefObject<{
+        zoomIn: () => void;
+        zoomOut: () => void;
+        resetView: () => void;
+        getScale: () => number;
+      } | null>;
+    }) => {
+      React.useImperativeHandle(ref, () => ({
+        zoomIn: hoisted.zoomIn,
+        zoomOut: hoisted.zoomOut,
+        resetView: hoisted.resetView,
+        getScale: () => 1,
+      }));
       React.useEffect(() => {
         if (hoisted.failWebGL) {
           onError?.(new Error("WebGL unavailable"));
@@ -96,6 +116,7 @@ vi.mock("motion/react", () => {
     AnimatePresence: ({ children }: { children?: ReactNode }) => (
       <>{children}</>
     ),
+    useReducedMotion: () => false,
     m: {
       div: ({ children, ...props }: ComponentProps<"div">) => (
         <div {...props}>{children}</div>
@@ -139,9 +160,37 @@ describe("ProgressiveImage", () => {
   afterEach(() => {
     hoisted.canUseWebGL = false;
     hoisted.failWebGL = false;
+    hoisted.zoomIn.mockReset();
+    hoisted.zoomOut.mockReset();
+    hoisted.resetView.mockReset();
     resetThumbnailLoadCache();
     vi.restoreAllMocks();
     cleanup();
+  });
+
+  it("offers visible zoom controls and +, -, 0 keyboard shortcuts", async () => {
+    hoisted.canUseWebGL = true;
+    render(
+      <ProgressiveImage
+        src="https://example.com/photo.jpg"
+        alt="Mountain at dusk"
+        isCurrentImage
+        loadingIndicatorRef={{ current: null }}
+      />,
+    );
+
+    const viewer = await screen.findByRole("group", {
+      name: "Mountain at dusk",
+    });
+    await screen.findByRole("toolbar", { name: "photo.zoom.controls" });
+
+    fireEvent.keyDown(viewer, { key: "+" });
+    fireEvent.keyDown(viewer, { key: "-" });
+    fireEvent.keyDown(viewer, { key: "0" });
+
+    expect(hoisted.zoomIn).toHaveBeenCalledWith(true);
+    expect(hoisted.zoomOut).toHaveBeenCalledWith(true);
+    expect(hoisted.resetView).toHaveBeenCalledTimes(1);
   });
 
   it("shows the thumbnail when the browser reports the image as already loaded on mount", async () => {

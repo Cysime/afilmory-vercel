@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router";
 
 import { ThumbnailImage } from "~/components/ui/ThumbnailImage";
+import { getPhotoAccessibleLabel } from "~/lib/photo-accessibility";
 import { buildPhotoDetailPathname } from "~/lib/photo-detail-route";
 import { buildPhotoDetailSearch } from "~/lib/return-to";
 import type { PhotoMarker } from "~/types/map";
@@ -102,6 +103,11 @@ export const ClusterPhotoGrid = ({
                 onPhotoClick?.(photoMarker);
               }}
               className="block h-full w-full"
+              aria-label={getPhotoAccessibleLabel(
+                photoMarker.photo,
+                t,
+                i18n.language,
+              )}
             >
               <ThumbnailImage
                 photoId={photoMarker.photo.id}
@@ -109,7 +115,7 @@ export const ClusterPhotoGrid = ({
                   photoMarker.photo.thumbnailUrl ||
                   photoMarker.photo.originalUrl
                 }
-                alt={photoMarker.photo.title || photoMarker.photo.id}
+                alt=""
                 width={photoMarker.photo.width}
                 height={photoMarker.photo.height}
                 thumbHash={photoMarker.photo.thumbHash}

@@ -20,7 +20,7 @@ export interface MinimalBuilderPlugin {
 }
 
 export interface BuiltinBuilderPluginDescriptor {
-  plugin: "geocoding";
+  plugin: "geocoding" | "thumbnail-storage";
   options?: unknown;
   name?: string;
 }
@@ -53,6 +53,6 @@ export function isBuiltinBuilderPluginDescriptor(
     typeof value === "object" &&
     value !== null &&
     "plugin" in value &&
-    value.plugin === "geocoding"
+    (value.plugin === "geocoding" || value.plugin === "thumbnail-storage")
   );
 }

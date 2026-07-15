@@ -2,6 +2,7 @@ import { VitePWA } from "vite-plugin-pwa";
 
 import type { SiteConfig } from "../../../../site.config";
 import { AFILMORY_RUNTIME_CACHE_NAMES } from "../../src/runtime/cache-names";
+import { filterCriticalPrecacheManifest } from "./__internal__/precache-policy";
 
 interface RuntimeRequestContext {
   request: Request;
@@ -31,13 +32,23 @@ export function matchImageRequest({
   );
 }
 
-export function matchVideoRequest({
+export function matchStaticAssetRequest({
   url,
   request,
 }: RuntimeRequestContext): boolean {
   return (
-    request.destination === "video" ||
-    /\.(?:mp4|m4v|mov|webm|ogv|ogg)$/i.test(url.pathname)
+    url.origin === self.location.origin &&
+    (request.destination === "script" || request.destination === "style") &&
+    /^\/(?:assets|vendor)\//.test(url.pathname)
+  );
+}
+
+export function matchManifestShardRequest({ url }: RuntimeUrlContext): boolean {
+  return (
+    url.origin === self.location.origin &&
+    /^\/assets\/(?:photo-details\.(?:root|[01]+(?:-\d+)?)|map-details)\.[\da-f]+\.json$/.test(
+      url.pathname,
+    )
   );
 }
 
@@ -118,9 +129,41 @@ export function createAfilmoryPwaPlugin(
         "photos/**/index.html",
         "**/*.map",
       ],
-      globPatterns: ["**/*.{js,css,html}", "**/assets/photos-manifest.*.json"],
+      // Workbox first discovers build assets, then this build-time transform
+      // keeps only the entry + pre-render gallery dependency graph registered
+      // by deps.ts. Lazy viewer/map/debug/locale chunks use runtime caching.
+      globPatterns: ["**/*.{js,css,html}", "**/assets/gallery-index.*.json"],
+      manifestTransforms: [
+        (entries) => filterCriticalPrecacheManifest(entries),
+      ],
       maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
       runtimeCaching: [
+        {
+          urlPattern: matchStaticAssetRequest,
+          handler: "CacheFirst",
+          options: {
+            cacheName: AFILMORY_RUNTIME_CACHE_NAMES.staticAssets,
+            expiration: {
+              maxEntries: 100,
+              maxAgeSeconds: 60 * 60 * 24 * 365,
+              purgeOnQuotaError: true,
+            },
+            cacheableResponse: { statuses: [0, 200] },
+          },
+        },
+        {
+          urlPattern: matchManifestShardRequest,
+          handler: "CacheFirst",
+          options: {
+            cacheName: AFILMORY_RUNTIME_CACHE_NAMES.manifestShards,
+            expiration: {
+              maxEntries: 40,
+              maxAgeSeconds: 60 * 60 * 24 * 365,
+              purgeOnQuotaError: true,
+            },
+            cacheableResponse: { statuses: [0, 200] },
+          },
+        },
         // 缩略图：构建期产物、Vercel 侧已是 immutable —— 用 CacheFirst 而非
         // StaleWhileRevalidate（SWR 会在每次展示时都发一次后台革新请求，且旧上限
         // 150 < 照片总数，整个画廊滚一遍就互相挤占、后续变成真回源——正是
@@ -131,7 +174,7 @@ export function createAfilmoryPwaPlugin(
           urlPattern: matchThumbnailRequest,
           handler: "CacheFirst",
           options: {
-            cacheName: AFILMORY_RUNTIME_CACHE_NAMES[0],
+            cacheName: AFILMORY_RUNTIME_CACHE_NAMES.thumbnails,
             expiration: {
               maxEntries: 600,
               maxAgeSeconds: 60 * 60 * 24 * 365,
@@ -142,26 +185,11 @@ export function createAfilmoryPwaPlugin(
             },
           },
         },
-        // Cache a small number of full video responses and let Workbox slice
-        // them for byte-range requests. A browser's initial 206 response is not
-        // cached; it remains a normal network response until a cacheable 200 is
-        // available, avoiding corrupt partial objects in Cache Storage.
-        {
-          urlPattern: matchVideoRequest,
-          handler: "CacheFirst",
-          options: {
-            cacheName: AFILMORY_RUNTIME_CACHE_NAMES[2],
-            expiration: {
-              maxEntries: 12,
-              maxAgeSeconds: 60 * 60 * 24 * 30,
-              purgeOnQuotaError: true,
-            },
-            cacheableResponse: {
-              statuses: [200],
-            },
-            rangeRequests: true,
-          },
-        },
+        // Video is deliberately left to the browser HTTP cache and CDN range
+        // handling. Media elements normally begin with a 206 byte-range
+        // response; a Workbox CacheFirst route cannot turn that response into
+        // a complete cached object, so claiming an offline video cache here
+        // would be misleading and would leave an empty runtime cache.
         // 其余图片 = 主要是 CDN 原图（几 MB/张，经查看器 XHR 或 <img> 加载）。
         // PhotoRepository 会按 etag/lastModified 给原图 URL 加版本参数，因此同 key
         // 内容更新会自然得到新的 Cache Storage key，CacheFirst 不会长期返回旧图。
@@ -172,7 +200,7 @@ export function createAfilmoryPwaPlugin(
           urlPattern: matchImageRequest,
           handler: "CacheFirst",
           options: {
-            cacheName: AFILMORY_RUNTIME_CACHE_NAMES[1],
+            cacheName: AFILMORY_RUNTIME_CACHE_NAMES.originalImages,
             expiration: {
               maxEntries: 40,
               maxAgeSeconds: 60 * 60 * 24 * 90,

@@ -95,6 +95,26 @@ describe("manifest v2 schema", () => {
     expect(validateManifest(legacy).success).toBe(true);
   });
 
+  it("round-trips optional per-stage processing fingerprints", () => {
+    const input = createManifest({
+      photos: [
+        createValidPhoto({
+          processing: {
+            thumbnail: "thumbnail:v2",
+            exif: "exif:v2",
+            tone: "tone:v2",
+            media: "media-detection:v2",
+            privacy: "location-privacy:v1:coarse",
+          },
+        }),
+      ],
+    });
+
+    expect(assertManifest(input).photos[0]?.processing).toEqual(
+      input.photos[0]?.processing,
+    );
+  });
+
   it("does not migrate legacy manifests", () => {
     expect(
       parseManifest({ version: "v10", data: [{ id: "legacy" }] }).photos,

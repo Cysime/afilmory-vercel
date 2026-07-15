@@ -1,3 +1,4 @@
+import { useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { isMobileDevice } from "~/lib/device-viewport";
@@ -11,6 +12,54 @@ import { useStableVideoSource } from "./useStableVideoSource";
 interface UseLivePhotoHandlerProps {
   data: PhotoManifest;
   imageLoaded: boolean;
+}
+
+const LIVE_PHOTO_HOVER_DWELL_MS = 200;
+const MAX_CONCURRENT_GRID_VIDEO_LOADS = 2;
+let activeGridVideoLoads = 0;
+const queuedGridVideoLoads: Array<() => void> = [];
+
+function acquireGridVideoLoadSlot(signal: AbortSignal): Promise<() => void> {
+  return new Promise((resolve, reject) => {
+    let released = false;
+    let started = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      signal.removeEventListener("abort", handleAbort);
+      activeGridVideoLoads = Math.max(0, activeGridVideoLoads - 1);
+      queuedGridVideoLoads.shift()?.();
+    };
+    const start = () => {
+      if (signal.aborted) {
+        reject(createAbortLikeError());
+        queuedGridVideoLoads.shift()?.();
+        return;
+      }
+      started = true;
+      activeGridVideoLoads += 1;
+      resolve(release);
+    };
+    const handleAbort = () => {
+      if (started) {
+        release();
+        return;
+      }
+      const index = queuedGridVideoLoads.indexOf(start);
+      if (index !== -1) queuedGridVideoLoads.splice(index, 1);
+      reject(createAbortLikeError());
+    };
+
+    signal.addEventListener("abort", handleAbort, { once: true });
+    if (activeGridVideoLoads < MAX_CONCURRENT_GRID_VIDEO_LOADS) start();
+    else queuedGridVideoLoads.push(start);
+  });
+}
+
+function createAbortLikeError(): Error {
+  const error = new Error("Grid Live Photo load cancelled");
+  error.name = "AbortError";
+  return error;
 }
 
 function isAbortLikeError(error: unknown): boolean {
@@ -50,6 +99,7 @@ export const useLivePhotoHandler = ({
 }: UseLivePhotoHandlerProps) => {
   const { id, video, originalUrl } = data;
   const runtime = useAfilmoryRuntime();
+  const shouldReduceMotion = useReducedMotion() === true;
   const [isPlayingLivePhoto, setIsPlayingLivePhoto] = useState(false);
   const [livePhotoVideoLoaded, setLivePhotoVideoLoaded] = useState(false);
   const [isConvertingVideo, setIsConvertingVideo] = useState(false);
@@ -61,7 +111,7 @@ export const useLivePhotoHandler = ({
   const [videoLoadRequested, setVideoLoadRequested] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const hoverTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const imageLoaderManagerRef = useRef<ImageLoaderManager | null>(null);
   const loadedVideoKeyRef = useRef<string | null>(null);
   const isHoveringRef = useRef(false);
@@ -83,19 +133,18 @@ export const useLivePhotoHandler = ({
     resetVideoElement(videoRef.current);
   }, [id]);
 
-  const startPlayTimer = useCallback(() => {
-    hoverTimerRef.current = setTimeout(() => {
-      setIsPlayingLivePhoto(true);
-      const video = videoRef.current;
-      if (video) {
-        video.currentTime = 0;
-        void video.play().catch((error: unknown) => {
-          console.error("Failed to play masonry live photo video:", error);
-          setIsPlayingLivePhoto(false);
-        });
-      }
-    }, 200);
-  }, []);
+  const playLoadedVideo = useCallback(() => {
+    if (!isHoveringRef.current || shouldReduceMotion) return;
+    setIsPlayingLivePhoto(true);
+    const video = videoRef.current;
+    if (video) {
+      video.currentTime = 0;
+      void video.play().catch((error: unknown) => {
+        console.error("Failed to play masonry live photo video:", error);
+        setIsPlayingLivePhoto(false);
+      });
+    }
+  }, [shouldReduceMotion]);
 
   // Live Photo/Motion Photo video loading logic (deferred until hover intent)
   useEffect(() => {
@@ -112,15 +161,18 @@ export const useLivePhotoHandler = ({
     const videoEl = videoRef.current;
 
     let cancelled = false;
+    const queueController = new AbortController();
 
     const loadVideo = async () => {
       setLivePhotoVideoLoaded(false);
       setIsConvertingVideo(true);
-
-      const imageLoaderManager = runtime.imageLoading.createLoader();
-      imageLoaderManagerRef.current = imageLoaderManager;
+      let releaseSlot: (() => void) | null = null;
 
       try {
+        releaseSlot = await acquireGridVideoLoadSlot(queueController.signal);
+        if (cancelled) return;
+        const imageLoaderManager = runtime.imageLoading.createLoader();
+        imageLoaderManagerRef.current = imageLoaderManager;
         await imageLoaderManager.processVideo(videoSource, videoEl);
         if (!cancelled) {
           loadedVideoKeyRef.current = videoSourceKey;
@@ -128,7 +180,7 @@ export const useLivePhotoHandler = ({
           // The load was hover-initiated; if the pointer is still on the
           // cell, start playback now instead of requiring a second hover.
           if (isHoveringRef.current) {
-            startPlayTimer();
+            playLoadedVideo();
           }
         }
       } catch (videoError) {
@@ -137,6 +189,7 @@ export const useLivePhotoHandler = ({
           setVideoConversionError(videoError);
         }
       } finally {
+        releaseSlot?.();
         if (!cancelled) {
           setIsConvertingVideo(false);
         }
@@ -147,6 +200,7 @@ export const useLivePhotoHandler = ({
 
     return () => {
       cancelled = true;
+      queueController.abort();
       if (imageLoaderManagerRef.current) {
         runtime.imageLoading.cleanupLoader(imageLoaderManagerRef.current);
         imageLoaderManagerRef.current = null;
@@ -159,29 +213,33 @@ export const useLivePhotoHandler = ({
     videoSourceKey,
     imageLoaded,
     runtime.imageLoading,
-    startPlayTimer,
+    playLoadedVideo,
   ]);
 
   // Live Photo/Motion Photo hover handling (desktop only)
   const handleMouseEnter = useCallback(() => {
-    if (isMobileDevice || !hasVideo) {
+    if (isMobileDevice || !hasVideo || shouldReduceMotion) {
       return;
     }
 
     isHoveringRef.current = true;
-    setVideoLoadRequested(true);
-
-    if (!livePhotoVideoLoaded || isPlayingLivePhoto || isConvertingVideo) {
-      return;
-    }
-
-    startPlayTimer();
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(() => {
+      hoverTimerRef.current = null;
+      if (!isHoveringRef.current) return;
+      if (livePhotoVideoLoaded && !isPlayingLivePhoto && !isConvertingVideo) {
+        playLoadedVideo();
+      } else {
+        setVideoLoadRequested(true);
+      }
+    }, LIVE_PHOTO_HOVER_DWELL_MS);
   }, [
     hasVideo,
+    shouldReduceMotion,
     livePhotoVideoLoaded,
     isPlayingLivePhoto,
     isConvertingVideo,
-    startPlayTimer,
+    playLoadedVideo,
   ]);
 
   const handleMouseLeave = useCallback(() => {
@@ -200,7 +258,15 @@ export const useLivePhotoHandler = ({
         video.currentTime = 0;
       }
     }
-  }, [isPlayingLivePhoto]);
+
+    // Leaving before readiness is an explicit cancellation signal. This also
+    // removes queued work before a loader is created, so a quick pointer sweep
+    // cannot build up a tail of multi-megabyte requests.
+    if (!livePhotoVideoLoaded) {
+      setVideoLoadRequested(false);
+      setIsConvertingVideo(false);
+    }
+  }, [isPlayingLivePhoto, livePhotoVideoLoaded]);
 
   const handleVideoEnded = useCallback(() => {
     setIsPlayingLivePhoto(false);

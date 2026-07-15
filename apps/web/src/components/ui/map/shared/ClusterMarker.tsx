@@ -1,4 +1,3 @@
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@afilmory/ui";
 import { m } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { Marker } from "react-map-gl/maplibre";
@@ -6,6 +5,7 @@ import { Marker } from "react-map-gl/maplibre";
 import { ThumbnailImage } from "~/components/ui/ThumbnailImage";
 
 import { ClusterPhotoGrid } from "../ClusterPhotoGrid";
+import { MapPopover, MapPopoverContent, MapPopoverTrigger } from "./MapPopover";
 import type { ClusterMarkerProps } from "./types";
 
 const DEFAULT_CLUSTERED_PHOTOS: ClusterMarkerProps["clusteredPhotos"] = [];
@@ -23,8 +23,8 @@ export const ClusterMarker = ({
   const size = Math.min(64, Math.max(44, 32 + Math.log(pointCount) * 8));
   return (
     <Marker longitude={longitude} latitude={latitude}>
-      <HoverCard openDelay={300} closeDelay={150}>
-        <HoverCardTrigger asChild>
+      <MapPopover>
+        <MapPopoverTrigger>
           <m.button
             type="button"
             className="focus-visible:ring-accent/45 group focus-visible:ring-offset-background relative cursor-pointer rounded-full focus-visible:ring-2 focus-visible:ring-offset-2"
@@ -89,7 +89,7 @@ export const ClusterMarker = ({
                             photoMarker.photo.thumbnailUrl ||
                             photoMarker.photo.originalUrl
                           }
-                          alt={photoMarker.photo.title || photoMarker.photo.id}
+                          alt=""
                           width={photoMarker.photo.width}
                           height={photoMarker.photo.height}
                           thumbHash={photoMarker.photo.thumbHash}
@@ -120,14 +120,16 @@ export const ClusterMarker = ({
               <div className="absolute inset-0 rounded-full shadow-inner shadow-black/5" />
             </div>
           </m.button>
-        </HoverCardTrigger>
+        </MapPopoverTrigger>
 
-        <HoverCardContent
+        <MapPopoverContent
+          aria-label={t(
+            displayMode === "regions"
+              ? "explore.cluster.regions"
+              : "explore.cluster.photos",
+            { count: pointCount },
+          )}
           className="w-[min(20rem,calc(100vw-2rem))] overflow-hidden border-white/20 bg-white/95 p-0 shadow-xl backdrop-blur-2xl dark:bg-black/95"
-          side="top"
-          align="center"
-          portal={false}
-          sideOffset={8}
         >
           <div className="p-4">
             <ClusterPhotoGrid
@@ -138,8 +140,8 @@ export const ClusterMarker = ({
               }}
             />
           </div>
-        </HoverCardContent>
-      </HoverCard>
+        </MapPopoverContent>
+      </MapPopover>
     </Marker>
   );
 };

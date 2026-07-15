@@ -72,7 +72,7 @@ Huge thanks to [Innei](https://innei.in) and the Afilmory team for creating this
 - 💻 **Local-filesystem source photos** - set `PHOTO_STORAGE_PROVIDER=local` to build without object-storage credentials.
 - 🌍 **CDN-friendly URLs** - `S3_CUSTOM_DOMAIN` can be used for public photo URLs.
 - 📦 **Provider-aware static output** - S3 originals remain in object storage; local-mode originals are copied into the static output under their configured URL prefix.
-- 🚀 **Static SPA runtime** - production builds default to an external `assets/photos-manifest.<hash>.json` loaded through `window.__AFILMORY__.manifest`.
+- 🚀 **Progressive static runtime** - production emits a small content-addressed `gallery-index` plus stable ID-hash photo-detail shards and a map shard. Routes hydrate only the data they need through `window.__AFILMORY__.manifest`.
 
 ---
 
@@ -99,6 +99,16 @@ Huge thanks to [Innei](https://innei.in) and the Afilmory team for creating this
 ---
 
 ## 🚀 Quick Start
+
+To explore the complete UI without credentials or personal photos:
+
+```bash
+pnpm install
+pnpm dev:demo
+```
+
+This serves the committed synthetic gallery at `http://127.0.0.1:1924` and
+does not read `.env`, S3 credentials, or your generated manifest.
 
 ### One-click deploy to Vercel
 
@@ -220,17 +230,21 @@ This cache is not a photo storage backend. Source photos still come from the con
 | `MAP_STYLE`      | Map style      | `builtin`  | `builtin` or custom URL |
 | `MAP_PROJECTION` | Map projection | `mercator` | `globe` or `mercator`   |
 
-### Optional build-time geocoding
+### Location privacy and optional geocoding
 
-Reverse geocoding is **enabled by default**: any build that processes
-GPS-tagged photos calls the public Nominatim API to resolve place names into
-the manifest. Set `GEOCODING_ENABLED=false` to opt out of build-time external
-network calls. If you keep it on, set `GEOCODING_USER_AGENT` to a real
-identifier per the
+`PHOTO_LOCATION_MODE=coarse` is the privacy-preserving default. Public
+coordinates are rounded to two decimal places (kilometre scale) before they
+enter the manifest or leave the builder. Use `strip` to publish no coordinates
+or place names. `exact` publishes camera GPS unchanged and should be used only
+with the informed consent of photographed people and property owners.
+
+Reverse geocoding is **disabled by default** because it sends the selected
+location to an external provider. Set `GEOCODING_ENABLED=true` to opt in and
+set `GEOCODING_USER_AGENT` to a real identifier per the
 [Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/)
-(max 1 request/second). `GEOCODING_PROVIDER=mapbox` plus `MAPBOX_TOKEN` is the
-alternative to Nominatim. See `.env.template` for the full `GEOCODING_*` knob
-list.
+(max 1 request/second). `GEOCODING_PROVIDER=mapbox` plus `MAPBOX_TOKEN` is an
+alternative. `strip` always suppresses geocoding; `coarse` never sends exact
+camera coordinates. See `.env.template` for all privacy and provider options.
 
 ### Local `.env`
 
@@ -323,7 +337,7 @@ Open http://localhost:4173 after `pnpm preview`.
 - If required S3 configuration is missing but `generated/photos-manifest.json` exists, precheck reuses the existing manifest.
 - If the builder fails, preview builds continue only when the manifest currently on disk still passes strict validation. Precheck never rolls back the JSON file by itself, because a late builder failure may occur after the new manifest was atomically committed and old content-addressed thumbnails were collected.
 - `SKIP_MANIFEST_BUILD=true pnpm build` intentionally skips builder refresh.
-- Production web builds emit an external hashed manifest asset by default; set `AFILMORY_EMBED_MANIFEST=true` to inline it or `false` to force external loading.
+- Production web builds convert the Builder's manifest v2 into Web Delivery Manifest v3: a hashed gallery index, immutable stable-ID detail shards, and a map shard. Set `AFILMORY_EMBED_MANIFEST=true` to inline v2 for constrained deployments or `false` to force progressive external loading.
 
 ### Manifest CLI options
 
@@ -344,9 +358,11 @@ Vercel uses:
 - **Build command:** `sh scripts/build-static.sh`
 - **Output directory:** `apps/web/dist`
 
-When `REPO_URL` and `REPO_TOKEN` are configured, `scripts/build-static.sh` restores cached manifest, geocoding cache, and thumbnails before running the build. After a successful build it pushes the refreshed artifacts back to the cache repository.
+When `REPO_URL` and `REPO_TOKEN` are configured, `scripts/build-static.sh` restores the cached manifest and thumbnails before running the build, then pushes refreshed artifacts. Treat the separate cache repository as private: `exact` mode may also cache precise coordinates. `coarse` and `strip` never transfer `geocoding-cache.json` and remove legacy exact caches at this boundary. The cache defaults to the dedicated `afilmory-cache` branch, requires a least-privilege token, and refuses source/protected branches. See the [cache security guide](docs/cache-security.md).
 
 `scripts/build-static.sh` always runs `pnpm build`; all freshness and fallback decisions live in `apps/web/scripts/precheck.ts`. When required S3 configuration is missing but a reusable `generated/photos-manifest.json` exists, precheck reuses it so preview deployments still succeed. Production deploys (`VERCEL_ENV=production`, or `REQUIRE_FRESH_BUILD=true` on other platforms) fail instead of publishing a stale manifest.
+
+CI/Vercel builds also fail when shipped Project Code differs from the advertised Git revision. Commit the deployment source, or set `AFILMORY_CORRESPONDING_SOURCE_URL` to a public archive/tree containing the exact deployed source. Local dirty-tree builds remain available for preview and are labeled as non-exact in the footer.
 
 For local-provider deployments, make `LOCAL_PHOTOS_PATH` available in the build
 workspace. The build copies those originals into the static output; do not add
@@ -470,7 +486,9 @@ Language files are located under `locales/app/*.json`. To add a language:
 
 Contributions, issues, and feature requests are welcome.
 
-See [Contributing Guide](docs/CONTRIBUTING.md) for setup, common commands, manifest notes, and PR verification.
+See the [Contributing Guide](docs/CONTRIBUTING.md) for setup and verification,
+the [Security Policy](SECURITY.md) for private reporting, and the
+[Code of Conduct](CODE_OF_CONDUCT.md) for community expectations.
 
 ---
 
@@ -483,7 +501,8 @@ This project is based on [Afilmory](https://github.com/Afilmory/Afilmory) and fo
 - **Library code**: MIT
 - **Project code**: AGPL-3.0-or-later with UI attribution requirement
 
-See [LICENSE](LICENSE) for details.
+See [LICENSE](LICENSE), the machine-readable [ANL-MANIFEST](ANL-MANIFEST), and
+the [licensing map](docs/licensing.md) for details.
 
 ---
 

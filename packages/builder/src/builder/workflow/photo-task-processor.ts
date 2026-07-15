@@ -38,13 +38,25 @@ export class PhotoTaskProcessor {
     const { options } = session;
     const processorOptions: PhotoProcessorOptions = toProcessorOptions(options);
 
+    const { worker } = session.config.system.processing;
     const concurrency =
       options.concurrencyLimit ??
+      worker.globalTaskConcurrency ??
       session.config.system.processing.defaultConcurrency;
-    const { useClusterMode } =
-      session.config.system.observability.performance.worker;
+    const perProcessConcurrency = Math.min(
+      worker.workerConcurrency,
+      concurrency,
+    );
+    const processCount = Math.min(
+      worker.processCount,
+      Math.max(1, Math.floor(concurrency / perProcessConcurrency)),
+      tasksToProcess.length,
+    );
+    const { useClusterMode } = worker;
     const shouldUseCluster =
-      useClusterMode && tasksToProcess.length >= concurrency * 2;
+      useClusterMode &&
+      processCount > 1 &&
+      tasksToProcess.length >= processCount * perProcessConcurrency;
     const mode = shouldUseCluster ? "cluster" : "worker";
 
     await session.emit("beforeProcessTasks", {
@@ -93,7 +105,7 @@ export class PhotoTaskProcessor {
     emitProgress();
 
     session.services.logger.main.info(
-      `Starting ${shouldUseCluster ? "multi-process" : "concurrent"} task processing, ${shouldUseCluster ? "processes" : "workers"}: ${concurrency}${shouldUseCluster ? `, concurrency per process: ${session.config.system.observability.performance.worker.workerConcurrency}` : ""}`,
+      `Starting ${shouldUseCluster ? "multi-process" : "single-process"} task processing, global task budget: ${concurrency}${shouldUseCluster ? `, processes: ${processCount}, tasks per process: ${perProcessConcurrency}` : ""}`,
     );
 
     const results = shouldUseCluster
@@ -103,7 +115,8 @@ export class PhotoTaskProcessor {
           existingManifestMap,
           livePhotoMap,
           handleTaskCompleted,
-          concurrency,
+          processCount,
+          perProcessConcurrency,
         )
       : await this.processWithWorkers(
           session,
@@ -144,7 +157,8 @@ export class PhotoTaskProcessor {
     onTaskCompleted: (
       payload: TaskCompletedPayload<ProcessPhotoResult>,
     ) => void,
-    concurrency: number,
+    processCount: number,
+    workerConcurrency: number,
   ): Promise<ProcessPhotoResult[]> {
     // 进度回调是函数，进 IPC 会让 worker.send() 抛 DataCloneError；
     // 进度已由主进程的 onTaskCompleted 汇聚，传给 worker 前剥离。
@@ -160,12 +174,10 @@ export class PhotoTaskProcessor {
       [...livePhotoMap].filter(([key]) => taskKeys.has(key)),
     );
     const clusterPool = new ClusterPool<ProcessPhotoResult>({
-      concurrency,
+      concurrency: processCount,
       totalTasks: tasksToProcess.length,
       logger: session.services.logger,
-      workerConcurrency:
-        session.config.system.observability.performance.worker
-          .workerConcurrency,
+      workerConcurrency,
       sharedData: {
         existingManifestMap: workerExistingManifestMap,
         livePhotoMap: workerLivePhotoMap,
@@ -176,7 +188,7 @@ export class PhotoTaskProcessor {
         builderOptions,
         photoIdCollisionKeys: Array.from(session.getPhotoIdCollisionKeys()),
       },
-      timeoutMs: session.config.system.observability.performance.worker.timeout,
+      timeoutMs: session.config.system.processing.worker.timeout,
       onTaskCompleted,
     });
 
@@ -199,7 +211,7 @@ export class PhotoTaskProcessor {
       totalTasks: tasksToProcess.length,
       logger: session.services.logger,
       onTaskCompleted,
-      timeoutMs: session.config.system.observability.performance.worker.timeout,
+      timeoutMs: session.config.system.processing.worker.timeout,
     });
 
     // 构建期恒定的依赖只组装一次；每个任务只带自己的可变部分。
@@ -211,6 +223,7 @@ export class PhotoTaskProcessor {
         session.emitPluginEvent(runState, event, payload),
       runState: session.runState,
       builderOptions: session.options,
+      processorOptions: toProcessorOptions(session.options),
     };
 
     return await workerPool.execute(async (taskIndex, workerId, signal) => {

@@ -114,7 +114,7 @@ beforeEach(async () => {
     storage: { provider: "local", basePath: sourceDir, baseUrl: "/photos" },
   };
   config.output = { manifestPath, thumbnailsDir, originalsDir };
-  config.system.observability.performance.worker.useClusterMode = false;
+  config.system.processing.worker.useClusterMode = false;
   config.plugins = [];
 
   // 上一次成功构建留下的产物：非空 manifest + 每张照片的缩略图 + .encoding 标记。

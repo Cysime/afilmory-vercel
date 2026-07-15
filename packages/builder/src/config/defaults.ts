@@ -4,12 +4,26 @@ import { createDefaultOutputSettings } from "../output-paths.js";
 import type { BuilderConfig } from "../types/config.js";
 
 export function createDefaultBuilderConfig(): BuilderConfig {
+  const available =
+    typeof os.availableParallelism === "function"
+      ? os.availableParallelism()
+      : os.cpus().length;
+  const processCount = Math.min(4, Math.max(1, Math.ceil(available / 2)));
   return {
     system: {
       processing: {
         defaultConcurrency: 10,
         enableLivePhotoDetection: true,
         digestSuffixLength: 0,
+        locationMode: "coarse",
+        worker: {
+          processCount,
+          globalTaskConcurrency: Math.min(8, Math.max(1, available)),
+          workerCount: processCount,
+          timeout: 300_000,
+          useClusterMode: true,
+          workerConcurrency: 2,
+        },
       },
       observability: {
         showProgress: true,
@@ -18,14 +32,6 @@ export function createDefaultBuilderConfig(): BuilderConfig {
           verbose: false,
           level: "info",
           outputToFile: false,
-        },
-        performance: {
-          worker: {
-            workerCount: Math.min(1024, Math.max(1, os.cpus().length * 2)),
-            timeout: 300_000,
-            useClusterMode: true,
-            workerConcurrency: 2,
-          },
         },
       },
     },

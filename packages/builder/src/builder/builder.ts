@@ -9,9 +9,11 @@ import {
 import { logger } from "../logger/index.js";
 import { loadExistingManifestWithDiagnostics } from "../manifest/manager.js";
 import { normalizeBuilderOutputSettings } from "../output-paths.js";
-import { createPhotoId } from "../photo/id.js";
+import { resolveStablePhotoId } from "../photo/id.js";
+import { enforcePhotoLocationPrivacy } from "../photo/location-privacy.js";
 import type { PluginRunState } from "../plugins/manager.js";
 import { PluginManager } from "../plugins/manager.js";
+import { createSerializableBuilderConfigForWorker } from "../plugins/serializable.js";
 import type {
   BuilderPluginConfigEntry,
   BuilderPluginEventPayloads,
@@ -89,8 +91,32 @@ export class AfilmoryBuilder {
   constructor(config: BuilderConfig, runtime: AfilmoryBuilderRuntime = {}) {
     // resolveBuilderConfig 已归一化过；这里再归一一次（幂等）覆盖绕过 resolve
     // 直接 new 的路径——cluster worker 用 IPC 传来的 config 重建 builder 就是这种。
+    const worker =
+      config.system.processing.worker ??
+      config.system.observability.performance?.worker;
+    if (!worker) {
+      throw new Error(
+        "Missing worker config: use system.processing.worker in the resolved BuilderConfig",
+      );
+    }
+    const canonicalWorker = {
+      ...worker,
+      processCount: worker.processCount ?? worker.workerCount,
+      globalTaskConcurrency:
+        worker.globalTaskConcurrency ??
+        config.system.processing.defaultConcurrency ??
+        worker.workerCount,
+      workerCount: worker.processCount ?? worker.workerCount,
+    };
     this.config = {
       ...config,
+      system: {
+        ...config.system,
+        processing: {
+          ...config.system.processing,
+          worker: canonicalWorker,
+        },
+      },
       output: normalizeBuilderOutputSettings(config.output),
     };
     this.exifService = runtime.exifService ?? new ExifService();
@@ -140,9 +166,12 @@ export class AfilmoryBuilder {
 
     try {
       await this.ensurePluginsReady();
+      this.preflightExecutionMode();
       this.ensureStorageManager();
       const effectiveOptions =
         await this.resolveThumbnailEncodingOptions(options);
+      effectiveOptions.locationMode =
+        this.config.system.processing.locationMode ?? "coarse";
       return await this.#buildManifest(effectiveOptions);
     } catch (error) {
       logger.main.error("❌ Failed to build manifest:", error);
@@ -156,6 +185,19 @@ export class AfilmoryBuilder {
         this.buildInProgress = false;
       }
     }
+  }
+
+  /**
+   * Cluster compatibility is a configuration property, not a function of the
+   * current photo count. Validate it before touching storage so a plugin never
+   * works for a small gallery and then starts failing after an unrelated photo
+   * pushes the task count over the cluster threshold.
+   */
+  private preflightExecutionMode(): void {
+    if (!this.config.system.processing.worker.useClusterMode) {
+      return;
+    }
+    createSerializableBuilderConfigForWorker(this.config);
   }
 
   private async resolveThumbnailEncodingOptions(
@@ -269,7 +311,9 @@ export class AfilmoryBuilder {
 
       if (imageObjects.length === 0) {
         logger.main.warn(
-          "⚠️ Storage returned zero photos and --force is set: publishing an empty gallery and clearing thumbnails.",
+          options.isForceMode
+            ? "⚠️ Storage returned zero photos and --force is set: publishing an empty gallery and clearing thumbnails."
+            : "ℹ️ Storage contains no photos: publishing an empty gallery.",
         );
       }
 
@@ -325,6 +369,12 @@ export class AfilmoryBuilder {
           );
       }
 
+      const locationMode =
+        session.config.system.processing.locationMode ?? "coarse";
+      for (const item of manifest) {
+        enforcePhotoLocationPrivacy(item, locationMode);
+      }
+
       await session.emit("afterProcessTasks", {
         options,
         tasks: tasksToProcess,
@@ -336,6 +386,13 @@ export class AfilmoryBuilder {
           skippedCount: processingStats.skippedCount,
         },
       });
+
+      // Plugins may enrich location data in afterProcessTasks. Reassert the
+      // publication policy before the atomic manifest commit so neither
+      // third-party output nor a preserved failure fallback can leak precision.
+      for (const item of manifest) {
+        enforcePhotoLocationPrivacy(item, locationMode);
+      }
 
       // 存储中仍存在的照片全集：本次处理失败的照片不进 manifest，但它们的
       // 缩略图不能被孤儿清理连坐删除（否则一次批量下载超时就清空可复用缩略图，
@@ -524,18 +581,9 @@ export class AfilmoryBuilder {
     const digestSuffixLength =
       this.config.system.processing.digestSuffixLength ?? 0;
 
-    if (
-      existingItem?.id &&
-      digestSuffixLength <= 0 &&
-      !this.hasPhotoIdCollision(key) &&
-      existingItem.id === createPhotoId(key)
-    ) {
-      return existingItem.id;
-    }
-
-    return createPhotoId(key, {
+    return resolveStablePhotoId(key, existingItem, {
       digestSuffixLength,
-      forceDigest: this.hasPhotoIdCollision(key),
+      hasCollision: this.hasPhotoIdCollision(key),
     });
   }
 

@@ -1,14 +1,18 @@
-export const AFILMORY_RUNTIME_CACHE_NAMES = [
-  "afilmory-thumbnails-v2",
-  "afilmory-original-images-v2",
-  "afilmory-videos-v1",
-] as const;
+export const AFILMORY_RUNTIME_CACHE_NAMES = {
+  manifestShards: "afilmory-manifest-shards-v1",
+  originalImages: "afilmory-original-images-v2",
+  staticAssets: "afilmory-static-assets-v1",
+  thumbnails: "afilmory-thumbnails-v2",
+} as const;
 
 const AFILMORY_RUNTIME_CACHE_NAME_SET = new Set<string>([
-  ...AFILMORY_RUNTIME_CACHE_NAMES,
+  ...Object.values(AFILMORY_RUNTIME_CACHE_NAMES),
   // Previous releases used these names. Keep recognizing them so recovery
   // and upgrades can remove the orphaned caches after the self-hosted font
-  // and content-addressed thumbnail migrations.
+  // and content-addressed thumbnail migrations. The video cache was removed:
+  // normal media playback starts with byte-range responses, so the old
+  // CacheFirst rule never acquired the full response it required.
+  "afilmory-videos-v1",
   "google-fonts-cache",
   "gstatic-fonts-cache",
   "images-cache",

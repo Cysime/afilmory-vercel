@@ -11,7 +11,10 @@ export interface LoggingConfig {
 export interface WorkerPerformanceConfig {
   timeout: number;
   useClusterMode: boolean;
+  processCount: number;
+  globalTaskConcurrency: number;
   workerConcurrency: number;
+  /** @deprecated Use processCount. */
   workerCount: number;
 }
 
@@ -20,15 +23,16 @@ export interface SystemProcessingSettings {
   enableLivePhotoDetection: boolean;
   supportedFormats?: Set<string>;
   digestSuffixLength?: number;
+  locationMode: "strip" | "coarse" | "exact";
+  worker: WorkerPerformanceConfig;
 }
 
 export interface SystemObservabilitySettings {
   showProgress: boolean;
   showDetailedStats: boolean;
   logging: LoggingConfig;
-  performance: {
-    worker: WorkerPerformanceConfig;
-  };
+  /** @deprecated Input compatibility only; resolved configs use processing.worker. */
+  performance?: { worker?: WorkerPerformanceConfig };
 }
 
 export interface SystemBuilderSettings {

@@ -47,9 +47,8 @@ type LeafSpecMap = Readonly<Record<string, LeafSpec>>;
 
 /**
  * Worker-pool tuning is a processing knob, so its canonical input path is
- * `system.processing.worker`. The resolved config still stores it at
- * `system.observability.performance.worker` (downstream consumers read that
- * path); mergeSystemSection routes both input paths there. Following the
+ * `system.processing.worker`. Resolved configs use that same path; the former
+ * observability path remains an input-only compatibility alias. Following the
  * schema's existing legacy-path pattern (provider-less storage treated as
  * legacy s3, legacy `token` still redacted), the old input path is honored
  * this release and only emits a deprecation warning.
@@ -58,6 +57,13 @@ const WORKER_FIELDS: LeafSpecMap = {
   timeout: { kind: "number", integer: true, min: 1, max: 86_400_000 },
   useClusterMode: { kind: "boolean" },
   workerConcurrency: { kind: "number", integer: true, min: 1, max: 1024 },
+  processCount: { kind: "number", integer: true, min: 1, max: 1024 },
+  globalTaskConcurrency: {
+    kind: "number",
+    integer: true,
+    min: 1,
+    max: 1024,
+  },
   workerCount: { kind: "number", integer: true, min: 1, max: 1024 },
 };
 
@@ -68,14 +74,15 @@ const SYSTEM_FIELDS: FieldSpecMap = {
   processing: {
     kind: "section",
     fields: {
-      // Fallback task concurrency, used ONLY when buildManifest() is called
-      // programmatically without options.concurrencyLimit. The CLI always
-      // passes worker.workerCount as concurrencyLimit, so this knob has no
-      // effect on CLI builds — tune worker.workerCount instead.
+      // Programmatic fallback when no explicit global task budget is supplied.
       defaultConcurrency: { kind: "number", integer: true, min: 1, max: 1024 },
       enableLivePhotoDetection: { kind: "boolean" },
       supportedFormats: { kind: "string-set" },
       digestSuffixLength: { kind: "number", integer: true, min: 0, max: 64 },
+      locationMode: {
+        kind: "enum",
+        values: ["strip", "coarse", "exact"],
+      },
       // Registered here for unknown-key suggestions; the actual merge is
       // routed by mergeSystemSection (see WORKER_FIELDS above).
       worker: { kind: "section", fields: WORKER_FIELDS },
@@ -467,14 +474,13 @@ function ensureUserSettings(target: BuilderConfig): UserBuilderSettings {
 
 /**
  * Shape accepted from builder.config.ts. Extends BuilderConfigInput with the
- * canonical worker path (`system.processing.worker`); the legacy
- * `system.observability.performance.worker` path stays typed through
- * BuilderConfigInput and is honored with a deprecation warning this release.
+ * canonical worker path (`system.processing.worker`); the legacy path remains
+ * accepted through BuilderConfigInput for compatibility.
  */
 export type BuilderConfigFileInput = BuilderConfigInput & {
   system?: {
     processing?: {
-      /** Worker-pool tuning: workerCount, workerConcurrency, useClusterMode, timeout. */
+      /** Process count, global task budget, per-process concurrency and timeout. */
       worker?: Partial<WorkerPerformanceConfig>;
     };
   };
@@ -535,8 +541,7 @@ function splitWorkerInput(
 
 /**
  * system 分区的合并入口：worker 段的用户侧路径已迁到 system.processing.worker，
- * 但 resolved config 内部仍存放在 system.observability.performance.worker
- * （cli/photo-task-processor 等消费方读那里），所以两个输入路径都路由到内部位置。
+ * resolved config 也使用同一路径；旧 observability 路径仅作为输入兼容别名。
  * 旧路径本版本继续生效，只发一条弃用告警；两者同时给出时新路径胜出。
  */
 function mergeSystemSection(
@@ -564,9 +569,7 @@ function mergeSystemSection(
     warnings,
   );
 
-  const workerTarget = asMutableRecord(
-    target.system.observability.performance.worker,
-  );
+  const workerTarget = asMutableRecord(target.system.processing.worker);
   // 先合并旧路径再合并新路径：canonical path wins when both are set
   if (split.hasLegacyWorker) {
     mergeSection(
@@ -586,6 +589,32 @@ function mergeSystemSection(
       warnings,
     );
   }
+
+  const canonicalInput = isPlainObject(split.canonicalWorker)
+    ? split.canonicalWorker
+    : {};
+  const legacyInput = isPlainObject(split.legacyWorker)
+    ? split.legacyWorker
+    : {};
+  const explicitProcessCount =
+    canonicalInput.processCount ?? legacyInput.processCount;
+  const legacyWorkerCount =
+    canonicalInput.workerCount ?? legacyInput.workerCount;
+  if (
+    explicitProcessCount === undefined &&
+    typeof legacyWorkerCount === "number"
+  ) {
+    target.system.processing.worker.processCount = legacyWorkerCount;
+  }
+  if (
+    canonicalInput.globalTaskConcurrency === undefined &&
+    legacyInput.globalTaskConcurrency === undefined &&
+    typeof legacyWorkerCount === "number"
+  ) {
+    target.system.processing.worker.globalTaskConcurrency = legacyWorkerCount;
+  }
+  target.system.processing.worker.workerCount =
+    target.system.processing.worker.processCount;
 }
 
 /**

@@ -15,7 +15,11 @@ import { needsUpdate } from "../manifest/manager.js";
 import type { ThumbnailPluginData } from "../plugins/thumbnail-storage/shared.js";
 import { THUMBNAIL_PLUGIN_DATA_KEY } from "../plugins/thumbnail-storage/shared.js";
 import type { BuilderOptions } from "../types/options.js";
-import type { PhotoManifestItem, ProcessPhotoResult } from "../types/photo.js";
+import type {
+  PhotoManifestItem,
+  PhotoProcessingFailure,
+  ProcessPhotoResult,
+} from "../types/photo.js";
 import {
   processExifData,
   processThumbnailAndThumbHash,
@@ -25,13 +29,44 @@ import { getPhotoExecutionContext } from "./execution-context.js";
 import { detectGainMap } from "./gainmap-detector.js";
 import { extractPhotoInfo } from "./info-extractor.js";
 import { processLivePhoto } from "./live-photo-handler.js";
+import {
+  applyExifLocationPrivacy,
+  rebuildLocationForPrivacyTransition,
+} from "./location-privacy.js";
 import { detectMotionPhoto } from "./motion-photo-detector.js";
+import {
+  getCurrentCoreProcessingFingerprints,
+  getStaleCoreProcessingStages,
+} from "./processing-fingerprints.js";
 import { shouldProcessPhoto } from "./work-decision.js";
 
 export interface ProcessedImageData {
   sharpInstance: sharp.Sharp;
   imageBuffer: Buffer;
   metadata: { width: number; height: number };
+}
+
+class PhotoProcessingError extends Error {
+  readonly failure: PhotoProcessingFailure;
+
+  constructor(failure: PhotoProcessingFailure, options?: ErrorOptions) {
+    super(failure.message, options);
+    this.name = "PhotoProcessingError";
+    this.failure = failure;
+  }
+}
+
+function toPhotoProcessingError(
+  error: unknown,
+  stage: string,
+  photoKey: string,
+): PhotoProcessingError {
+  if (error instanceof PhotoProcessingError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new PhotoProcessingError(
+    { code: "pipeline_error", stage, message: `${photoKey}: ${message}` },
+    error instanceof Error ? { cause: error } : undefined,
+  );
 }
 
 /**
@@ -137,7 +172,7 @@ async function processImageWithSharp(
 async function executePhotoProcessingPipeline(
   context: PhotoProcessingContext,
   photoId: string,
-): Promise<PhotoManifestItem | null> {
+): Promise<PhotoManifestItem> {
   const { photoKey, obj, existingItem, livePhotoMap, options, signal } =
     context;
   const { loggers, storageManager, services } = getPhotoExecutionContext();
@@ -149,32 +184,54 @@ async function executePhotoProcessingPipeline(
     ? options.reprocessKeys?.includes(photoKey) ||
       needsUpdate(existingItem, obj)
     : false;
+  const locationMode = options.locationMode ?? "coarse";
+  const currentProcessingFingerprints =
+    getCurrentCoreProcessingFingerprints(locationMode);
+  const staleStages = getStaleCoreProcessingStages(existingItem, locationMode);
+  const privacyModeChanged = Boolean(
+    existingItem && staleStages.has("privacy"),
+  );
 
+  let stage = "download";
   try {
     signal?.throwIfAborted();
     // 1. 预处理图片
     const imageData = await preprocessImage(photoKey, signal);
     signal?.throwIfAborted();
-    if (!imageData) return null;
+    if (!imageData) {
+      throw new PhotoProcessingError({
+        code: "source_decode_failed",
+        stage,
+        message: `Failed to download or preprocess ${photoKey}`,
+      });
+    }
 
     // 2. 处理图片并创建 Sharp 实例
+    stage = "image-metadata";
     const processedData = await processImageWithSharp(
       imageData.processedBuffer,
       photoKey,
       signal,
     );
     signal?.throwIfAborted();
-    if (!processedData) return null;
+    if (!processedData) {
+      throw new PhotoProcessingError({
+        code: "image_metadata_failed",
+        stage,
+        message: `Failed to decode image metadata for ${photoKey}`,
+      });
+    }
 
     const { sharpInstance, imageBuffer, metadata } = processedData;
 
     // 3. 处理缩略图和 thumbhash
+    stage = "thumbnail";
     const thumbnailResult = await processThumbnailAndThumbHash(
       imageBuffer,
       photoId,
       existingItem,
       options,
-      contentChanged,
+      contentChanged || staleStages.has("thumbnail"),
     );
     signal?.throwIfAborted();
 
@@ -184,7 +241,11 @@ async function executePhotoProcessingPipeline(
       loggers.image.error(
         `❌ Thumbnail generation failed, skipping photo: ${photoKey}`,
       );
-      return null;
+      throw new PhotoProcessingError({
+        code: "thumbnail_failed",
+        stage,
+        message: `Thumbnail generation failed for ${photoKey}`,
+      });
     }
 
     context.pluginData[THUMBNAIL_PLUGIN_DATA_KEY] = {
@@ -197,18 +258,21 @@ async function executePhotoProcessingPipeline(
     };
 
     // 4. 处理 EXIF 数据
-    const exifData = await processExifData(
+    stage = "exif";
+    const extractedExifData = await processExifData(
       imageBuffer,
       imageData.rawBuffer,
       photoKey,
       existingItem,
       options,
       services.exif,
-      contentChanged,
+      contentChanged || staleStages.has("exif") || privacyModeChanged,
     );
+    const exifData = applyExifLocationPrivacy(extractedExifData, locationMode);
     signal?.throwIfAborted();
 
     // 5. 检测 HDR GainMap（Ultra HDR 图片）
+    stage = "media-detection";
     const hasGainMap = detectGainMap({
       exifData: exifData as Record<string, unknown> | null,
     });
@@ -235,16 +299,18 @@ async function executePhotoProcessingPipeline(
     }
 
     // 8. 处理影调分析
+    stage = "tone-analysis";
     const toneAnalysis = await processToneAnalysis(
       sharpInstance,
       photoKey,
       existingItem,
       options,
-      contentChanged,
+      contentChanged || staleStages.has("tone"),
     );
     signal?.throwIfAborted();
 
     // 9. 提取照片信息
+    stage = "manifest-item";
     const photoInfo = extractPhotoInfo(
       photoKey,
       exifData,
@@ -273,7 +339,12 @@ async function executePhotoProcessingPipeline(
       etag: obj.etag,
       exif: exifData,
       toneAnalysis,
-      location: existingItem?.location ?? null,
+      location: rebuildLocationForPrivacyTransition(
+        existingItem?.location ?? null,
+        exifData,
+        locationMode,
+        privacyModeChanged,
+      ),
       // Video source (Motion Photo or Live Photo)
       video:
         motionPhotoMetadata?.isMotionPhoto &&
@@ -298,6 +369,10 @@ async function executePhotoProcessingPipeline(
         exifData?.MPImageType === "Gain Map Image" ||
         exifData?.UniformResourceName === "urn:iso:std:iso:ts:21496:-1" ||
         hasGainMap,
+      processing: {
+        ...existingItem?.processing,
+        ...currentProcessingFingerprints,
+      },
     };
 
     signal?.throwIfAborted();
@@ -306,7 +381,7 @@ async function executePhotoProcessingPipeline(
   } catch (error) {
     if (signal?.aborted) throw signal.reason;
     loggers.image.error(`❌ Processing pipeline failed: ${photoKey}`, error);
-    return null;
+    throw toPhotoProcessingError(error, stage, photoKey);
   }
 }
 
@@ -320,6 +395,7 @@ export async function processPhotoWithPipeline(
   item: PhotoManifestItem | null;
   type: "new" | "processed" | "skipped" | "failed";
   pluginData: Record<string, unknown>;
+  failure?: PhotoProcessingFailure;
 }> {
   const { photoKey, existingItem, obj, options } = context;
   const { emitPluginEvent, loggers, services } = getPhotoExecutionContext();
@@ -368,20 +444,28 @@ export async function processPhotoWithPipeline(
 
   let processedItem: PhotoManifestItem | null = null;
   let resultType: ProcessPhotoResult["type"] = isNewPhoto ? "new" : "processed";
+  let failure: PhotoProcessingFailure | undefined;
 
   try {
     processedItem = await executePhotoProcessingPipeline(context, photoId);
-    if (!processedItem) {
-      resultType = "failed";
-    }
   } catch (error) {
     if (context.signal?.aborted) throw context.signal.reason;
+    const processingError = toPhotoProcessingError(
+      error,
+      "photo-processing",
+      photoKey,
+    );
+    failure = processingError.failure;
     await emitPluginEvent(runtime.runState, "photoProcessError", {
       options: runtime.builderOptions,
       context,
-      error,
+      error: processingError,
+      failure,
     });
-    loggers.image.error(`❌ Exception during processing: ${photoKey}`, error);
+    loggers.image.error(
+      `❌ Exception during processing: ${photoKey}`,
+      processingError,
+    );
     processedItem = null;
     resultType = "failed";
   }
@@ -390,6 +474,7 @@ export async function processPhotoWithPipeline(
     item: processedItem,
     type: resultType,
     pluginData: context.pluginData,
+    ...(failure ? { failure } : {}),
   };
 
   context.signal?.throwIfAborted();

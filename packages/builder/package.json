@@ -4,7 +4,7 @@
   "version": "0.1.3",
   "private": true,
   "description": "Build-time photo processing engine: scans S3-compatible or local storage, extracts EXIF, generates thumbnails and thumbhash placeholders, and emits the static photos manifest for the web app",
-  "license": "AGPL-3.0-or-later",
+  "license": "SEE LICENSE IN ../../LICENSE",
   "exports": {
     ".": "./src/index.ts"
   },
@@ -23,6 +23,7 @@
     "c12": "^3.3.1",
     "consola": "3.4.2",
     "dotenv-expand": "catalog:",
+    "es-toolkit": "1.41.0",
     "exiftool-vendored": "catalog:",
     "heic-convert": "2.1.0",
     "sharp": "0.34.4",

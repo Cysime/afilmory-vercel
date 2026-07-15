@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -107,5 +107,50 @@ describe("Masonry (pure-computed virtual masonry)", () => {
     const [startIndex, stopIndex] = onRender.mock.calls.at(-1) ?? [];
     expect(startIndex).toBe(0);
     expect(stopIndex).toBe(1);
+  });
+
+  it("pins, scrolls to, and focuses a keyboard target beyond 100 virtual items", async () => {
+    const scroller = document.createElement("div");
+    Object.defineProperty(scroller, "clientHeight", { value: 100 });
+    const scrollTo = vi.fn();
+    scroller.scrollTo = scrollTo;
+    scrollEl = scroller;
+    const items = Array.from({ length: 120 }, (_, index) => ({
+      id: `photo-${index}`,
+    }));
+    let capturedRef: { current: MasonryRef | null } | null = null;
+
+    const Probe = () => {
+      const ref = useRef<MasonryRef>(null);
+      capturedRef = ref;
+      return (
+        <Masonry
+          ref={ref}
+          items={items}
+          columnWidth={100}
+          itemHeight={() => 50}
+          itemKey={(data) => data.id}
+          render={({ data }) => (
+            <a href={`#${data.id}`} data-gallery-photo-link>
+              {data.id}
+            </a>
+          )}
+        />
+      );
+    };
+
+    render(<Probe />);
+    expect(screen.queryByText("photo-119")).toBeNull();
+
+    act(() => {
+      capturedRef?.current?.scrollToIndex(119, { focus: true });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("photo-119")).toBe(document.activeElement);
+    });
+    expect(scrollTo).toHaveBeenCalledWith(
+      expect.objectContaining({ behavior: "smooth" }),
+    );
   });
 });

@@ -1,5 +1,5 @@
 import { Spring, Thumbhash } from "@afilmory/ui";
-import { m } from "motion/react";
+import { m, useReducedMotion } from "motion/react";
 import type { RefObject } from "react";
 
 import type { PhotoViewerTransition } from "./types";
@@ -19,7 +19,10 @@ export const PhotoViewerTransitionPreview = ({
   onComplete,
   ref,
 }: PhotoViewerTransitionPreviewProps) => {
-  const baseTransition = Spring.snappy(0.5);
+  const shouldReduceMotion = useReducedMotion() === true;
+  const baseTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : Spring.snappy(0.5);
   // 下滑关闭时把释放速度喂给 y 弹簧，使“甩动关闭”物理连续、无停顿
   const flipTransition =
     transition.velocityY != null

@@ -1,10 +1,5 @@
 import { buildGeoRegionId } from "@afilmory/schema/geo";
-import {
-  GlassButton,
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@afilmory/ui";
+import { GlassButton } from "@afilmory/ui";
 import { useAtomValue } from "jotai";
 import { m } from "motion/react";
 import { useTranslation } from "react-i18next";
@@ -17,6 +12,7 @@ import { getRegionDisplayName } from "~/lib/geo-regions";
 import type { GeographicRegion } from "~/types/map";
 
 import { ClusterPhotoGrid } from "../ClusterPhotoGrid";
+import { MapPopover, MapPopoverContent, MapPopoverTrigger } from "./MapPopover";
 
 interface RegionMarkerPinProps {
   region: GeographicRegion;
@@ -71,7 +67,11 @@ export const RegionMarkerPin = ({
 
   const handleClose = (event: React.MouseEvent) => {
     event.stopPropagation();
-    onClose?.();
+    event.currentTarget
+      .closest('[role="dialog"]')
+      ?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
   };
 
   const handleFilterRegion = (event: React.MouseEvent) => {
@@ -92,12 +92,13 @@ export const RegionMarkerPin = ({
 
   return (
     <Marker longitude={region.longitude} latitude={region.latitude}>
-      <HoverCard
-        open={isSelected ? true : undefined}
-        openDelay={isSelected ? 0 : 300}
-        closeDelay={isSelected ? 0 : 120}
+      <MapPopover
+        open={isSelected}
+        onOpenChange={(open) => {
+          if (!open) onClose?.();
+        }}
       >
-        <HoverCardTrigger asChild>
+        <MapPopoverTrigger>
           <m.button
             type="button"
             className="focus-visible:ring-accent/45 group focus-visible:ring-offset-background relative cursor-pointer rounded-full focus-visible:ring-2 focus-visible:ring-offset-2"
@@ -139,20 +140,11 @@ export const RegionMarkerPin = ({
               </div>
             </div>
           </m.button>
-        </HoverCardTrigger>
+        </MapPopoverTrigger>
 
-        <HoverCardContent
+        <MapPopoverContent
+          aria-label={displayName}
           className="w-[min(20rem,calc(100vw-2rem))] overflow-hidden border-white/20 bg-white/95 p-0 shadow-xl backdrop-blur-2xl dark:bg-black/95"
-          side="top"
-          align="center"
-          portal={false}
-          sideOffset={8}
-          onPointerDownOutside={
-            isSelected ? (event) => event.preventDefault() : undefined
-          }
-          onEscapeKeyDown={
-            isSelected ? (event) => event.preventDefault() : undefined
-          }
         >
           <div className="relative space-y-3 p-4">
             {isSelected && (
@@ -189,8 +181,8 @@ export const RegionMarkerPin = ({
               </button>
             )}
           </div>
-        </HoverCardContent>
-      </HoverCard>
+        </MapPopoverContent>
+      </MapPopover>
     </Marker>
   );
 };

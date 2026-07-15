@@ -121,7 +121,8 @@ export const env = createEnv({
     // Build-time reverse geocoding (optional)
     // The boolean switch is enum-constrained so a typo fails immediately at build
     // time instead of being silently treated as true by `!== "false"`.
-    GEOCODING_ENABLED: z.enum(["true", "false"]).default("true"),
+    PHOTO_LOCATION_MODE: z.enum(["strip", "coarse", "exact"]).default("coarse"),
+    GEOCODING_ENABLED: z.enum(["true", "false"]).default("false"),
     GEOCODING_PROVIDER: z.enum(["nominatim", "mapbox", "auto"]).optional(),
     GEOCODING_LOCALES: z.string().optional(),
     GEOCODING_LANGUAGE: z.string().optional(),

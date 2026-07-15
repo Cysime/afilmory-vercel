@@ -36,6 +36,22 @@ describe("WebGLImageViewer", () => {
     engineMocks.throwOnConstruct = false;
     vi.restoreAllMocks();
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("disables smooth animation when reduced motion is requested", async () => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+
+    render(<WebGLImageViewer src="blob:photo" smooth />);
+
+    await waitFor(() => {
+      const { calls } = vi.mocked(WebGLImageViewerEngine).mock;
+      expect(calls.at(-1)?.[1].smooth).toBe(false);
+    });
   });
 
   it("creates and disposes the viewer engine", () => {

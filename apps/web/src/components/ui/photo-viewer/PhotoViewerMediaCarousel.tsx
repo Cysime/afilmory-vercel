@@ -8,6 +8,7 @@ import type { Swiper as SwiperType } from "swiper";
 import { Navigation, Virtual } from "swiper/modules";
 import { Swiper, SwiperSlide } from "swiper/react";
 
+import { getPhotoAccessibleLabel } from "~/lib/photo-accessibility";
 import type { PhotoManifest } from "~/types/photo";
 
 import type { LoadingIndicatorRef } from "./LoadingIndicator";
@@ -64,7 +65,7 @@ export const PhotoViewerMediaCarousel = ({
   onZoomChange,
   onBlobSrcChange,
 }: PhotoViewerMediaCarouselProps) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   return (
     <m.div
@@ -124,7 +125,7 @@ export const PhotoViewerMediaCarousel = ({
                     src={photo.originalUrl}
                     thumbnailSrc={photo.thumbnailUrl}
                     thumbHash={photo.thumbHash}
-                    alt={photo.title}
+                    alt={getPhotoAccessibleLabel(photo, t, i18n.language)}
                     width={isCurrentImage ? currentPhoto.width : undefined}
                     height={isCurrentImage ? currentPhoto.height : undefined}
                     className="h-full w-full object-contain"

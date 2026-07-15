@@ -1,7 +1,8 @@
 import { clsxm, Spring, useScrollViewElement } from "@afilmory/ui";
 import { useAtomValue } from "jotai";
-import { AnimatePresence, m } from "motion/react";
+import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { responsiveGalleryColumnsAtom } from "~/atoms/app";
 import { DateRangeIndicator } from "~/components/ui/date-range-indicator";
@@ -9,6 +10,7 @@ import { useMobile } from "~/hooks/useMobile";
 import { useContextPhotos } from "~/hooks/usePhotoViewer";
 import { useVisiblePhotosDateRange } from "~/hooks/useVisiblePhotosDateRange";
 import { setGalleryVirtualPhotoTargetResolver } from "~/lib/gallery-virtual-target";
+import type { PhotoManifest } from "~/types/photo";
 
 import { ActionGroup } from "./ActionGroup";
 import type { MasonryItemType } from "./gallery-layout";
@@ -28,17 +30,29 @@ import { MasonryPhotoItem } from "./MasonryPhotoItem";
 import type { MasonryRef } from "./VirtualMasonry";
 import { Masonry } from "./VirtualMasonry";
 
+const isPhotoItem = (
+  item: MasonryItemType | undefined,
+): item is PhotoManifest => Boolean(item && "id" in item);
+
 export const MasonryRoot = () => {
   const columns = useAtomValue(responsiveGalleryColumnsAtom);
   const hasAnimatedRef = useRef(false);
   const [showFloatingActions, setShowFloatingActions] = useState(false);
+  const [activePhotoId, setActivePhotoId] = useState<string | null>(null);
+  const { t } = useTranslation();
+  const shouldReduceMotion = useReducedMotion() === true;
 
   const photos = useContextPhotos();
+  const isMobile = useMobile();
   const masonryRef = useRef<MasonryRef>(null);
   const photosKey = useMemo(() => getPhotoSetKey(photos), [photos]);
   const photoIndexById = useMemo(
     () => new Map(photos.map((photo, index) => [photo.id, index])),
     [photos],
+  );
+  const masonryItems = useMemo(
+    () => createMasonryItems(photos, isMobile),
+    [photos, isMobile],
   );
 
   const { dateRange, handleRender } = useVisiblePhotosDateRange();
@@ -47,7 +61,103 @@ export const MasonryRoot = () => {
   const handleAnimationComplete = useCallback(() => {
     hasAnimatedRef.current = true;
   }, []);
-  const isMobile = useMobile();
+  useEffect(() => {
+    setActivePhotoId((current) =>
+      current && photoIndexById.has(current)
+        ? current
+        : (photos[0]?.id ?? null),
+    );
+  }, [photoIndexById, photos]);
+
+  const focusPhoto = useCallback(
+    (photoIndex: number) => {
+      const boundedIndex = Math.min(
+        Math.max(photoIndex, 0),
+        Math.max(photos.length - 1, 0),
+      );
+      const photo = photos[boundedIndex];
+      if (!photo) return;
+      setActivePhotoId(photo.id);
+      masonryRef.current?.scrollToIndex(
+        isMobile ? boundedIndex : boundedIndex + 1,
+        { focus: true, align: "center" },
+      );
+    },
+    [isMobile, photos],
+  );
+
+  const handleGridKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const target = (event.target as HTMLElement).closest<HTMLElement>(
+        "[data-gallery-photo-index]",
+      );
+      if (!target) return;
+      const currentIndex = Number(target.dataset.galleryPhotoIndex);
+      if (!Number.isInteger(currentIndex)) return;
+
+      const columnCount =
+        masonryRef.current?.getLayoutMetrics()?.columnCount ?? 1;
+      let nextIndex: number | null = null;
+      switch (event.key) {
+        case "ArrowLeft": {
+          nextIndex = currentIndex - 1;
+          break;
+        }
+        case "ArrowRight": {
+          nextIndex = currentIndex + 1;
+          break;
+        }
+        case "ArrowUp": {
+          nextIndex = currentIndex - columnCount;
+          break;
+        }
+        case "ArrowDown": {
+          nextIndex = currentIndex + columnCount;
+          break;
+        }
+        case "Home": {
+          nextIndex = 0;
+          break;
+        }
+        case "End": {
+          nextIndex = photos.length - 1;
+          break;
+        }
+        default: {
+          return;
+        }
+      }
+      event.preventDefault();
+      focusPhoto(nextIndex);
+    },
+    [focusPhoto, photos.length],
+  );
+
+  const handleMasonryRender = useCallback(
+    (
+      startIndex: number,
+      stopIndex: number,
+      items: MasonryItemType[],
+      visibleIndices: number[],
+    ) => {
+      handleRender(startIndex, stopIndex, items, visibleIndices);
+      setActivePhotoId((current) => {
+        const currentIndex = current ? photoIndexById.get(current) : undefined;
+        const currentMasonryIndex =
+          currentIndex === undefined
+            ? -1
+            : isMobile
+              ? currentIndex
+              : currentIndex + 1;
+        if (visibleIndices.includes(currentMasonryIndex)) return current;
+        const firstVisiblePhoto = visibleIndices
+          .map((index) => items[index])
+          .find(isPhotoItem);
+        return firstVisiblePhoto?.id ?? current;
+      });
+    },
+    [handleRender, isMobile, photoIndexById],
+  );
 
   // 目标列宽从 Masonry 实测的容器宽度推导（函数形式 prop）——不再监听
   // window resize：innerWidth 与容器实测是两个会失配的来源（padding/滚动条槽）。
@@ -145,21 +255,38 @@ export const MasonryRoot = () => {
         <Masonry<MasonryItemType>
           key={`${isMobile ? "mobile" : "desktop"}:${photosKey}`}
           ref={masonryRef}
-          items={useMemo(
-            () => createMasonryItems(photos, isMobile),
-            [photos, isMobile],
-          )}
+          items={masonryItems}
           render={useCallback(
-            (props) => (
-              <MasonryItem
-                {...props}
-                hasAnimated={hasAnimatedRef.current}
-                onAnimationComplete={handleAnimationComplete}
-              />
-            ),
-            [handleAnimationComplete],
+            (props) => {
+              const photo = isPhotoItem(props.data) ? props.data : null;
+              const photoIndex = photo
+                ? (photoIndexById.get(photo.id) ?? -1)
+                : -1;
+              return (
+                <MasonryItem
+                  {...props}
+                  photoIndex={photoIndex}
+                  isRovingTarget={photo?.id === activePhotoId}
+                  hasAnimated={hasAnimatedRef.current}
+                  shouldReduceMotion={shouldReduceMotion}
+                  onFocus={() => {
+                    if (photoIndex < 0) return;
+                    if (!photo) return;
+                    setActivePhotoId(photo.id);
+                    masonryRef.current?.pinIndex(props.index);
+                  }}
+                  onAnimationComplete={handleAnimationComplete}
+                />
+              );
+            },
+            [
+              activePhotoId,
+              handleAnimationComplete,
+              photoIndexById,
+              shouldReduceMotion,
+            ],
           )}
-          onRender={handleRender}
+          onRender={handleMasonryRender}
           columnWidth={columnWidth}
           columnGutter={4}
           rowGutter={4}
@@ -175,6 +302,9 @@ export const MasonryRoot = () => {
             (data: MasonryItemType) => getMasonryItemKey(data),
             [],
           )}
+          role="grid"
+          aria-label={t("common.skip-to-gallery")}
+          onKeyDown={handleGridKeyDown}
         />
       </div>
     </>
@@ -186,6 +316,10 @@ export const MasonryItem = memo(
     data,
     width,
     index,
+    photoIndex,
+    isRovingTarget,
+    onFocus,
+    shouldReduceMotion,
 
     hasAnimated,
     onAnimationComplete,
@@ -193,11 +327,16 @@ export const MasonryItem = memo(
     data: MasonryItemType;
     width: number;
     index: number;
+    photoIndex: number;
+    isRovingTarget: boolean;
+    onFocus: () => void;
+    shouldReduceMotion: boolean;
     hasAnimated: boolean;
     onAnimationComplete: () => void;
   }) => {
     const itemKey = useMemo(() => getMasonryItemKey(data), [data]);
-    const shouldAnimate = shouldAnimateMasonryItem({ hasAnimated, index });
+    const shouldAnimate =
+      !shouldReduceMotion && shouldAnimateMasonryItem({ hasAnimated, index });
     const delay = getMasonryAnimationDelay({
       data,
       index,
@@ -239,7 +378,13 @@ export const MasonryItem = memo(
           animate="visible"
           onAnimationComplete={shouldAnimate ? onAnimationComplete : undefined}
         >
-          <MasonryPhotoItem data={data} width={width} index={index} />
+          <MasonryPhotoItem
+            data={data}
+            width={width}
+            index={photoIndex}
+            tabIndex={isRovingTarget ? 0 : -1}
+            onFocus={onFocus}
+          />
         </m.div>
       );
     }

@@ -6,6 +6,7 @@ import {
   setRuntimeManifest,
 } from "~/runtime/browser-runtime";
 
+import { parseWebDeliveryManifest } from "./delivery-manifest";
 import {
   buildManifestRequestInit,
   MANIFEST_REQUEST_TIMEOUT_MS,
@@ -45,6 +46,17 @@ async function fetchManifest(url: string): Promise<unknown> {
 }
 
 function coerceManifest(input: unknown): AfilmoryManifest {
+  const delivery = parseWebDeliveryManifest(input);
+  if (delivery) {
+    const runtime = ensureBrowserRuntime();
+    if (!runtime.manifest) {
+      throw new Error("No manifest source was injected into the page.");
+    }
+    runtime.manifest.delivery = delivery.delivery;
+    setRuntimeManifest(delivery.manifest);
+    return delivery.manifest;
+  }
+
   // 宽松解析：顶层结构损坏才抛错（冒泡到 bootstrap 显示 BootstrapError 诊断页）；
   // 个别照片字段不合法只跳过该张，绝不让一张坏照片白屏整个图库。
   const { manifest, skipped } = parseManifestLenient(input);

@@ -1,3 +1,4 @@
+import { useReducedMotion } from "motion/react";
 import type { RefObject } from "react";
 import {
   useCallback,
@@ -56,6 +57,7 @@ export const usePhotoViewerTransitions = ({
   isMobile,
   dismissTransformRef,
 }: UsePhotoViewerTransitionsParams): UsePhotoViewerTransitionsResult => {
+  const shouldReduceMotion = useReducedMotion() === true;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cachedTriggerRef = useRef<HTMLElement | null>(triggerElement);
   const wasOpenRef = useRef(isOpen);
@@ -163,6 +165,13 @@ export const usePhotoViewerTransitions = ({
     if (!isOpen || !currentPhoto) return;
     if (entryTransition || isViewerContentVisible) return;
 
+    if (shouldReduceMotion) {
+      restoreTriggerElementVisibility();
+      setEntryTransition(null);
+      setIsViewerContentVisible(true);
+      return;
+    }
+
     if (typeof window === "undefined") {
       setIsViewerContentVisible(true);
       return;
@@ -256,6 +265,8 @@ export const usePhotoViewerTransitions = ({
     isMobile,
     resolveTriggerElement,
     hideTriggerElement,
+    restoreTriggerElementVisibility,
+    shouldReduceMotion,
   ]);
 
   useEffect(() => {
@@ -267,6 +278,13 @@ export const usePhotoViewerTransitions = ({
 
     if (!wasOpenRef.current || !currentPhoto) {
       wasOpenRef.current = false;
+      restoreTriggerElementVisibility();
+      return;
+    }
+
+    if (shouldReduceMotion) {
+      wasOpenRef.current = false;
+      setExitTransition(null);
       restoreTriggerElementVisibility();
       return;
     }
@@ -397,6 +415,7 @@ export const usePhotoViewerTransitions = ({
     resolveTriggerElement,
     restoreTriggerElementVisibility,
     hideTriggerElement,
+    shouldReduceMotion,
   ]);
 
   useLayoutEffect(() => {

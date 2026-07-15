@@ -1,6 +1,6 @@
 import type { AfilmoryManifest } from "@afilmory/schema";
 import { createStore } from "jotai";
-import { createContext, use } from "react";
+import { createContext, use, useSyncExternalStore } from "react";
 
 import { PhotoRepository } from "~/data-runtime/photo-repository";
 import type { RegularImageCache } from "~/lib/image-cache-service";
@@ -117,6 +117,9 @@ export function createAppRuntime({
     imageCache,
     imageConverter,
   );
+  const photoRepository = new PhotoRepository(manifest, {
+    delivery: browserRuntime.manifest?.delivery,
+  });
 
   return {
     bodyScrollLock,
@@ -124,11 +127,12 @@ export function createAppRuntime({
     imageCache,
     imageConverter,
     imageLoading,
-    photoRepository: new PhotoRepository(manifest),
+    photoRepository,
     store: createStore(),
     dispose() {
       imageLoading.cleanupAll();
       this.imageCache.clear();
+      photoRepository.dispose();
       bodyScrollLock.reset();
     },
   };
@@ -146,4 +150,13 @@ export function useAfilmoryRuntime(): AppRuntime {
 
 export function usePhotoRepository(): PhotoRepository {
   return useAfilmoryRuntime().photoRepository;
+}
+
+export function usePhotoRepositoryVersion(): number {
+  const repository = usePhotoRepository();
+  return useSyncExternalStore(
+    repository.subscribe,
+    repository.getVersion,
+    repository.getVersion,
+  );
 }

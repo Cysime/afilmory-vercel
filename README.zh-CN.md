@@ -72,7 +72,7 @@
 - 💻 **本地文件系统照片源** - 设置 `PHOTO_STORAGE_PROVIDER=local` 即可在没有对象存储凭据时构建。
 - 🌍 **CDN 友好 URL** - 可通过 `S3_CUSTOM_DOMAIN` 生成公开照片 URL。
 - 📦 **按 provider 生成静态产物** - S3 原图保留在对象存储中；本地模式会把原图复制到静态产物的配置路径。
-- 🚀 **静态 SPA 运行时** - 生产构建默认输出外置 `assets/photos-manifest.<hash>.json`，通过 `window.__AFILMORY__.manifest` 加载。
+- 🚀 **渐进式静态运行时** - 生产构建输出轻量、内容寻址的 `gallery-index`，并按稳定 ID 哈希拆分照片详情和地图数据；路由只通过 `window.__AFILMORY__.manifest` 补齐所需数据。
 
 ---
 
@@ -99,6 +99,15 @@
 ---
 
 ## 🚀 快速开始
+
+无需凭据或个人照片即可体验完整界面：
+
+```bash
+pnpm install
+pnpm dev:demo
+```
+
+该命令在 `http://127.0.0.1:1924` 提供仓库内置的合成相册，不读取 `.env`、S3 凭据或你的 generated manifest。
 
 ### 一键部署到 Vercel
 
@@ -213,9 +222,11 @@ LOCAL_PHOTOS_BASE_URL=/originals
 | `MAP_STYLE`      | 地图样式 | `builtin`  | `builtin` 或自定义 URL |
 | `MAP_PROJECTION` | 地图投影 | `mercator` | `globe` 或 `mercator`  |
 
-### 可选：构建期反向地理编码
+### 位置隐私与可选反向地理编码
 
-反向地理编码**默认开启**：只要构建处理了带 GPS 的照片，就会调用公共 Nominatim API 把坐标解析为地名写入 manifest。不希望构建期访问外部服务时，设置 `GEOCODING_ENABLED=false`。若保持开启，请按 [Nominatim 使用政策](https://operations.osmfoundation.org/policies/nominatim/) 提供真实的 `GEOCODING_USER_AGENT`（不超过 1 request/second）。也可以用 `GEOCODING_PROVIDER=mapbox` 搭配 `MAPBOX_TOKEN` 替代 Nominatim。完整 `GEOCODING_*` 配置项见 `.env.template`。
+`PHOTO_LOCATION_MODE=coarse` 是保护隐私的默认值：坐标在写入 manifest 或离开 Builder 前会保留两位小数（公里级）。`strip` 完全不发布坐标和地名；`exact` 会原样发布相机 GPS，只应在被摄人物及地点所有者知情同意时使用。
+
+反向地理编码**默认关闭**，因为它会把上述位置发送给外部服务。设置 `GEOCODING_ENABLED=true` 才会启用；启用 Nominatim 时，请按其[使用政策](https://operations.osmfoundation.org/policies/nominatim/)提供真实的 `GEOCODING_USER_AGENT`（不超过 1 request/second）。也可以使用 `GEOCODING_PROVIDER=mapbox` 和 `MAPBOX_TOKEN`。`strip` 始终禁止 geocoding，`coarse` 不会发送相机原始精确坐标。完整配置见 `.env.template`。
 
 ### 本地 `.env`
 
@@ -306,7 +317,7 @@ pnpm generate:favicon
 - 缺少必需的 S3 配置但存在 `generated/photos-manifest.json` 时，precheck 会复用已有 manifest。
 - builder 失败时，Preview 仅在当前磁盘 manifest 仍通过严格校验时继续并输出警告。precheck 不会单独回滚 JSON，因为晚期失败可能发生在新 manifest 已原子提交、旧内容寻址缩略图已清理之后。
 - `SKIP_MANIFEST_BUILD=true pnpm build` 会显式跳过 builder 刷新。
-- 生产 Web 构建默认输出外置带 hash 的 manifest 资产；可用 `AFILMORY_EMBED_MANIFEST=true` 强制内联，或用 `false` 强制外置。
+- 生产 Web 构建会把 Builder manifest v2 转成 Web Delivery Manifest v3：带 hash 的 gallery index、稳定 ID 详情分片和地图分片。可用 `AFILMORY_EMBED_MANIFEST=true` 为受限部署强制内联 v2，或用 `false` 强制渐进式外置加载。
 
 ### Manifest CLI 选项
 
@@ -327,9 +338,11 @@ Vercel 使用：
 - **构建命令：** `sh scripts/build-static.sh`
 - **输出目录：** `apps/web/dist`
 
-配置了 `REPO_URL` 和 `REPO_TOKEN` 时，`scripts/build-static.sh` 会先恢复缓存中的 manifest、geocoding cache 和缩略图，再执行构建。构建成功后，它会把最新构建产物同步回缓存仓库。
+配置了 `REPO_URL` 和 `REPO_TOKEN` 时，`scripts/build-static.sh` 会先恢复 manifest 和缩略图，再执行构建并同步新产物。缓存仓库必须独立且私有：`exact` 模式可能缓存精确坐标；`coarse` 和 `strip` 不会传输 `geocoding-cache.json`，并会在恢复/保存边界删除旧的精确缓存。缓存默认使用专用 `afilmory-cache` 分支和最小权限 token，并拒绝源码仓库及受保护分支。详见[缓存安全指南](docs/cache-security.md)。
 
 `scripts/build-static.sh` 始终运行 `pnpm build`；所有新鲜度与降级决策统一由 `apps/web/scripts/precheck.ts` 负责。缺少必需的 S3 配置但存在可复用 `generated/photos-manifest.json` 时，precheck 会复用它，让 Preview 部署仍可成功。生产部署（`VERCEL_ENV=production`，其他平台可用 `REQUIRE_FRESH_BUILD=true`）则会失败，拒绝发布陈旧 manifest。
+
+CI/Vercel 构建还会校验发布代码是否能由页脚声明的 Git revision 精确复现。应先提交部署源码；如必须发布脏树产物，需设置 `AFILMORY_CORRESPONDING_SOURCE_URL`，指向公开且包含本次精确源码的 archive/tree。本地脏树仍可预览，页脚会明确标为非精确源码。
 
 部署本地 provider 时，构建工作区必须能访问 `LOCAL_PHOTOS_PATH`。构建会把这些原图复制进静态产物；请勿误把私密照片提交到公开仓库。
 
@@ -451,7 +464,7 @@ export const siteConfig: SiteConfig = {
 
 欢迎贡献代码、报告问题或提出建议。
 
-请查看 [贡献指南](docs/CONTRIBUTING.md)，了解环境准备、常用命令、manifest 说明和 PR 验证要求。
+请查看[贡献指南](docs/CONTRIBUTING.md)了解环境准备与验证要求，查看[安全策略](SECURITY.md)了解私密漏洞报告流程，并遵守[行为准则](CODE_OF_CONDUCT.md)。
 
 ---
 
@@ -464,7 +477,7 @@ export const siteConfig: SiteConfig = {
 - **Library code**: MIT
 - **Project code**: AGPL-3.0-or-later with UI attribution requirement
 
-详见 [LICENSE](LICENSE)。
+详见 [LICENSE](LICENSE)、机器可读的 [ANL-MANIFEST](ANL-MANIFEST) 和[许可证映射说明](docs/licensing.md)。
 
 ---
 

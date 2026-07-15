@@ -52,6 +52,23 @@ type UrlRestoreState = {
 const useBrowserLayoutEffect =
   typeof window === "undefined" ? useEffect : useLayoutEffect;
 
+const isGalleryManagedPathname = (pathname: string): boolean =>
+  pathname === "/" || isPhotoDetailPathname(pathname);
+
+/**
+ * BrowserRouter mutates window.history before React commits the transition.
+ * During that gap an effect from the previous render still carries the old
+ * useLocation value. Never let such an effect submit a route-relative URL
+ * write, otherwise it can replace a newer navigation (for example /explore)
+ * with the gallery route it captured.
+ */
+const isCurrentBrowserRoute = (pathname: string, search: string): boolean =>
+  typeof window === "undefined" ||
+  (window.location.pathname === pathname && window.location.search === search);
+
+const isCurrentBrowserPathname = (pathname: string): boolean =>
+  typeof window === "undefined" || window.location.pathname === pathname;
+
 const useRestoreGalleryFilters = () => {
   const setGallerySetting = useSetAtom(gallerySettingAtom);
   return useCallback(
@@ -89,6 +106,15 @@ const useStateRestoreFromUrl = (
 
   useBrowserLayoutEffect(() => {
     urlRestoreStateRef.current.isRestored = true;
+    if (!isGalleryManagedPathname(location.pathname)) {
+      // The gallery layout remains mounted until an /explore transition
+      // commits. Its route-local useSearchParams setter resolves relative to
+      // the gallery route, so touching map query state here can race that
+      // navigation back to `/`. It would also erase gallery filters merely by
+      // visiting the map.
+      urlRestoreStateRef.current.pendingUrlRestoreSearch = null;
+      return;
+    }
     urlRestoreStateRef.current.pendingUrlRestoreSearch = location.search;
 
     // 恢复筛选设置
@@ -116,6 +142,7 @@ const useStateRestoreFromUrl = (
       }
     }
   }, [
+    location.pathname,
     location.search,
     photoId,
     restoreGalleryFilters,
@@ -191,6 +218,9 @@ const useSyncStateToUrl = (urlRestoreStateRef: RefObject<UrlRestoreState>) => {
           location.pathname !== targetPathname ||
           location.search !== targetSearch
         ) {
+          if (!isCurrentBrowserRoute(location.pathname, location.search)) {
+            return;
+          }
           // 使用 replace 避免在浏览器历史中堆积过多记录
           navigate(
             { pathname: targetPathname, search: targetSearch },
@@ -222,9 +252,11 @@ const useSyncStateToUrl = (urlRestoreStateRef: RefObject<UrlRestoreState>) => {
       };
       const returnGalleryFilters =
         getGalleryFiltersFromSearch(gallerySearchParams);
+      const closeSourcePathname = location.pathname;
 
       closeReturnTimerRef.current = setTimeout(() => {
         closeReturnTimerRef.current = null;
+        if (!isCurrentBrowserPathname(closeSourcePathname)) return;
         if (!returnTo) {
           restoreGalleryFilters(returnGalleryFilters);
         }
@@ -253,8 +285,12 @@ const useSyncStateToUrl = (urlRestoreStateRef: RefObject<UrlRestoreState>) => {
     urlRestoreStateRef,
   ]);
 
-  useEffect(() => {
+  useBrowserLayoutEffect(() => {
     if (!urlRestoreStateRef.current.isRestored) return;
+    if (!isGalleryManagedPathname(location.pathname)) {
+      urlRestoreStateRef.current.pendingUrlRestoreSearch = null;
+      return;
+    }
     if (!isOpen && isPhotoDetailPathname(location.pathname)) return;
 
     const searchParams = new URLSearchParams(location.search);
@@ -295,6 +331,7 @@ const useSyncStateToUrl = (urlRestoreStateRef: RefObject<UrlRestoreState>) => {
       return;
     }
 
+    if (!isCurrentBrowserRoute(location.pathname, location.search)) return;
     setSearchParams(newer);
   }, [
     isOpen,

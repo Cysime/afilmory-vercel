@@ -90,6 +90,7 @@ function createRuntime(
     existingManifestMap: new Map([["b.jpg", createPhoto("b")]]),
     livePhotoMap: new Map([["a.jpg", { key: "a.mov" }]]),
     builderOptions,
+    processorOptions: toProcessorOptions(builderOptions),
     services: createBuilderServicesFixture(),
     runState,
     emitPluginEvent: vi.fn(async () => {}),

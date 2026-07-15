@@ -23,7 +23,13 @@ async function openViewer(page: Page): Promise<[Locator, Locator]> {
   const dialog = page.getByRole("dialog", { name: "Photo viewer" });
   await expect(dialog).toBeVisible();
   await expect(page).toHaveURL(/\/photos\/[^/?]+/);
-  const surface = dialog.locator(".swiper").first();
+  // CDP touch dispatch bypasses Playwright actionability. Wait for both the
+  // native pointer listeners and the enabled gesture state to be committed.
+  const gestureTarget = dialog.locator(
+    '[data-photo-viewer-dismiss-ready="true"]',
+  );
+  await expect(gestureTarget).toBeVisible();
+  const surface = gestureTarget.locator(".swiper").first();
   await expect(surface).toBeVisible();
   return [dialog, surface];
 }

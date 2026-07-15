@@ -16,6 +16,10 @@ export const dependencyChunkGroups: DependencyChunkGroup[] = [
   { name: "swiper", patterns: ["swiper"] },
   { name: "state", patterns: ["jotai", "@tanstack/*"] },
   {
+    // Radix primitives share internal scope factories (for example ContextMenu
+    // builds on Menu). Splitting those tightly coupled modules across manual
+    // chunks can create a cross-chunk ESM initialization cycle in production.
+    // Keep the complete primitive family and its overlay helpers together.
     name: "ui",
     patterns: [
       "@radix-ui/*",
@@ -26,8 +30,8 @@ export const dependencyChunkGroups: DependencyChunkGroup[] = [
       "aria-hidden",
       "use-sidecar",
       "use-callback-ref",
-      "sonner",
       "vaul",
+      "sonner",
     ],
   },
   {

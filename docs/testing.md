@@ -11,6 +11,8 @@ pnpm test:coverage     # same, with v8 coverage -> ./coverage
 pnpm test:e2e:install  # one-time: download the chromium browser Playwright needs
 pnpm test:e2e          # Playwright e2e (spawns a Vite dev server)
 pnpm test:e2e:prod     # production build + service-worker smoke test
+pnpm test:e2e:webkit   # focused Desktop Safari + iPhone smoke
+pnpm deploy:smoke      # real build-static.sh against the synthetic fixture
 ```
 
 Run a single project or file:
@@ -34,6 +36,9 @@ pnpm test:coverage && open coverage/index.html
 
 `coverage.all` is enabled, so untested source files count toward the denominator
 (they show as `0%`) — the baseline reflects real coverage, not just touched files.
+`pnpm coverage:check:partitions` also protects separate floors for the web app,
+Builder, WebGL viewer, and shared packages so strength in one area cannot hide a
+large regression in another.
 
 Every Vitest project also installs `test/setup/fail-on-console.ts`. An
 unexpected `console.warn` or `console.error` fails the test. If console output is
@@ -101,12 +106,18 @@ pipeline (so `thumbHash` values are genuine), and writes everything under
 
 - **Formatting + lint**, **Type-check**, **Production dependency audit**
 - **Test + coverage** — `pnpm test:coverage`, uploads coverage, writes a summary
-- **Build** — `SKIP_MANIFEST_BUILD=true pnpm build` against an empty manifest fixture
 - **E2E (Playwright)** — dev-server specs, then a prod-smoke run, both against
   the committed fixture manifest
+- **Deployment smoke** — the real `scripts/build-static.sh` entrypoint against
+  the isolated synthetic manifest
+- **Cross-browser** — focused Desktop WebKit and iPhone smoke coverage
+- **Supply chain** — workspace contracts, high-confidence secret scanning,
+  dependency review, CodeQL, and a CycloneDX production SBOM
+- **Node compatibility** — type and contract checks on the Node 20 minimum
 
 Shared install/setup lives in the composite action `.github/actions/setup`.
 `.github/workflows/security-audit.yml` also runs a weekly full production +
 development dependency audit (and supports manual dispatch). Dependabot opens
 grouped weekly minor/patch updates for pnpm dependencies and GitHub Actions;
-major upgrades remain an explicit maintainer decision.
+major upgrades remain an explicit maintainer decision and grouped backlog; see
+`docs/dependency-policy.md`.

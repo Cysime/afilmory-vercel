@@ -35,18 +35,18 @@ Content-Security-Policy:
 The production `index.html` deliberately carries inline `<script>` content
 (see `apps/web/index.html` and `apps/web/plugins/vite/data-inject.ts`):
 
-| Inline content            | Source                                           | Stable across builds?                                                                            |
-| ------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `#startup-metrics` script | authored in `index.html`                         | yes (changes only when the file is edited)                                                       |
-| `#config` script          | authored in `index.html`                         | yes                                                                                              |
-| `#config-runtime` script  | injected at build from `site.config.build.ts`    | no — embeds site config JSON, which can derive from env (`SITE_URL`, …)                          |
-| `#manifest` script        | injected at build (`manifest-inline-snippet.ts`) | **no — embeds the per-build hashed manifest URL** `/assets/photos-manifest.<sha256-prefix>.json` |
+| Inline content            | Source                                           | Stable across builds?                                                                       |
+| ------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `#startup-metrics` script | authored in `index.html`                         | yes (changes only when the file is edited)                                                  |
+| `#config` script          | authored in `index.html`                         | yes                                                                                         |
+| `#config-runtime` script  | injected at build from `site.config.build.ts`    | no — embeds site config JSON, which can derive from env (`SITE_URL`, …)                     |
+| `#manifest` script        | injected at build (`manifest-inline-snippet.ts`) | **no — embeds the per-build hashed index URL** `/assets/gallery-index.<sha256-prefix>.json` |
 
 The `#manifest` script is the important one: it is the manifest
 early-discovery mechanism. It starts a `fetch()` for the manifest while the
 HTML is still being parsed, before any bundle loads. It was deliberately
 chosen over `<link rel="preload">` because the preload duplicated the
-download (~86 KB twice — the request parameters of a preload cannot match the
+download (the request parameters of a preload cannot match the
 runtime `fetch`). Removing the inline script means either giving up early
 discovery or paying an extra render-blocking request (option C below).
 

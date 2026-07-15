@@ -1,0 +1,56 @@
+{
+  "format": "ANL-MANIFEST",
+  "version": 1,
+  "classifications": [
+    {
+      "paths": [
+        "logo.png",
+        "docs/assets/**",
+        "apps/web/src/assets/**"
+      ],
+      "class": "Media",
+      "license": "CC-BY-4.0; trademarks and brand elements excluded"
+    },
+    {
+      "paths": [
+        "packages/build-assets/**",
+        "packages/media/**",
+        "packages/schema/**",
+        "packages/ui/**",
+        "packages/webgl-viewer/**"
+      ],
+      "class": "Library Code",
+      "license": "MIT"
+    },
+    {
+      "paths": [
+        ".github/**",
+        "apps/**",
+        "locales/**",
+        "packages/builder/**",
+        "plugins/**",
+        "scripts/**",
+        "test/**",
+        "*.ts",
+        "*.mjs",
+        "*.json",
+        "*.yaml",
+        "*.yml",
+        "*.sh"
+      ],
+      "class": "Project Code",
+      "license": "AGPL-3.0-or-later with LICENSE Section 4 additional terms"
+    },
+    {
+      "paths": [
+        "docs/**",
+        "README.md",
+        "README.zh-CN.md",
+        "*.md"
+      ],
+      "class": "Documentation",
+      "license": "CC-BY-4.0"
+    }
+  ],
+  "precedence": "A file-level SPDX-License-Identifier overrides this manifest; otherwise the most-specific matching path wins. LICENSE is authoritative."
+}

@@ -6,7 +6,10 @@ import { SUPPORTED_FORMATS } from "../constants/index.js";
 // 该谓词是 provider 中立的：S3 / 本地文件系统 provider 的 listImages、
 // Live Photo 配对（live-photo.ts）与 SourceScanner 的本地派生共用此实现，
 // 避免多处扩展名过滤逻辑漂移。
-export function isSupportedImageKey(key: string | undefined): key is string {
+export function isSupportedImageKey(
+  key: string | undefined,
+  supportedFormats: ReadonlySet<string> = SUPPORTED_FORMATS,
+): key is string {
   if (!key) return false;
-  return SUPPORTED_FORMATS.has(path.extname(key).toLowerCase());
+  return supportedFormats.has(path.extname(key).toLowerCase());
 }

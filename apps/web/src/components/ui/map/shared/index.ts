@@ -2,6 +2,7 @@ export * from "./clustering";
 export * from "./ClusterMarker";
 export * from "./GeoJsonLayer";
 export * from "./MapControls";
+export * from "./MapPopover";
 export * from "./PhotoMarkerPin";
 export * from "./RegionMarkerPin";
 export * from "./types";

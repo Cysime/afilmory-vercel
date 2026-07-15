@@ -5,6 +5,7 @@ import { createDefaultBuilderConfig } from "../../config/defaults.js";
 import type { BuilderServices } from "../../core/contracts/services.js";
 import { thumbnailExists } from "../../image/thumbnail.js";
 import { logger } from "../../logger/index.js";
+import { CURRENT_CORE_PROCESSING_FINGERPRINTS } from "../../photo/processing-fingerprints.js";
 import { StorageManager } from "../../storage/index.js";
 import type { StorageObject } from "../../storage/interfaces.js";
 import type { BuilderConfig } from "../../types/config.js";
@@ -44,6 +45,7 @@ const manifestManagerMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../image/thumbnail.js", () => ({
+  createThumbnailInventory: vi.fn(async () => ({ has: () => false })),
   thumbnailExists: vi.fn(async () => false),
 }));
 
@@ -81,6 +83,7 @@ function createPhoto(
     exif: null,
     toneAnalysis: null,
     location: null,
+    processing: { ...CURRENT_CORE_PROCESSING_FINGERPRINTS },
     ...overrides,
   };
 }
@@ -515,6 +518,36 @@ describe("builder workflow modules", () => {
       session.config.output,
       manifest,
       keepPhotoIds,
+      new Set(),
+    );
+  });
+
+  it("isolates and freezes afterSaveManifest so it cannot change cleanup", async () => {
+    manifestManagerMocks.handleDeletedPhotos.mockClear();
+    const session = createSession();
+    const manifest = [createPhoto("committed")];
+    vi.mocked(session.emitPluginEvent).mockImplementation(
+      async (_runState, event, payload) => {
+        if (event !== "afterSaveManifest") return;
+        const snapshot = (payload as { manifest: readonly PhotoManifestItem[] })
+          .manifest;
+        expect(Object.isFrozen(snapshot)).toBe(true);
+        expect(Object.isFrozen(snapshot[0])).toBe(true);
+        try {
+          (snapshot[0] as PhotoManifestItem).id = "mutated";
+        } catch {
+          // Frozen snapshots throw in ESM strict mode; a plugin may catch its
+          // own mistake, but it still cannot alter the cleanup transaction.
+        }
+      },
+    );
+
+    await new ArtifactWriter().write(session, manifest);
+
+    expect(manifestManagerMocks.handleDeletedPhotos).toHaveBeenCalledWith(
+      session.config.output,
+      expect.arrayContaining([expect.objectContaining({ id: "committed" })]),
+      undefined,
       new Set(),
     );
   });

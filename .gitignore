@@ -9,6 +9,7 @@ playwright-report
 playwright-report-prod
 test-results
 coverage
+artifacts
 
 # 配置文件
 .env

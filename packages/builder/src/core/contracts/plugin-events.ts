@@ -7,6 +7,7 @@ import type {
 import type { BuilderOptions, BuilderResult } from "../../types/options.js";
 import type {
   PhotoManifestItem,
+  PhotoProcessingFailure,
   ProcessPhotoResult,
 } from "../../types/photo.js";
 import type {
@@ -35,6 +36,7 @@ export interface BuilderPluginEventPayloads {
     options: BuilderOptions;
     context: PhotoProcessingContext;
     error: unknown;
+    failure: PhotoProcessingFailure;
   };
   afterManifestLoad: {
     options: BuilderOptions;
@@ -95,9 +97,9 @@ export interface BuilderPluginEventPayloads {
   };
   afterSaveManifest: {
     options: BuilderOptions;
-    manifest: PhotoManifestItem[];
-    cameras: CameraInfo[];
-    lenses: LensInfo[];
+    manifest: readonly PhotoManifestItem[];
+    cameras: readonly CameraInfo[];
+    lenses: readonly LensInfo[];
   };
   afterBuild: {
     options: BuilderOptions;

@@ -102,6 +102,10 @@ export default function thumbnailStoragePlugin(
   const plugin: BuilderPlugin & { [THUMBNAIL_PLUGIN_SYMBOL]: true } = {
     name: PLUGIN_NAME,
     [THUMBNAIL_PLUGIN_SYMBOL]: true,
+    serializablePluginReference: {
+      plugin: "thumbnail-storage",
+      options,
+    },
     hooks: {
       onInit: ({ services, config }) => {
         const fallbackStorage =

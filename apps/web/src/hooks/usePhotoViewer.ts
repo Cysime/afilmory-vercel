@@ -9,7 +9,11 @@ import { useModalIsolation } from "~/hooks/useModalIsolation";
 import { getPhotoSortTime } from "~/lib/photo-date";
 import { PhotosContext } from "~/providers/photos-provider";
 import type { AppRuntime } from "~/runtime/app-runtime";
-import { useAfilmoryRuntime, usePhotoRepository } from "~/runtime/app-runtime";
+import {
+  useAfilmoryRuntime,
+  usePhotoRepository,
+  usePhotoRepositoryVersion,
+} from "~/runtime/app-runtime";
 
 const openAtom = atom(false);
 const currentIndexAtom = atom(0);
@@ -98,12 +102,13 @@ const filterAndSortPhotosImpl = (
 // 引用相等，利于下游 memo），任一引用变化即重算；WeakMap 不阻止旧对象被 GC。
 const filterResultCache = new WeakMap<
   PhotoManifestItem[],
-  WeakMap<GallerySetting, PhotoManifestItem[]>
+  WeakMap<GallerySetting, { version: number; photos: PhotoManifestItem[] }>
 >();
 
 export const filterAndSortPhotos = (
   photos: PhotoManifestItem[],
   gallerySetting: GallerySetting,
+  repositoryVersion = 0,
 ) => {
   let settingCache = filterResultCache.get(photos);
   if (!settingCache) {
@@ -112,12 +117,15 @@ export const filterAndSortPhotos = (
   }
 
   const cached = settingCache.get(gallerySetting);
-  if (cached) {
-    return cached;
+  if (cached?.version === repositoryVersion) {
+    return cached.photos;
   }
 
   const result = filterAndSortPhotosImpl(photos, gallerySetting);
-  settingCache.set(gallerySetting, result);
+  settingCache.set(gallerySetting, {
+    version: repositoryVersion,
+    photos: result,
+  });
   return result;
 };
 
@@ -204,6 +212,7 @@ export const getFilteredPhotos = (runtime: AppRuntime) => {
   return filterAndSortPhotos(
     runtime.photoRepository.getPhotos(),
     currentGallerySetting,
+    runtime.photoRepository.getVersion(),
   );
 };
 
@@ -241,11 +250,12 @@ export const getViewerSourceMode = (
 export const usePhotos = () => {
   const gallerySetting = useAtomValue(gallerySettingAtom);
   const photoRepository = usePhotoRepository();
+  const repositoryVersion = usePhotoRepositoryVersion();
   const allPhotos = photoRepository.getPhotos();
 
   const masonryItems = useMemo(() => {
-    return filterAndSortPhotos(allPhotos, gallerySetting);
-  }, [allPhotos, gallerySetting]);
+    return filterAndSortPhotos(allPhotos, gallerySetting, repositoryVersion);
+  }, [allPhotos, gallerySetting, repositoryVersion]);
 
   return masonryItems;
 };

@@ -89,7 +89,7 @@ describe("applyBuilderConfigInput — worker section moved to system.processing.
   const DEPRECATION_WARNING =
     '[config] Deprecated key "system.observability.performance.worker" — did you mean "system.processing.worker"? The legacy path still works this release.';
 
-  it("merges the canonical processing.worker path into the internal worker location", () => {
+  it("keeps the canonical processing.worker path in the resolved config", () => {
     const config = createDefaultBuilderConfig();
     const warnings = applyBuilderConfigInput(config, {
       system: {
@@ -97,14 +97,15 @@ describe("applyBuilderConfigInput — worker section moved to system.processing.
       },
     });
     expect(warnings).toEqual([]);
-    expect(config.system.observability.performance.worker).toEqual({
+    expect(config.system.processing.worker).toEqual({
+      processCount: 4,
+      globalTaskConcurrency: 4,
       workerCount: 4,
       useClusterMode: false,
       timeout: 300_000,
       workerConcurrency: 2,
     });
-    // 内部只有一份 worker 配置：processing 下不残留副本
-    expect("worker" in config.system.processing).toBe(false);
+    expect(config.system.observability.performance).toBeUndefined();
   });
 
   it("honors the legacy observability.performance.worker path with a deprecation warning", () => {
@@ -115,7 +116,8 @@ describe("applyBuilderConfigInput — worker section moved to system.processing.
       },
     });
     expect(warnings).toEqual([DEPRECATION_WARNING]);
-    expect(config.system.observability.performance.worker.workerCount).toBe(3);
+    expect(config.system.processing.worker.processCount).toBe(3);
+    expect(config.system.processing.worker.globalTaskConcurrency).toBe(3);
   });
 
   it("lets the canonical path win when both paths set the same leaf", () => {
@@ -129,8 +131,8 @@ describe("applyBuilderConfigInput — worker section moved to system.processing.
       },
     });
     expect(warnings).toEqual([DEPRECATION_WARNING]);
-    const { worker } = config.system.observability.performance;
-    expect(worker.workerCount).toBe(8);
+    const { worker } = config.system.processing;
+    expect(worker.processCount).toBe(8);
     // 只在旧路径给出的叶子照常生效
     expect(worker.timeout).toBe(5000);
   });
@@ -207,7 +209,7 @@ describe("applyBuilderConfigInput — worker section moved to system.processing.
     const warnings = applyBuilderConfigInput(config, input);
     expect(warnings).toEqual([DEPRECATION_WARNING]);
     // null 叶子不覆盖；旧路径的值照常生效
-    expect(config.system.observability.performance.worker.workerCount).toBe(5);
+    expect(config.system.processing.worker.processCount).toBe(5);
     // shim 不得改写调用方的输入对象
     expect(input).toEqual({
       system: {
@@ -249,6 +251,8 @@ describe("applyBuilderConfigInput — shape validation", () => {
 
   it.each([
     ["workerCount", 0],
+    ["processCount", 0],
+    ["globalTaskConcurrency", 0],
     ["workerConcurrency", -1],
     ["timeout", 0],
     ["workerCount", 1.5],

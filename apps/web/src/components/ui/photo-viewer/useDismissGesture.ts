@@ -2,7 +2,7 @@ import { Spring } from "@afilmory/ui";
 import type { MotionValue } from "motion/react";
 import { animate, useMotionValue, useReducedMotion } from "motion/react";
 import type { RefObject } from "react";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import type { Swiper as SwiperType } from "swiper";
 
 // —— 可调阈值/系数（集中于此，便于调手感）——
@@ -97,7 +97,10 @@ export function useDismissGesture({
     revealOpacity.set(1);
   }, [enabled, contentX, contentY, contentScale, chromeOpacity, revealOpacity]);
 
-  useEffect(() => {
+  // Pointer input must be wired before the browser can paint the interactive
+  // viewer. A passive effect leaves a frame where the surface is visible but
+  // an immediately-started touch is never observed by this state machine.
+  useLayoutEffect(() => {
     const el = targetRef.current;
     if (!el) return;
 
@@ -225,6 +228,16 @@ export function useDismissGesture({
 
     // —— 统一 Pointer 路径（鼠标 / 触摸 / 触控笔一套）——
     const onPointerDown = (e: PointerEvent) => {
+      const { target } = e;
+      if (
+        target instanceof Element &&
+        target.closest(
+          "[data-photo-viewer-gesture-ignore], button, a, input, select, textarea",
+        )
+      ) {
+        status = "ignored";
+        return;
+      }
       // 已在追踪某指针时又来一个 → 视为 pinch，让位给 WebGL 缩放（拖拽中则弹回、交回 swiper）
       if (activePointerId !== null) {
         if (status === "dragging") {
@@ -281,6 +294,26 @@ export function useDismissGesture({
       // pointerup / pointercancel 共用。指针捕获保证即便在窗口外松手也会投递到 el
       // （取代旧的 window mouseup + buttons===0 兜底）。
       if (e.pointerId !== activePointerId) return;
+
+      // Chromium may coalesce touch pointermove events under load. pointerup
+      // still carries the final touch coordinates, so fold that last sample
+      // into the threshold decision. Keep mouse behavior unchanged: an
+      // off-window mouseup can report a remote coordinate that was never an
+      // in-page drag sample.
+      if (
+        e.type === "pointerup" &&
+        e.pointerType !== "mouse" &&
+        status === "dragging"
+      ) {
+        const releaseDy = Math.max(0, e.clientY - originY);
+        if (releaseDy > dragDy) {
+          const dt = e.timeStamp - lastT;
+          if (dt > 0) velocity = (e.clientY - lastY) / dt;
+          lastY = e.clientY;
+          lastT = e.timeStamp;
+          applyDrag(releaseDy);
+        }
+      }
       end();
       activePointerId = null;
     };
@@ -323,6 +356,19 @@ export function useDismissGesture({
     chromeOpacity,
     revealOpacity,
   ]);
+
+  // Readiness contract for input sources that bypass actionability checks
+  // (for example CDP touch dispatch). The marker is committed pre-paint only
+  // after the native listeners exist and while the gesture is enabled.
+  useLayoutEffect(() => {
+    const el = targetRef.current;
+    if (!el || !enabled) return;
+
+    el.dataset.photoViewerDismissReady = "true";
+    return () => {
+      delete el.dataset.photoViewerDismissReady;
+    };
+  }, [enabled, targetRef]);
 
   return {
     contentX,

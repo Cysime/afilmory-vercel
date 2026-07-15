@@ -8,6 +8,10 @@ inputs:
       jobs that only need pnpm + Node, e.g. lockfile-only commands.
     required: false
     default: "true"
+  node-version:
+    description: Node.js version used by this job.
+    required: false
+    default: "22.12.0"
 
 runs:
   using: composite
@@ -18,7 +22,7 @@ runs:
     - name: Setup Node
       uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
       with:
-        node-version: 22
+        node-version: ${{ inputs.node-version }}
         # An empty `cache` disables store caching; the store only matters for installs.
         cache: ${{ inputs.install == 'true' && 'pnpm' || '' }}
 

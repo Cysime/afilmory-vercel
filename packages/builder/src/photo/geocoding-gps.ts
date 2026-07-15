@@ -63,11 +63,11 @@ export async function lookupLocationFromGPS(
     Math.abs(latitude) > 90 ||
     Math.abs(longitude) > 180
   ) {
-    log.warn(`Invalid GPS coordinates: ${latitude}, ${longitude}`);
+    log.warn("Invalid GPS coordinates");
     return { status: "invalid" };
   }
 
-  log.info(`Reverse geocoding coordinates: ${latitude}, ${longitude}`);
+  log.info("Reverse geocoding privacy-filtered coordinates");
 
   try {
     const location = await provider.reverseGeocode(latitude, longitude);
