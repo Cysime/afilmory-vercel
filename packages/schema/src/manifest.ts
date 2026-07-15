@@ -467,8 +467,11 @@ const videoField: Field<VideoSource | undefined> = {
 
 // —— EXIF 消毒：丢弃结构性危险值，而非字段白名单 ——
 // PickedExif 表面很宽、web 端 formatter 本身是防御式的；这里只保证"已验证"的
-// manifest 不携带函数/类实例等无法 JSON 序列化或有原型污染风险的值。
-// 浅层判定：值必须是基元、普通对象或由它们组成的数组；普通对象内部不再深查。
+// manifest 不携带函数/类实例、循环引用、非有限数字等无法安全 JSON 序列化的值。
+
+const INVALID_EXIF_VALUE = Symbol("invalid-exif-value");
+const MAX_EXIF_DEPTH = 32;
+const DANGEROUS_EXIF_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 function isPlainObject(value: unknown): boolean {
   if (!isRecord(value)) return false;
@@ -476,23 +479,60 @@ function isPlainObject(value: unknown): boolean {
   return proto === null || proto === Object.prototype;
 }
 
-function isSafeExifValue(value: unknown): boolean {
-  if (value === null) return true;
-  const type = typeof value;
-  if (type === "string" || type === "number" || type === "boolean") return true;
-  if (Array.isArray(value)) return value.every((item) => isSafeExifValue(item));
-  return isPlainObject(value);
+function sanitizeExifValue(
+  value: unknown,
+  ancestors: WeakSet<object>,
+  depth: number,
+): unknown | typeof INVALID_EXIF_VALUE {
+  if (value === null) return null;
+  if (typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : INVALID_EXIF_VALUE;
+  }
+  if (depth >= MAX_EXIF_DEPTH || typeof value !== "object") {
+    return INVALID_EXIF_VALUE;
+  }
+  if (ancestors.has(value)) return INVALID_EXIF_VALUE;
+
+  if (Array.isArray(value)) {
+    ancestors.add(value);
+    const sanitized: unknown[] = [];
+    for (const item of value) {
+      const safeItem = sanitizeExifValue(item, ancestors, depth + 1);
+      if (safeItem === INVALID_EXIF_VALUE) {
+        ancestors.delete(value);
+        return INVALID_EXIF_VALUE;
+      }
+      sanitized.push(safeItem);
+    }
+    ancestors.delete(value);
+    return sanitized;
+  }
+
+  if (!isPlainObject(value)) return INVALID_EXIF_VALUE;
+  ancestors.add(value);
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    // JSON.parse 会把 __proto__ 还原成自有键；constructor/prototype 组合也会在
+    // 后续深合并时形成原型污染路径，因此所有层级都显式丢弃。
+    if (DANGEROUS_EXIF_KEYS.has(key)) continue;
+    const safeItem = sanitizeExifValue(item, ancestors, depth + 1);
+    if (safeItem !== INVALID_EXIF_VALUE) sanitized[key] = safeItem;
+  }
+  ancestors.delete(value);
+  return sanitized;
 }
 
 function normalizeExif(value: unknown): PickedExif | null {
-  if (!isRecord(value)) return null;
-  const exif: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    // JSON.parse 会把 "__proto__" 还原成自有键，直接赋值会触发原型污染——显式跳过
-    if (key === "__proto__") continue;
-    if (isSafeExifValue(item)) exif[key] = item;
+  const sanitized = sanitizeExifValue(value, new WeakSet(), 0);
+  if (
+    sanitized === INVALID_EXIF_VALUE ||
+    !isPlainObject(sanitized) ||
+    Array.isArray(sanitized)
+  ) {
+    return null;
   }
-  return exif as PickedExif;
+  return sanitized as PickedExif;
 }
 
 // —— photo ——

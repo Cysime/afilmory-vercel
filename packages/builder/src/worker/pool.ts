@@ -121,12 +121,23 @@ export class WorkerPool<T> {
         processedByWorker++;
         this.completedTasks++;
 
-        this.onTaskCompleted?.({
-          taskIndex: currentIndex,
-          completed: this.completedTasks,
-          total: this.totalTasks,
-          result,
-        });
+        try {
+          this.onTaskCompleted?.({
+            taskIndex: currentIndex,
+            completed: this.completedTasks,
+            total: this.totalTasks,
+            result,
+          });
+        } catch (error) {
+          // Progress callbacks are user code. Route their failure through the
+          // same coordinated drain path as task failures; allowing the worker
+          // promise to reject directly would make Promise.all return while
+          // sibling tasks are still using shared storage/plugin resources.
+          firstError ??=
+            error instanceof Error ? error : new Error(String(error));
+          workerLogger.error("Task completion callback failed", firstError);
+          break;
+        }
 
         workerLogger.info(
           `Completed task ${currentIndex + 1}/${this.totalTasks} - ${duration}ms`,

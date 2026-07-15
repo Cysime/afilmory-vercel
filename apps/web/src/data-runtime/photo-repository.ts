@@ -31,8 +31,7 @@ export class PhotoRepository {
                 videoUrl: appendMediaVersion(
                   photo.video.videoUrl,
                   photo.video.version ||
-                    photo.etag ||
-                    `${photo.lastModified}:${photo.size}:video`,
+                    `${manifest.generatedAt}:${photo.video.s3Key}:video`,
                 ),
               },
             }

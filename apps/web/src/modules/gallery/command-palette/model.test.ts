@@ -127,6 +127,23 @@ describe("command-palette-model", () => {
     ).toHaveLength(1);
   });
 
+  it("matches ASCII metadata independently of the host locale", () => {
+    const commands = buildCommandIndex({
+      t,
+      language: "en",
+      gallerySetting,
+      allTags: [],
+      allCameras: [],
+      allLenses: [],
+      allPhotos: [createPhoto({ title: "ISTANBUL" })],
+      geoRegions: { country: [], region: [], city: [], district: [] },
+      query: "istanbul",
+      hasFilters: false,
+    });
+
+    expect(commands.some((command) => command.id === "photo-photo")).toBe(true);
+  });
+
   it("applies command actions to gallery settings", () => {
     expect(
       applyGalleryCommandAction(gallerySetting, {

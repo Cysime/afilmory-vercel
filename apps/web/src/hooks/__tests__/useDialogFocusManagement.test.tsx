@@ -64,8 +64,11 @@ describe("useDialogFocusManagement", () => {
       <DialogHarness focusContainerOnOpen isOpen opener={opener} />,
     );
     const dialog = view.getByRole("dialog");
+    const last = view.getByRole("button", { name: "Last action" });
 
     await waitFor(() => expect(document.activeElement).toBe(dialog));
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
     view.unmount();
     expect(document.activeElement).toBe(opener);
     opener.remove();

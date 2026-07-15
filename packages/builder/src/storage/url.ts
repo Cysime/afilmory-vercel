@@ -7,14 +7,15 @@ export function encodeStorageKeyForUrl(key: string): string {
 }
 
 export function isSafeHttpBaseUrl(value: string): boolean {
+  if (value !== value.trim() || /[\\\s]/u.test(value)) return false;
   try {
     const url = new URL(value);
     return (
       (url.protocol === "http:" || url.protocol === "https:") &&
       !url.username &&
       !url.password &&
-      !url.search &&
-      !url.hash
+      !url.href.includes("?") &&
+      !url.href.includes("#")
     );
   } catch {
     return false;

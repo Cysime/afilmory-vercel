@@ -98,7 +98,7 @@ export const buildPhotoSearchIndex = (
     ]
       .filter((value): value is string => Boolean(value?.trim()))
       .join("\u0000")
-      .toLocaleLowerCase(),
+      .toLowerCase(),
   }));
 
 export const searchPhotoIndex = (
@@ -106,7 +106,9 @@ export const searchPhotoIndex = (
   query: string,
   limit = Number.POSITIVE_INFINITY,
 ): PhotoManifestItem[] => {
-  const normalizedQuery = query.trim().toLocaleLowerCase();
+  // Search is language-agnostic metadata matching. The host's default locale
+  // must not change ASCII case folding (notably I/i on Turkish systems).
+  const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery || limit <= 0) return [];
 
   const matches: PhotoManifestItem[] = [];

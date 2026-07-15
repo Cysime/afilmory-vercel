@@ -284,6 +284,38 @@ describe("ClusterPool", () => {
     ).toBe(true);
   });
 
+  it("rejects and shuts down when a completion callback throws", async () => {
+    const pool = new ClusterPool<string>({
+      concurrency: 1,
+      onTaskCompleted: () => {
+        throw new Error("progress callback failed");
+      },
+      sharedData: createTestSharedData(),
+      totalTasks: 1,
+      workerConcurrency: 1,
+    });
+    const { run, worker } = await startReadyWorker(pool);
+    const task = getLastBatchTaskMessage(worker).tasks[0];
+
+    expect(() =>
+      worker.emitMessage({
+        results: [
+          {
+            result: "photo-0",
+            taskId: task.taskId,
+            taskIndex: task.taskIndex,
+            type: "result",
+          },
+        ],
+        type: "batch-result",
+      }),
+    ).not.toThrow();
+    await expect(run).rejects.toThrow("progress callback failed");
+    expect(
+      worker.sentMessages.some((message) => message.type === "shutdown"),
+    ).toBe(true);
+  });
+
   it("enables advanced IPC serialization and sends shared data (Maps included) natively", async () => {
     const sharedData = createTestSharedData();
 

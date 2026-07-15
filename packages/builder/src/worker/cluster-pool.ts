@@ -461,12 +461,17 @@ export class ClusterPool<T> extends EventEmitter {
 
         this.completedTasks++;
 
-        this.onTaskCompleted?.({
-          taskIndex,
-          completed: this.completedTasks,
-          total: this.totalTasks,
-          result,
-        });
+        try {
+          this.onTaskCompleted?.({
+            taskIndex,
+            completed: this.completedTasks,
+            total: this.totalTasks,
+            result,
+          });
+        } catch (error) {
+          this.fail(this.normalizeTaskError("task-completion-callback", error));
+          return;
+        }
       } else if (taskResult.type === "error") {
         const taskError = this.normalizeTaskError(
           taskResult.taskId,
@@ -535,12 +540,17 @@ export class ClusterPool<T> extends EventEmitter {
       handle.processedTasks++;
 
       this.completedTasks++;
-      this.onTaskCompleted?.({
-        taskIndex,
-        completed: this.completedTasks,
-        total: this.totalTasks,
-        result,
-      });
+      try {
+        this.onTaskCompleted?.({
+          taskIndex,
+          completed: this.completedTasks,
+          total: this.totalTasks,
+          result,
+        });
+      } catch (error) {
+        this.fail(this.normalizeTaskError("task-completion-callback", error));
+        return;
+      }
       workerLogger.info(
         `Completed task ${taskIndex + 1}/${this.totalTasks} (completed: ${this.completedTasks}, in progress: ${handle.activeTaskCount})`,
       );

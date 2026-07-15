@@ -139,8 +139,9 @@ LOCAL_PHOTOS_BASE_URL=/originals
 Put source images under `LOCAL_PHOTOS_PATH`. The dev server serves them at
 `LOCAL_PHOTOS_BASE_URL`; production builds copy them into `apps/web/dist` at
 the matching path. Keep the reserved-route-safe `/originals` default unless
-your static host is configured for another non-reserved public path; `/photos`,
-`/assets`, `/thumbnails`, and `/vendor` belong to the application.
+your static host is configured for another non-reserved public path. Custom
+prefixes use portable ASCII path segments; `/photos`, `/assets`, `/thumbnails`,
+and `/vendor` belong to the application.
 
 ### S3 source configuration
 

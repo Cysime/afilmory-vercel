@@ -14,4 +14,10 @@ describe("getReadableTextColor", () => {
       "currentColor",
     );
   });
+
+  it("composites alpha hex colors over the app's dark canvas", () => {
+    expect(getReadableTextColor("#ffffff00")).toBe("#ffffff");
+    expect(getReadableTextColor("#ffffffcc")).toBe("#000000");
+    expect(getReadableTextColor("#fff0")).toBe("#ffffff");
+  });
 });

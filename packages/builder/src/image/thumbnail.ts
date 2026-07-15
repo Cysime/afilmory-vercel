@@ -49,18 +49,21 @@ export async function isThumbnailEncodingStale(
       "utf-8",
     );
     return marker.trim() !== THUMBNAIL_ENCODING_SIGNATURE;
-  } catch {
+  } catch (error) {
     // 无标记：目录里既有缩略图的生成参数未知（老缓存），视为过期。
     // 全新空目录也走这条——强制与否等价（每张都按缺失生成），无副作用。
-    return true;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    // Permission/type/I/O failures are not evidence of a stale marker. Fail
+    // before regenerating and committing a manifest that cannot be paired
+    // with a valid marker.
+    throw error;
   }
 }
 
 export async function writeThumbnailEncodingMarker(
   thumbnailsDir: string,
 ): Promise<void> {
-  await fs.mkdir(thumbnailsDir, { recursive: true });
-  await fs.writeFile(
+  await writeFileAtomic(
     path.join(thumbnailsDir, ENCODING_MARKER_FILENAME),
     `${THUMBNAIL_ENCODING_SIGNATURE}\n`,
   );
@@ -136,6 +139,17 @@ export interface ExistingThumbnail {
   url: string;
 }
 
+async function isSafeRegularThumbnail(thumbnailPath: string): Promise<boolean> {
+  try {
+    const stats = await fs.lstat(thumbnailPath);
+    return stats.isFile() && !stats.isSymbolicLink();
+  } catch (error) {
+    const { code } = error as NodeJS.ErrnoException;
+    if (code === "ENOENT" || code === "ENOTDIR") return false;
+    throw error;
+  }
+}
+
 /** Resolve both legacy `<id>.jpg` and content-addressed thumbnail caches. */
 export async function resolveExistingThumbnail(
   photoId: string,
@@ -156,8 +170,7 @@ export async function resolveExistingThumbnail(
   // so this is the O(1) path for both local and remote thumbnail storage.
   for (const fileName of candidates) {
     const thumbnailPath = path.join(thumbnailsDir, fileName);
-    try {
-      await fs.access(thumbnailPath);
+    if (await isSafeRegularThumbnail(thumbnailPath)) {
       return {
         fileName,
         path: thumbnailPath,
@@ -166,20 +179,31 @@ export async function resolveExistingThumbnail(
             ? preferredUrl
             : getThumbnailPublicUrlForFileName(fileName),
       };
-    } catch {
-      // Try the compatibility/discovery paths below.
     }
   }
 
   // A custom remote CDN may rewrite the basename. Discover a local addressed
-  // artifact as a fallback; this is only reached when the manifest URL cannot
-  // name the local file directly.
+  // artifact as a fallback. If cleanup was interrupted, multiple versions can
+  // coexist and neither lexical hash order nor mtime proves which one matches
+  // the manifest. Treat that ambiguity as a cache miss so the caller rebuilds
+  // from the source image instead of silently reusing arbitrary pixels.
   try {
     const entries = await fs.readdir(thumbnailsDir);
-    const fileName = entries
-      .filter((entry) => isThumbnailFileNameForPhoto(entry, photoId))
-      .sort()
-      .at(-1);
+    const matchingNames = entries.filter((entry) =>
+      isThumbnailFileNameForPhoto(entry, photoId),
+    );
+    const safeNames = (
+      await Promise.all(
+        matchingNames.map(async (fileName) => ({
+          fileName,
+          safe: await isSafeRegularThumbnail(
+            path.join(thumbnailsDir, fileName),
+          ),
+        })),
+      )
+    ).filter(({ safe }) => safe);
+    const fileName =
+      safeNames.length === 1 ? safeNames[0]?.fileName : undefined;
     return fileName
       ? {
           fileName,

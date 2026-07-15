@@ -63,7 +63,12 @@ describe("isSafeHttpBaseUrl", () => {
     "ftp://example.com",
     "https://user:secret@example.com",
     "https://example.com?token=secret",
+    "https://example.com?",
     "https://example.com/#secret",
+    "https://example.com/#",
+    " https://example.com",
+    "https://example.com/path with space",
+    "https:\\example.com",
     "not-a-url",
   ])("rejects unsafe public URLs: %s", (value) => {
     expect(isSafeHttpBaseUrl(value)).toBe(false);

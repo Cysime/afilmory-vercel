@@ -139,7 +139,8 @@ LOCAL_PHOTOS_BASE_URL=/originals
 把原图放入 `LOCAL_PHOTOS_PATH`。开发服务器会通过
 `LOCAL_PHOTOS_BASE_URL` 提供这些文件；生产构建会把它们复制到
 `apps/web/dist` 对应路径。建议保留不会与应用路由冲突的 `/originals` 默认值；
-`/photos`、`/assets`、`/thumbnails` 和 `/vendor` 是应用保留命名空间。
+自定义前缀只能使用可移植的 ASCII 路径段；`/photos`、`/assets`、
+`/thumbnails` 和 `/vendor` 是应用保留命名空间。
 
 ### S3 照片源配置
 

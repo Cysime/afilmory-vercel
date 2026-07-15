@@ -63,7 +63,9 @@ export async function stubLocalThumbnails(page: Page) {
   // Live Photo 的 .webm 请求则回真实 fixture 视频，否则视频加载失败同样会产生
   // error 级 console 输出。
   await page.route("**/thumbnails/**", async (route) => {
-    const isLivePhotoVideo = route.request().url().endsWith(".webm");
+    const isLivePhotoVideo = new URL(route.request().url()).pathname.endsWith(
+      ".webm",
+    );
     await route.fulfill({
       contentType: isLivePhotoVideo ? "video/webm" : "image/png",
       headers: { "Cache-Control": "no-store" },

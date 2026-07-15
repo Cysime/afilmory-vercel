@@ -178,6 +178,24 @@ function isNonRetryableS3Error(error: unknown): boolean {
   );
 }
 
+function cancelUnreadBody(body: unknown, reason: Error): void {
+  if (!body || typeof body !== "object" || body instanceof Buffer) return;
+  const candidate = body as {
+    cancel?: (reason?: unknown) => Promise<unknown> | unknown;
+    destroy?: () => void;
+  };
+  if (typeof candidate.destroy === "function") {
+    // No error listener has been installed yet on these early-rejection
+    // paths. destroy(error) would emit an unhandled "error" event; a plain
+    // destroy still closes the body/socket promptly.
+    candidate.destroy();
+    return;
+  }
+  if (typeof candidate.cancel === "function") {
+    void Promise.resolve(candidate.cancel(reason)).catch(() => {});
+  }
+}
+
 function assertOptionalPositiveInteger(
   name: string,
   value: number | undefined,
@@ -216,14 +234,23 @@ export class S3StorageProvider implements StorageProvider {
       clientHandlesRetries?: boolean;
     } = {},
   ) {
-    if (!config.bucket?.trim()) {
+    // Config loading treats empty optional URL strings as "unset". Preserve
+    // that contract for callers that instantiate the provider directly too;
+    // otherwise generatePublicUrl would later call new URL("") and the SDK
+    // would receive an invalid endpoint provider.
+    const normalizedConfig: S3Config = {
+      ...config,
+      endpoint: config.endpoint || undefined,
+      customDomain: config.customDomain || undefined,
+    };
+    if (!normalizedConfig.bucket?.trim()) {
       throw new Error("S3 bucket must be a non-empty string");
     }
-    if (config.endpoint) {
-      assertSafeHttpBaseUrl(config.endpoint, "S3 endpoint");
+    if (normalizedConfig.endpoint) {
+      assertSafeHttpBaseUrl(normalizedConfig.endpoint, "S3 endpoint");
     }
-    if (config.customDomain) {
-      assertSafeHttpBaseUrl(config.customDomain, "S3 customDomain");
+    if (normalizedConfig.customDomain) {
+      assertSafeHttpBaseUrl(normalizedConfig.customDomain, "S3 customDomain");
     }
     assertOptionalPositiveInteger(
       "downloadConcurrency",
@@ -253,8 +280,8 @@ export class S3StorageProvider implements StorageProvider {
       config.downloadMemoryBudgetBytes,
       Number.MAX_SAFE_INTEGER,
     );
-    this.config = config;
-    this.s3Client = options.s3Client ?? createS3Client(config);
+    this.config = normalizedConfig;
+    this.s3Client = options.s3Client ?? createS3Client(normalizedConfig);
     this.clientHandlesRetries =
       options.clientHandlesRetries ?? options.s3Client === undefined;
     this.limiter = new Semaphore(this.config.downloadConcurrency ?? 16);
@@ -324,9 +351,11 @@ export class S3StorageProvider implements StorageProvider {
                 declaredLength !== undefined &&
                 declaredLength > this.maxDownloadBytes
               ) {
-                throw new DownloadLimitError(
+                const error = new DownloadLimitError(
                   `Refusing to download ${key}: declared size ${declaredLength} exceeds maxDownloadBytes=${this.maxDownloadBytes}`,
                 );
+                cancelUnreadBody(response.Body, error);
+                throw error;
               }
 
               // 如果 Body 已经是 Buffer
@@ -367,7 +396,8 @@ export class S3StorageProvider implements StorageProvider {
                   controller.signal,
                 );
               } catch (error) {
-                pausable.destroy?.(
+                cancelUnreadBody(
+                  response.Body,
                   error instanceof Error ? error : new Error(String(error)),
                 );
                 throw error;
@@ -436,7 +466,15 @@ export class S3StorageProvider implements StorageProvider {
                         ),
                   );
                 });
-                pausable.resume?.();
+                // addEventListener does not replay an abort that won the race
+                // immediately before registration. Check the state after all
+                // handlers are installed so such a stream cannot remain
+                // paused forever with both timeout timers already consumed.
+                if (controller.signal.aborted) {
+                  onAbort();
+                } else {
+                  pausable.resume?.();
+                }
               });
 
               const duration = Date.now() - startTime;
@@ -690,6 +728,7 @@ export class S3StorageProvider implements StorageProvider {
   async listObjectKeys(prefix: string): Promise<string[]> {
     const keys: string[] = [];
     let continuationToken: string | undefined;
+    const seenTokens = new Set<string>();
 
     do {
       const listResponse = await this.executeWithRetry(
@@ -709,22 +748,19 @@ export class S3StorageProvider implements StorageProvider {
         if (object.Key) keys.push(object.Key);
       }
 
-      if (listResponse.IsTruncated && !listResponse.NextContinuationToken) {
+      const nextToken = listResponse.NextContinuationToken;
+      if (listResponse.IsTruncated && !nextToken) {
         throw new Error(
           "S3 returned IsTruncated=true without a continuation token while listing object keys",
         );
       }
-      if (
-        listResponse.NextContinuationToken &&
-        listResponse.NextContinuationToken === continuationToken
-      ) {
+      if (listResponse.IsTruncated && seenTokens.has(nextToken!)) {
         throw new Error(
-          `S3 repeated continuation token ${JSON.stringify(continuationToken)} while listing object keys`,
+          `S3 repeated continuation token ${JSON.stringify(nextToken)} while listing object keys`,
         );
       }
-      continuationToken = listResponse.IsTruncated
-        ? listResponse.NextContinuationToken
-        : undefined;
+      if (listResponse.IsTruncated) seenTokens.add(nextToken!);
+      continuationToken = listResponse.IsTruncated ? nextToken : undefined;
     } while (continuationToken);
 
     return keys;

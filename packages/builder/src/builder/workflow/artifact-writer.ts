@@ -1,4 +1,5 @@
 import { handleDeletedPhotos, saveManifest } from "../../manifest/manager.js";
+import { assertSafeThumbnailOutputDirectory } from "../../output-paths.js";
 import type {
   AfilmoryManifest,
   CameraInfo,
@@ -29,6 +30,10 @@ export class ArtifactWriter {
     },
   ): Promise<ArtifactWriteResult> {
     const { output } = session.config;
+    // BuildSession is internal but can be constructed directly in tests or
+    // integrations. Reassert this before the manifest commit so bypassing the
+    // normal config-normalization entry point cannot make cleanup target cwd.
+    assertSafeThumbnailOutputDirectory(output.thumbnailsDir);
     let cameras = this.assembler.generateCameraCollection(manifest);
     let lenses = this.assembler.generateLensCollection(manifest);
 
@@ -75,6 +80,7 @@ export class ArtifactWriter {
       output,
       manifest,
       options?.keepPhotoIds,
+      new Set(options?.previousManifest?.photos.map((item) => item.id) ?? []),
     );
 
     await session.emit("afterCleanup", {

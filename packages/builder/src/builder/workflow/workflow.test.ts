@@ -515,6 +515,7 @@ describe("builder workflow modules", () => {
       session.config.output,
       manifest,
       keepPhotoIds,
+      new Set(),
     );
   });
 });

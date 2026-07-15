@@ -68,14 +68,48 @@ describe("handleDeletedPhotos", () => {
     ).resolves.toBe(0);
   });
 
+  it("clears only owned artifacts for an empty gallery", async () => {
+    await fs.mkdir(path.join(thumbnailsDir, "unrelated"), { recursive: true });
+    await fs.writeFile(path.join(thumbnailsDir, "orphan.jpg"), "thumbnail");
+    await fs.writeFile(path.join(thumbnailsDir, "stranger.jpg"), "personal");
+    await fs.writeFile(path.join(thumbnailsDir, ".encoding"), "signature");
+    await fs.writeFile(path.join(thumbnailsDir, "keep.txt"), "keep");
+    await fs.writeFile(
+      path.join(thumbnailsDir, "unrelated", "keep.jpg"),
+      "keep",
+    );
+
+    await expect(
+      handleDeletedPhotos(outputSettings, [], undefined, new Set(["orphan"])),
+    ).resolves.toBe(1);
+    await expect(
+      fs.access(path.join(thumbnailsDir, "orphan.jpg")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      fs.access(path.join(thumbnailsDir, ".encoding")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      fs.readFile(path.join(thumbnailsDir, "keep.txt"), "utf8"),
+    ).resolves.toBe("keep");
+    await expect(
+      fs.readFile(path.join(thumbnailsDir, "stranger.jpg"), "utf8"),
+    ).resolves.toBe("personal");
+    await expect(
+      fs.readFile(path.join(thumbnailsDir, "unrelated", "keep.jpg"), "utf8"),
+    ).resolves.toBe("keep");
+  });
+
   it("removes thumbnails that are no longer present in the manifest", async () => {
     await fs.mkdir(thumbnailsDir, { recursive: true });
     await fs.writeFile(path.join(thumbnailsDir, "keep.jpg"), "");
     await fs.writeFile(path.join(thumbnailsDir, "remove.jpg"), "");
 
-    const deletedCount = await handleDeletedPhotos(outputSettings, [
-      createPhotoManifestItem("keep"),
-    ]);
+    const deletedCount = await handleDeletedPhotos(
+      outputSettings,
+      [createPhotoManifestItem("keep")],
+      undefined,
+      new Set(["remove"]),
+    );
 
     expect(deletedCount).toBe(1);
     await expect(
@@ -98,6 +132,7 @@ describe("handleDeletedPhotos", () => {
       outputSettings,
       [createPhotoManifestItem("keep")],
       new Set(["keep", "failed"]),
+      new Set(["failed", "gone"]),
     );
 
     expect(deletedCount).toBe(1);

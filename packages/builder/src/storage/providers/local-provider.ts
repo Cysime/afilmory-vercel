@@ -78,7 +78,11 @@ export class LocalFileSystemProvider implements StorageProvider {
     realBasePath: string,
   ): boolean {
     const relativePath = path.relative(realBasePath, candidatePath);
-    return !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
+    return (
+      relativePath !== ".." &&
+      !relativePath.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativePath)
+    );
   }
 
   private async resolveExistingKey(key: string): Promise<string | null> {
@@ -123,7 +127,15 @@ export class LocalFileSystemProvider implements StorageProvider {
           throw error;
         });
       if (!stats) {
-        await fs.mkdir(candidateDirectory);
+        await fs
+          .mkdir(candidateDirectory)
+          .catch((error: NodeJS.ErrnoException) => {
+            // Multiple photo workers may upload into the same newly-created
+            // directory concurrently. Losing the mkdir race is harmless; the
+            // lstat below still verifies that the winner created a real
+            // directory rather than a symlink or file.
+            if (error.code !== "EEXIST") throw error;
+          });
         stats = await fs.lstat(candidateDirectory);
       }
       if (stats.isSymbolicLink() || !stats.isDirectory()) return null;

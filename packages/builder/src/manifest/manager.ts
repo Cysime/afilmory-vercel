@@ -221,20 +221,43 @@ export async function handleDeletedPhotos(
   output: BuilderOutputSettings,
   items: PhotoManifestItem[],
   keepPhotoIds?: ReadonlySet<string>,
+  previouslyPublishedPhotoIds: ReadonlySet<string> = new Set(),
 ): Promise<number> {
   const { thumbnailsDir } = output;
+  const manifestIdSet = new Set(items.map((item) => item.id));
+  const ownedPhotoIds = new Set([
+    ...manifestIdSet,
+    ...previouslyPublishedPhotoIds,
+  ]);
   logger.main.info("🔍 Checking for deleted images...");
   if (items.length === 0 && (keepPhotoIds?.size ?? 0) === 0) {
-    const deletedCount = await fs
-      .readdir(thumbnailsDir)
-      .then(
-        (entries) => entries.filter((entry) => entry.endsWith(".jpg")).length,
-      )
+    const entries = await fs
+      .readdir(thumbnailsDir, { withFileTypes: true })
       .catch((error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") return 0;
+        if (error.code === "ENOENT") return [];
         throw error;
       });
-    await fs.rm(thumbnailsDir, { recursive: true, force: true });
+    let deletedCount = 0;
+    // Never recursively remove the configured directory. A typo such as
+    // thumbnailsDir="." must not turn an empty first build into deletion of
+    // unrelated project files. Only builder-owned top-level artifacts are
+    // eligible; nested directories and unknown files remain untouched.
+    for (const entry of entries) {
+      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+      const isThumbnail = entry.name.endsWith(".jpg");
+      const photoId = isThumbnail
+        ? getThumbnailPhotoIdFromFileName(entry.name)
+        : null;
+      const isOwnedThumbnail = Boolean(photoId && ownedPhotoIds.has(photoId));
+      const isOwnedMarker =
+        entry.name === ".encoding" && ownedPhotoIds.size > 0;
+      if (!isOwnedThumbnail && !isOwnedMarker) continue;
+      await fs.unlink(path.join(thumbnailsDir, entry.name));
+      if (isOwnedThumbnail) deletedCount++;
+    }
+    await fs.rmdir(thumbnailsDir).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT" && error.code !== "ENOTEMPTY") throw error;
+    });
     logger.main.info("🔍 No images; clearing thumbnails...");
     return deletedCount;
   }
@@ -253,7 +276,6 @@ export async function handleDeletedPhotos(
     });
 
   // If thumbnails not in manifest, delete it
-  const manifestIdSet = new Set(items.map((item) => item.id));
   const manifestExpectedFileNames = new Set<string>();
   const manifestIdsWithExpectedFile = new Set<string>();
   for (const item of items) {
@@ -269,6 +291,11 @@ export async function handleDeletedPhotos(
     // 误删它会在构建中途崩溃后触发下一次全量重生成缩略图，废掉 artifact-cache 增量路径。
     if (!thumbnail.endsWith(".jpg")) continue;
     const photoId = getThumbnailPhotoIdFromFileName(thumbnail);
+    // Cleanup is allowed to remove only artifacts tied to the current or
+    // previously published manifest. This makes a mispointed shared directory
+    // fail safe: unrelated JPEGs are never inferred to be builder-owned merely
+    // from their extension.
+    if (!photoId || !ownedPhotoIds.has(photoId)) continue;
     const isExpected = manifestExpectedFileNames.has(thumbnail);
     const isFailedButStillStored = Boolean(
       photoId && !manifestIdSet.has(photoId) && keepPhotoIds?.has(photoId),

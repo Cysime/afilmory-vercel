@@ -29,7 +29,16 @@ describe("photosStaticPlugin helpers", () => {
     expect(() => normalizeLocalPhotosBaseUrl("/")).toThrow();
     expect(() => normalizeLocalPhotosBaseUrl("/../private")).toThrow();
     expect(() => normalizeLocalPhotosBaseUrl("/%2e%2e/private")).toThrow();
+    expect(() => normalizeLocalPhotosBaseUrl("/media%5cprivate")).toThrow();
+    expect(() => normalizeLocalPhotosBaseUrl("/media%3fprivate")).toThrow();
+    expect(() => normalizeLocalPhotosBaseUrl("/my%20photos")).toThrow();
+    expect(() => normalizeLocalPhotosBaseUrl("/my photos")).toThrow();
+    expect(() => normalizeLocalPhotosBaseUrl("/相册")).toThrow();
+    expect(() => normalizeLocalPhotosBaseUrl("/media//originals")).toThrow();
     expect(() => normalizeLocalPhotosBaseUrl("/photos")).toThrow(
+      "reserved application namespace",
+    );
+    expect(() => normalizeLocalPhotosBaseUrl("/Photos")).toThrow(
       "reserved application namespace",
     );
     expect(() =>
@@ -41,6 +50,9 @@ describe("photosStaticPlugin helpers", () => {
     const root = path.resolve("/tmp/gallery-photos");
     expect(resolveLocalPhotoPath(root, "/旅行/日落%20%F0%9F%8C%85.jpg")).toBe(
       path.join(root, "旅行/日落 🌅.jpg"),
+    );
+    expect(resolveLocalPhotoPath(root, "/..summer.jpg")).toBe(
+      path.join(root, "..summer.jpg"),
     );
     expect(resolveLocalPhotoPath(root, "/../secret.jpg")).toBeNull();
     expect(resolveLocalPhotoPath(root, "/%2e%2e/secret.jpg")).toBeNull();
@@ -90,6 +102,8 @@ describe("photosStaticPlugin helpers", () => {
     await fs.mkdir(path.join(destination, "photo-id"), { recursive: true });
     await fs.mkdir(source, { recursive: true });
     await fs.writeFile(path.join(source, "photo.jpg"), "image");
+    await fs.writeFile(path.join(source, "..summer.jpg"), "dot-image");
+    await fs.writeFile(path.join(source, "payload.svg"), "<script />");
     await fs.mkdir(path.join(source, ".afilmory/thumbnails"), {
       recursive: true,
     });
@@ -103,10 +117,17 @@ describe("photosStaticPlugin helpers", () => {
       "seo shell",
     );
 
-    await copyLocalPhotos(source, destination, [
-      "photo.jpg",
-      ".afilmory/thumbnails/photo.hash.jpg",
-    ]);
+    await copyLocalPhotos(
+      source,
+      destination,
+      [
+        "photo.jpg",
+        "..summer.jpg",
+        "payload.svg",
+        ".afilmory/thumbnails/photo.hash.jpg",
+      ],
+      path.join(root, "dist"),
+    );
 
     await expect(
       fs.readFile(path.join(destination, "photo.jpg"), "utf8"),
@@ -114,6 +135,9 @@ describe("photosStaticPlugin helpers", () => {
     await expect(
       fs.readFile(path.join(destination, "photo-id/index.html"), "utf8"),
     ).resolves.toBe("seo shell");
+    await expect(
+      fs.readFile(path.join(destination, "..summer.jpg"), "utf8"),
+    ).resolves.toBe("dot-image");
     await expect(
       fs.readFile(
         path.join(destination, ".afilmory/thumbnails/photo.hash.jpg"),
@@ -123,5 +147,33 @@ describe("photosStaticPlugin helpers", () => {
     await expect(fs.stat(path.join(destination, ".env"))).rejects.toMatchObject(
       { code: "ENOENT" },
     );
+    await expect(
+      fs.stat(path.join(destination, "payload.svg")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a symlinked build destination before copying media", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "photos-static-"));
+    temporaryDirectories.push(root);
+    const source = path.join(root, "source");
+    const output = path.join(root, "dist");
+    const outside = path.join(root, "outside");
+    await fs.mkdir(source);
+    await fs.mkdir(output);
+    await fs.mkdir(outside);
+    await fs.writeFile(path.join(source, "photo.jpg"), "image");
+    await fs.symlink(outside, path.join(output, "originals"));
+
+    await expect(
+      copyLocalPhotos(
+        source,
+        path.join(output, "originals"),
+        ["photo.jpg"],
+        output,
+      ),
+    ).rejects.toThrow("unsafe path component");
+    await expect(
+      fs.stat(path.join(outside, "photo.jpg")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

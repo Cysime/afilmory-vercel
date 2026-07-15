@@ -336,7 +336,8 @@ export const CommandPalette = ({ isOpen, onClose }: CommandPaletteProps) => {
       {/* Backdrop with blur */}
       <button
         type="button"
-        aria-label={t("common.close")}
+        aria-hidden="true"
+        tabIndex={-1}
         className="absolute inset-0 bg-black/30 backdrop-blur-xl transition-[background-color,backdrop-filter] duration-200"
         onClick={onClose}
       />

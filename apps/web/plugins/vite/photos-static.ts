@@ -1,5 +1,12 @@
 import fs from "node:fs";
-import { copyFile, mkdir, readFile, realpath, stat } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  stat,
+} from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,38 +37,49 @@ const MIME_TYPES: Record<string, string> = {
   ".mov": "video/quicktime",
   ".mp4": "video/mp4",
   ".png": "image/png",
-  ".svg": "image/svg+xml",
   ".tif": "image/tiff",
   ".tiff": "image/tiff",
   ".webm": "video/webm",
   ".webp": "image/webp",
 };
 
+function isPathWithin(rootPath: string, candidatePath: string): boolean {
+  const relativePath = path.relative(rootPath, candidatePath);
+  return (
+    relativePath === "" ||
+    (!path.isAbsolute(relativePath) &&
+      relativePath !== ".." &&
+      !relativePath.startsWith(`..${path.sep}`))
+  );
+}
+
 export function normalizeLocalPhotosBaseUrl(value: string): string {
   const trimmed = value.trim().replace(/\/+$/, "");
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(trimmed);
-  } catch {
-    throw new Error(
-      `LOCAL_PHOTOS_BASE_URL contains invalid URL encoding: ${JSON.stringify(value)}`,
-    );
-  }
+  const segments = trimmed.slice(1).split("/");
   if (
     !trimmed.startsWith("/") ||
     trimmed === "" ||
     trimmed === "/" ||
     trimmed.startsWith("//") ||
-    /[?#\\]/.test(trimmed) ||
-    decoded.split("/").some((segment) => segment === "." || segment === "..")
+    segments.some(
+      (segment) =>
+        !/^[\w.~-]+$/.test(segment) ||
+        segment === "." ||
+        segment === ".." ||
+        segment.endsWith(".") ||
+        /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment),
+    )
   ) {
     throw new Error(
       `LOCAL_PHOTOS_BASE_URL must be a safe root-relative path such as /originals; received ${JSON.stringify(value)}`,
     );
   }
-  const namespace =
-    decoded.split("/").find((segment) => segment.length > 0) ?? "";
-  if (["assets", "photos", "thumbnails", "vendor"].includes(namespace)) {
+  const namespace = segments[0] ?? "";
+  if (
+    ["assets", "photos", "thumbnails", "vendor"].includes(
+      namespace.toLowerCase(),
+    )
+  ) {
     throw new Error(
       `LOCAL_PHOTOS_BASE_URL uses the reserved application namespace /${namespace}`,
     );
@@ -112,8 +130,7 @@ export function resolveLocalPhotoPath(
   const relativePath = decodedPath.replace(/^[/\\]+/, "");
   const resolvedDirectory = path.resolve(photosDirectory);
   const resolvedPath = path.resolve(resolvedDirectory, relativePath);
-  const relative = path.relative(resolvedDirectory, resolvedPath);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  if (!isPathWithin(resolvedDirectory, resolvedPath)) return null;
   return resolvedPath;
 }
 
@@ -136,8 +153,7 @@ export function resolveRealLocalPhotoPath(
     throw error;
   }
 
-  const relativePath = path.relative(realDirectory, realCandidatePath);
-  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+  if (!isPathWithin(realDirectory, realCandidatePath)) {
     return null;
   }
   return realCandidatePath;
@@ -187,6 +203,7 @@ export async function copyLocalPhotos(
   sourceDirectory: string,
   destinationDirectory: string,
   mediaKeys: Iterable<string>,
+  outputDirectory: string,
 ): Promise<void> {
   const realSourceDirectory = await realpath(sourceDirectory);
   const sourceStats = await stat(realSourceDirectory);
@@ -195,45 +212,82 @@ export async function copyLocalPhotos(
       `[photos-static] Local photo source is not a regular directory: ${sourceDirectory}`,
     );
   }
-  const relativeToOutput = path.relative(
-    destinationDirectory,
-    realSourceDirectory,
-  );
-  if (
-    !relativeToOutput.startsWith("..") &&
-    !path.isAbsolute(relativeToOutput)
-  ) {
+  const resolvedOutputDirectory = path.resolve(outputDirectory);
+  const resolvedDestinationDirectory = path.resolve(destinationDirectory);
+  if (!isPathWithin(resolvedOutputDirectory, resolvedDestinationDirectory)) {
+    throw new Error(
+      `[photos-static] Build destination escapes the configured output directory: ${destinationDirectory}`,
+    );
+  }
+  if (isPathWithin(resolvedDestinationDirectory, realSourceDirectory)) {
     throw new Error(
       `[photos-static] Local photo source cannot be inside its build destination: ${sourceDirectory}`,
     );
   }
-  const outputWithinSource = path.relative(
-    realSourceDirectory,
-    destinationDirectory,
-  );
-  if (
-    !outputWithinSource.startsWith("..") &&
-    !path.isAbsolute(outputWithinSource)
-  ) {
+  if (isPathWithin(realSourceDirectory, resolvedDestinationDirectory)) {
     throw new Error(
       `[photos-static] Build destination cannot be inside the local photo source: ${destinationDirectory}`,
     );
   }
 
-  await mkdir(destinationDirectory, { recursive: true });
+  const realOutputDirectory = await realpath(resolvedOutputDirectory);
+  if (isPathWithin(realOutputDirectory, realSourceDirectory)) {
+    throw new Error(
+      `[photos-static] Local photo source cannot be inside the build output: ${sourceDirectory}`,
+    );
+  }
+  if (isPathWithin(realSourceDirectory, realOutputDirectory)) {
+    throw new Error(
+      `[photos-static] Build output cannot be inside the local photo source: ${outputDirectory}`,
+    );
+  }
+  let realDestinationDirectory = realOutputDirectory;
+  const destinationSegments = path
+    .relative(resolvedOutputDirectory, resolvedDestinationDirectory)
+    .split(path.sep)
+    .filter(Boolean);
+  for (const segment of destinationSegments) {
+    const nextDirectory = path.join(realDestinationDirectory, segment);
+    let directoryStats = await lstat(nextDirectory).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      },
+    );
+    if (!directoryStats) {
+      await mkdir(nextDirectory);
+      directoryStats = await lstat(nextDirectory);
+    }
+    if (directoryStats.isSymbolicLink() || !directoryStats.isDirectory()) {
+      throw new Error(
+        `[photos-static] Build destination contains an unsafe path component: ${nextDirectory}`,
+      );
+    }
+    realDestinationDirectory = await realpath(nextDirectory);
+    if (!isPathWithin(realOutputDirectory, realDestinationDirectory)) {
+      throw new Error(
+        `[photos-static] Build destination resolves outside the configured output directory: ${destinationDirectory}`,
+      );
+    }
+  }
+
+  if (isPathWithin(realDestinationDirectory, realSourceDirectory)) {
+    throw new Error(
+      `[photos-static] Local photo source cannot be inside its build destination: ${sourceDirectory}`,
+    );
+  }
+  if (isPathWithin(realSourceDirectory, realDestinationDirectory)) {
+    throw new Error(
+      `[photos-static] Build destination cannot be inside the local photo source: ${destinationDirectory}`,
+    );
+  }
+
   for (const mediaKey of new Set(mediaKeys)) {
     if (!MIME_TYPES[path.extname(mediaKey).toLowerCase()]) continue;
 
     const candidatePath = path.resolve(realSourceDirectory, mediaKey);
     const realSourcePath = await realpath(candidatePath);
-    const relativeSourcePath = path.relative(
-      realSourceDirectory,
-      realSourcePath,
-    );
-    if (
-      relativeSourcePath.startsWith("..") ||
-      path.isAbsolute(relativeSourcePath)
-    ) {
+    if (!isPathWithin(realSourceDirectory, realSourcePath)) {
       throw new Error(
         `[photos-static] Manifest media escapes the local photo source: ${mediaKey}`,
       );
@@ -244,20 +298,47 @@ export async function copyLocalPhotos(
       );
     }
 
-    const destinationPath = path.resolve(destinationDirectory, mediaKey);
-    const relativeDestinationPath = path.relative(
-      destinationDirectory,
-      destinationPath,
-    );
-    if (
-      relativeDestinationPath.startsWith("..") ||
-      path.isAbsolute(relativeDestinationPath)
-    ) {
+    const destinationPath = path.resolve(realDestinationDirectory, mediaKey);
+    if (!isPathWithin(realDestinationDirectory, destinationPath)) {
       throw new Error(
         `[photos-static] Refusing unsafe manifest media path: ${mediaKey}`,
       );
     }
-    await mkdir(path.dirname(destinationPath), { recursive: true });
+    const relativeParentPath = path.relative(
+      realDestinationDirectory,
+      path.dirname(destinationPath),
+    );
+    let safeParentDirectory = realDestinationDirectory;
+    for (const segment of relativeParentPath.split(path.sep).filter(Boolean)) {
+      const nextDirectory = path.join(safeParentDirectory, segment);
+      let directoryStats = await lstat(nextDirectory).catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        },
+      );
+      if (!directoryStats) {
+        await mkdir(nextDirectory);
+        directoryStats = await lstat(nextDirectory);
+      }
+      if (directoryStats.isSymbolicLink() || !directoryStats.isDirectory()) {
+        throw new Error(
+          `[photos-static] Refusing unsafe destination directory for manifest media: ${mediaKey}`,
+        );
+      }
+      safeParentDirectory = nextDirectory;
+    }
+    const existingDestination = await lstat(destinationPath).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      },
+    );
+    if (existingDestination?.isSymbolicLink()) {
+      throw new Error(
+        `[photos-static] Refusing symlink destination for manifest media: ${mediaKey}`,
+      );
+    }
     await copyFile(realSourcePath, destinationPath);
   }
 }
@@ -405,7 +486,12 @@ export function photosStaticPlugin(options: PhotosStaticPluginOptions): Plugin {
           ...(localThumbnailKey ? [localThumbnailKey] : []),
         ];
       });
-      await copyLocalPhotos(photosDirectory, destinationDirectory, mediaKeys);
+      await copyLocalPhotos(
+        photosDirectory,
+        destinationDirectory,
+        mediaKeys,
+        outputDirectory,
+      );
       resolvedConfig.logger.info(
         `[photos-static] Copied local originals to ${destinationDirectory}`,
       );

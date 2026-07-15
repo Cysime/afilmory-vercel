@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // 外部 manifest 模式下注入 index.html 的内联脚本不再手写字符串，而是把真正的
 // TypeScript 模块 src/data-runtime/manifest-inline-fetch.ts 在构建期用 esbuild
@@ -7,7 +8,7 @@ import path from "node:path";
 // inline script）。这样超时常量与 fetch 选项和 manifest-runtime.ts 共享同一份
 // 契约，不会再出现手写副本悄悄漂移的问题。
 
-const dirname = path.dirname(new URL(import.meta.url).pathname);
+const dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const INLINE_FETCH_MODULE_PATH = path.resolve(
   dirname,

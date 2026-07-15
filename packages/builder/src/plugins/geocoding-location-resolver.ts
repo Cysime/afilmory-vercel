@@ -77,14 +77,33 @@ export async function resolveLocationForItem({
 
   const cacheKey = buildCacheKey(latitude, longitude, settings);
   const cacheEntry = state.cache.get(cacheKey) ?? { locales: {} };
-  const seededFromExisting = seedCacheEntryFromExistingLocation(
-    cacheEntry,
-    item.location,
-    latitude,
-    longitude,
-  );
+  const lastKnownEntry = { locales: {} };
+  if (shouldOverwriteExisting) {
+    // Keep a composition-only fallback for locales whose forced refresh is
+    // inconclusive. It must not be inserted into the working cache (which
+    // would suppress the provider lookup), nor persisted (which would turn a
+    // transient failure into a cache hit on the next build).
+    seedCacheEntryFromExistingLocation(
+      lastKnownEntry,
+      item.location,
+      latitude,
+      longitude,
+    );
+  }
+  // In overwrite mode the existing item is precisely the value being
+  // refreshed. Seeding it into an empty cache would make every requested
+  // locale look resolved and silently turn --force-manifest into a no-op.
+  const seededFromExisting =
+    !shouldOverwriteExisting &&
+    seedCacheEntryFromExistingLocation(
+      cacheEntry,
+      item.location,
+      latitude,
+      longitude,
+    );
   let cacheChanged = seededFromExisting;
   const deletedLocales: string[] = [];
+  const confirmedNotFoundThisRun = new Set<string>();
   if (seededFromExisting) {
     cacheEntry.updatedAt ??= new Date().toISOString();
     state.cacheDirty = true;
@@ -135,6 +154,7 @@ export async function resolveLocationForItem({
       }
     } else {
       cacheEntry.locales[locale] = null;
+      confirmedNotFoundThisRun.add(locale);
       cacheEntry.notFoundExpiresAt ??= {};
       cacheEntry.notFoundExpiresAt[locale] = new Date(
         Date.now() + settings.negativeCacheTtlMs,
@@ -149,7 +169,15 @@ export async function resolveLocationForItem({
   const localizedLocation = composeLocalizedLocation(
     latitude,
     longitude,
-    cacheEntry,
+    shouldOverwriteExisting
+      ? {
+          ...cacheEntry,
+          locales: {
+            ...lastKnownEntry.locales,
+            ...cacheEntry.locales,
+          },
+        }
+      : cacheEntry,
   );
 
   if (localizedLocation) {
@@ -169,7 +197,19 @@ export async function resolveLocationForItem({
     };
   }
 
-  if (shouldOverwriteExisting) {
+  const everyLocaleConfirmedNotFound =
+    settings.locales.length > 0 &&
+    settings.locales.every(
+      (locale) =>
+        cacheEntry.locales[locale] === null &&
+        (confirmedNotFoundThisRun.has(locale) ||
+          isFreshNegativeCacheEntry(cacheEntry, locale)),
+    );
+  // A forced refresh may clear a stale location only when providers (or a
+  // still-fresh negative cache entry) confirmed that every requested locale
+  // has no result. Authentication/network/timeouts and missing providers are
+  // inconclusive and must preserve the last known-good manifest value.
+  if (shouldOverwriteExisting && everyLocaleConfirmedNotFound) {
     item.location = null;
   }
 

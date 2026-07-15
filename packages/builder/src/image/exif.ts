@@ -54,10 +54,13 @@ export async function extractExifData(
   // replacing source photos while ExifTool reads them. Explicit modes keep the
   // guarantee even under an unusually permissive process umask.
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "afilmory-exif-"));
-  await chmod(tempDir, 0o700);
   const tempImagePath = path.join(tempDir, `${crypto.randomUUID()}.jpg`);
 
   try {
+    // Keep chmod inside the cleanup region: if a platform/filesystem rejects
+    // the permission change, the freshly-created private directory must not
+    // be leaked in the system temp area.
+    await chmod(tempDir, 0o700);
     await writeFile(tempImagePath, originalBuffer || imageBuffer, {
       mode: 0o600,
     });

@@ -32,13 +32,14 @@ async function executePhotoTask(
   }
 
   return await runWithWatchdog(
-    async () =>
+    async (signal) =>
       await processPhoto(
         {
           obj,
           index: taskIndex,
           workerId: runtime.workerId,
           totalImages: runtime.imageObjects.length,
+          signal,
         },
         runtime,
       ),

@@ -49,4 +49,21 @@ describe("PhotoRepository media URLs", () => {
     );
     expect(manifest.photos[0]?.video?.videoUrl).toBe("/originals/photo.mov");
   });
+
+  it("uses the manifest generation as the legacy sidecar cache version", () => {
+    const photo = createPhoto();
+    delete photo.video.version;
+    const manifest = createManifest({
+      generatedAt: "2026-07-15T01:02:03.000Z",
+      photos: [photo],
+    });
+
+    const repository = new PhotoRepository(manifest);
+
+    expect(repository.getPhoto("photo")?.video).toMatchObject({
+      videoUrl:
+        "/originals/photo.mov?v=2026-07-15T01%3A02%3A03.000Z%3Aphoto.mov%3Avideo",
+    });
+    expect(photo.video.videoUrl).toBe("/originals/photo.mov");
+  });
 });

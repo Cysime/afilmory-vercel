@@ -57,6 +57,23 @@ describe("LocalFileSystemProvider", () => {
     expect(first.etag!.endsWith(`-${first.size}`)).toBe(true);
   });
 
+  it("accepts children whose names start with two dots", async () => {
+    await writeFixture("..archive/..photo.jpg", "dot-photo");
+    const provider = new LocalFileSystemProvider({
+      provider: "local",
+      basePath: baseDir,
+    });
+
+    const listing = await provider.listAllFilesDetailed();
+    expect(listing.complete).toBe(true);
+    expect(listing.objects.map((object) => object.key)).toContain(
+      "..archive/..photo.jpg",
+    );
+    await expect(provider.getFile("..archive/..photo.jpg")).resolves.toEqual(
+      Buffer.from("dot-photo"),
+    );
+  });
+
   it("reports scan progress while listing", async () => {
     const provider = new LocalFileSystemProvider({
       provider: "local",
@@ -246,6 +263,26 @@ describe("LocalFileSystemProvider", () => {
     // 但 listAllFiles 会应用 excludeRegex
     const allKeys = (await provider.listAllFiles()).map((o) => o.key);
     expect(allKeys).not.toContain("thumbnails/a.jpg");
+  });
+
+  it("allows concurrent uploads to create the same parent directory", async () => {
+    const provider = new LocalFileSystemProvider({
+      provider: "local",
+      basePath: baseDir,
+    });
+
+    await expect(
+      Promise.all([
+        provider.uploadFile("new/nested/a.jpg", Buffer.from("a")),
+        provider.uploadFile("new/nested/b.jpg", Buffer.from("b")),
+      ]),
+    ).resolves.toHaveLength(2);
+    await expect(
+      fs.readFile(path.join(baseDir, "new/nested/a.jpg")),
+    ).resolves.toEqual(Buffer.from("a"));
+    await expect(
+      fs.readFile(path.join(baseDir, "new/nested/b.jpg")),
+    ).resolves.toEqual(Buffer.from("b"));
   });
 
   it("uploadFile never follows an existing destination symlink", async () => {

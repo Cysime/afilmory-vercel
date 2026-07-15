@@ -1,5 +1,7 @@
 import type { PhotoManifestItem } from "@afilmory/schema";
 
+import { normalizeBaseUrl } from "./build-assets-seo";
+
 const GENERATOR_NAME = "Afilmory Feed Generator";
 const EXIF_NAMESPACE = "https://afilmory.com/rss/exif";
 const PROTOCOL_VERSION = "1.1";
@@ -65,7 +67,7 @@ ${itemsXml}
 function createItemXml(photo: PhotoManifestItem, baseUrl: string): string {
   const link = `${baseUrl}/photos/${encodeURIComponent(photo.id)}/`;
   const pubDate = new Date(resolveDate(photo)).toUTCString();
-  const title = escapeXml(photo.title ?? photo.id);
+  const title = escapeXml(photo.title.trim() || photo.id);
   const summary = buildDescription(photo);
   const categories =
     Array.isArray(photo.tags) && photo.tags.length > 0
@@ -74,19 +76,10 @@ function createItemXml(photo: PhotoManifestItem, baseUrl: string): string {
           .join("\n")
       : "";
 
-  // Add enclosure for thumbnail if available
-  // Assuming thumbnail is an image, default to image/jpeg if extension is unknown, but usually it's webp or jpg
   let enclosure = "";
-  if (photo.thumbnailUrl) {
-    const thumbUrl = photo.thumbnailUrl.startsWith("http")
-      ? photo.thumbnailUrl
-      : `${baseUrl}${photo.thumbnailUrl.startsWith("/") ? "" : "/"}${photo.thumbnailUrl}`;
-    // Simple mime type guess
-    const mimeType = thumbUrl.endsWith(".webp")
-      ? "image/webp"
-      : thumbUrl.endsWith(".png")
-        ? "image/png"
-        : "image/jpeg";
+  const thumbUrl = resolveHttpUrl(photo.thumbnailUrl, baseUrl);
+  if (thumbUrl) {
+    const mimeType = inferImageMimeType(thumbUrl);
     enclosure = `      <enclosure url="${escapeXml(thumbUrl)}" type="${mimeType}" length="0" />`;
   }
 
@@ -97,7 +90,7 @@ function createItemXml(photo: PhotoManifestItem, baseUrl: string): string {
       <link>${escapeXml(link)}</link>
       <guid isPermaLink="false">${escapeXml(photo.id)}</guid>
       <pubDate>${pubDate}</pubDate>
-      <description><![CDATA[${summary}]]></description>
+      <description>${cdata(summary)}</description>
 ${categories}
 ${enclosure}
 ${exifTags}
@@ -275,21 +268,21 @@ function buildDescription(photo: PhotoManifestItem): string {
       exifParts.push(escapeXml(photo.exif.LensModel));
     }
     if (photo.exif.FNumber) {
-      exifParts.push(`f/${photo.exif.FNumber}`);
+      exifParts.push(`f/${escapeXmlValue(photo.exif.FNumber)}`);
     }
     if (photo.exif.ExposureTime) {
-      exifParts.push(`${photo.exif.ExposureTime}s`);
+      exifParts.push(`${escapeXmlValue(photo.exif.ExposureTime)}s`);
     }
     if (exifParts.length > 0) {
       segments.push(`<p><strong>EXIF:</strong> ${exifParts.join(" · ")}</p>`);
     }
   }
 
-  return segments.join("\n") || escapeXml(photo.title ?? photo.id);
+  return segments.join("\n") || escapeXml(photo.title.trim() || photo.id);
 }
 
 function escapeXml(value: string): string {
-  return value
+  return sanitizeXmlText(value)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -304,7 +297,23 @@ function escapeXml(value: string): string {
  * must never be placed in CDATA verbatim.
  */
 function cdata(value: string): string {
-  return `<![CDATA[${value.replaceAll("]]>", "]]]]><![CDATA[>")}]]>`;
+  return `<![CDATA[${sanitizeXmlText(value).replaceAll("]]>", "]]]]><![CDATA[>")}]]>`;
+}
+
+function sanitizeXmlText(value: string): string {
+  return [...value]
+    .filter((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return (
+        codePoint === 0x09 ||
+        codePoint === 0x0a ||
+        codePoint === 0x0d ||
+        (codePoint >= 0x20 && codePoint <= 0xd7ff) ||
+        (codePoint >= 0xe000 && codePoint <= 0xfffd) ||
+        (codePoint >= 0x1_0000 && codePoint <= 0x10_ffff)
+      );
+    })
+    .join("");
 }
 
 /** Escape a value of unknown type for use inside an XML element body. */
@@ -316,11 +325,26 @@ function escapeHtmlBlock(value: string): string {
   return `<p>${escapeXml(value)}</p>`;
 }
 
-function normalizeBaseUrl(url: string): string {
-  if (!url) {
-    return "https://example.com";
+function resolveHttpUrl(value: string, baseUrl: string): string | null {
+  try {
+    const url = new URL(value, `${baseUrl}/`);
+    return (url.protocol === "http:" || url.protocol === "https:") &&
+      !url.username &&
+      !url.password
+      ? url.href
+      : null;
+  } catch {
+    return null;
   }
-  return url.endsWith("/") ? url.slice(0, -1) : url;
+}
+
+function inferImageMimeType(url: string): string {
+  const pathname = new URL(url).pathname.toLowerCase();
+  if (pathname.endsWith(".webp")) return "image/webp";
+  if (pathname.endsWith(".png")) return "image/png";
+  if (pathname.endsWith(".avif")) return "image/avif";
+  if (pathname.endsWith(".gif")) return "image/gif";
+  return "image/jpeg";
 }
 
 function resolveDate(photo: PhotoManifestItem): number {

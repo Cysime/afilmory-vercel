@@ -42,4 +42,23 @@ describe("thumbnail encoding marker", () => {
     await writeThumbnailEncodingMarker(nested);
     await expect(isThumbnailEncodingStale(nested)).resolves.toBe(false);
   });
+
+  it("surfaces marker I/O/type errors instead of treating them as stale", async () => {
+    await fs.mkdir(path.join(dir, ".encoding"));
+    await expect(isThumbnailEncodingStale(dir)).rejects.toMatchObject({
+      code: "EISDIR",
+    });
+  });
+
+  it("replaces a marker symlink without overwriting its target", async () => {
+    const outside = path.join(dir, "outside.txt");
+    const marker = path.join(dir, ".encoding");
+    await fs.writeFile(outside, "keep");
+    await fs.symlink(outside, marker);
+
+    await writeThumbnailEncodingMarker(dir);
+
+    await expect(fs.readFile(outside, "utf8")).resolves.toBe("keep");
+    expect((await fs.lstat(marker)).isSymbolicLink()).toBe(false);
+  });
 });

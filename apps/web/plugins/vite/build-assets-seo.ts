@@ -37,7 +37,28 @@ function serializeJsonForHtml(value: unknown): string {
 }
 
 export function normalizeBaseUrl(url: string): string {
-  return url.replace(/\/+$/, "");
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch (error) {
+    throw new Error(`Site URL must be an absolute http(s) URL: ${url}`, {
+      cause: error,
+    });
+  }
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+    parsed.username ||
+    parsed.password ||
+    parsed.href.includes("?") ||
+    parsed.href.includes("#")
+  ) {
+    throw new Error(
+      "Site URL must use http(s) without credentials, query parameters, or a fragment",
+    );
+  }
+
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+  return parsed.href.replace(/\/$/, "");
 }
 
 function siteRootUrl(url: string): string {
@@ -47,7 +68,9 @@ function siteRootUrl(url: string): string {
 function absoluteHttpUrl(value: string, baseUrl: string): string | null {
   try {
     const url = new URL(value, siteRootUrl(baseUrl));
-    return url.protocol === "http:" || url.protocol === "https:"
+    return (url.protocol === "http:" || url.protocol === "https:") &&
+      !url.username &&
+      !url.password
       ? url.href
       : null;
   } catch {
@@ -78,7 +101,7 @@ export function sortPhotosNewestFirst(
     const aDate = dateTimestamp(a.dateTaken, a.lastModified);
     const bDate = dateTimestamp(b.dateTaken, b.lastModified);
     if (aDate !== bDate) return bDate > aDate ? 1 : -1;
-    return a.id.localeCompare(b.id);
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
 }
 
@@ -111,11 +134,17 @@ export function injectHomeMetadata(
   html: string,
   metadata: HomeMetadata,
 ): string {
-  const safeUrl = escapeHtml(siteRootUrl(metadata.siteUrl));
+  const baseUrl = normalizeBaseUrl(metadata.siteUrl);
+  const imageUrl = absoluteHttpUrl(metadata.imageUrl, baseUrl);
+  if (!imageUrl) {
+    throw new Error("Home metadata image URL must use http(s)");
+  }
+
+  const safeUrl = escapeHtml(siteRootUrl(baseUrl));
   const safeTitle = escapeHtml(metadata.title);
   const safeDescription = escapeHtml(metadata.description);
   const safeSiteName = escapeHtml(metadata.siteName);
-  const safeImageUrl = escapeHtml(metadata.imageUrl);
+  const safeImageUrl = escapeHtml(imageUrl);
 
   const tags = `
     <title ${SEO_ATTRIBUTE}>${safeTitle}</title>

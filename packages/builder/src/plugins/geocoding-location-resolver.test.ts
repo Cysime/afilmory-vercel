@@ -132,6 +132,158 @@ describe("geocoding location resolver", () => {
     expect(state.cacheDirty).toBe(false);
   });
 
+  it("preserves the last known location when a forced refresh has a transient failure", async () => {
+    const item = createPhoto();
+    item.location = {
+      latitude: 41.4031,
+      longitude: 2.174,
+      country: "Spain",
+      city: "Barcelona",
+    };
+    const previousLocation = item.location;
+    const state = createGeocodingCacheState();
+    const provider = {
+      reverseGeocode: vi.fn(async () => {
+        throw new Error("temporary network failure");
+      }),
+    };
+
+    const result = await resolveLocationForItem({
+      item,
+      exif: gpsExif,
+      state,
+      settings: { ...settings, locales: ["en"] },
+      shouldOverwriteExisting: true,
+      logger,
+      getProvider: () => provider,
+    });
+
+    expect(result).toMatchObject({ attempted: true, updated: false });
+    expect(item.location).toBe(previousLocation);
+  });
+
+  it("merges successful forced locales with last-known locales whose refresh failed", async () => {
+    const item = createPhoto();
+    item.location = {
+      latitude: 41.4031,
+      longitude: 2.174,
+      country: "Old Spain",
+      city: "Old Barcelona",
+      adminKey: { country: "Old Spain", city: "Old Barcelona" },
+      adminI18n: {
+        en: { country: "Old Spain", city: "Old Barcelona" },
+        "zh-CN": { country: "旧西班牙", city: "旧巴塞罗那" },
+      },
+      locationNameI18n: {
+        en: "Old Barcelona, Old Spain",
+        "zh-CN": "旧巴塞罗那，旧西班牙",
+      },
+    };
+    const state = createGeocodingCacheState();
+
+    const result = await resolveLocationForItem({
+      item,
+      exif: gpsExif,
+      state,
+      settings,
+      shouldOverwriteExisting: true,
+      logger,
+      getProvider: (locale) => ({
+        reverseGeocode: vi.fn(async (latitude, longitude) => {
+          if (locale === "zh-CN") {
+            throw new Error("temporary localized endpoint failure");
+          }
+          return {
+            latitude,
+            longitude,
+            country: "New Spain",
+            city: "New Barcelona",
+            locationName: "New Barcelona, New Spain",
+            admin: { country: "New Spain", city: "New Barcelona" },
+          };
+        }),
+      }),
+    });
+
+    expect(result).toMatchObject({ attempted: true, updated: true });
+    expect(item.location).toMatchObject({
+      adminI18n: {
+        en: { country: "New Spain", city: "New Barcelona" },
+        "zh-CN": { country: "旧西班牙", city: "旧巴塞罗那" },
+      },
+      locationNameI18n: {
+        en: "New Barcelona, New Spain",
+        "zh-CN": "旧巴塞罗那，旧西班牙",
+      },
+    });
+    expect([...state.cache.values()][0]?.locales).toEqual({
+      en: expect.objectContaining({
+        country: "New Spain",
+        city: "New Barcelona",
+      }),
+    });
+  });
+
+  it("does not seed the value being replaced during a forced refresh", async () => {
+    const item = createPhoto();
+    item.location = {
+      latitude: 41.4031,
+      longitude: 2.174,
+      country: "Old country",
+      city: "Old city",
+      adminKey: { country: "Old country", city: "Old city" },
+      adminI18n: { en: { country: "Old country", city: "Old city" } },
+    };
+    const state = createGeocodingCacheState();
+    const provider = {
+      reverseGeocode: vi.fn(async (latitude: number, longitude: number) => ({
+        latitude,
+        longitude,
+        country: "Spain",
+        city: "Barcelona",
+        admin: { country: "Spain", city: "Barcelona" },
+      })),
+    };
+
+    await resolveLocationForItem({
+      item,
+      exif: gpsExif,
+      state,
+      settings: { ...settings, locales: ["en"] },
+      shouldOverwriteExisting: true,
+      logger,
+      getProvider: () => provider,
+    });
+
+    expect(provider.reverseGeocode).toHaveBeenCalledTimes(1);
+    expect(item.location).toMatchObject({
+      country: "Spain",
+      city: "Barcelona",
+    });
+  });
+
+  it("clears a forced location after a confirmed no-result", async () => {
+    const item = createPhoto();
+    item.location = {
+      latitude: 41.4031,
+      longitude: 2.174,
+      country: "Spain",
+      city: "Barcelona",
+    };
+
+    await resolveLocationForItem({
+      item,
+      exif: gpsExif,
+      state: createGeocodingCacheState(),
+      settings: { ...settings, locales: ["en"] },
+      shouldOverwriteExisting: true,
+      logger,
+      getProvider: () => ({ reverseGeocode: vi.fn(async () => null) }),
+    });
+
+    expect(item.location).toBeNull();
+  });
+
   it("expires confirmed not-found entries and retries them", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));

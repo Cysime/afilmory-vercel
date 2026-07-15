@@ -36,6 +36,19 @@ describe("createDefaultOutputSettings", () => {
 });
 
 describe("normalizeBuilderOutputSettings", () => {
+  it.each([".", path.parse(process.cwd()).root])(
+    "rejects a shared or filesystem-root thumbnail directory: %s",
+    (thumbnailsDir) => {
+      expect(() =>
+        normalizeBuilderOutputSettings({
+          manifestPath: "rel/manifest.json",
+          thumbnailsDir,
+          originalsDir: "rel/originals",
+        }),
+      ).toThrow(/thumbnailsDir must be a dedicated subdirectory/);
+    },
+  );
+
   it("resolves relative paths against the current working directory", () => {
     const result = normalizeBuilderOutputSettings({
       manifestPath: "rel/manifest.json",

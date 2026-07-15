@@ -258,23 +258,28 @@ export class WebGLImageViewerEngine {
       // Recreate all context-dependent resources (programs, buffers, textures).
       this.textureManager = new TextureLodManager(this.gl);
       this.initWebGL();
-      this.resizeCanvas();
       this.imageLoaded = false;
+      this.resizeCanvas();
     } catch (error) {
       const normalizedError = toError(
         error,
         "Failed to restore the WebGL context",
       );
+      const hadPendingLoad = this.activeLoad !== null;
       this.isLoadingTexture = false;
       this.rejectActiveLoad(normalizedError);
       this.notifyLoadingStateChange(false);
-      this.config.onError(normalizedError);
+      if (!hadPendingLoad) this.config.onError(normalizedError);
       return;
     }
 
     // Re-decode and re-upload the current image if one was loaded; otherwise
     // just repaint the (now empty) scene.
     if (this.originalImageSrc) {
+      if (this.activeLoad) {
+        this.restartPendingLoadAfterContextRestore();
+        return;
+      }
       this.loadImage(
         this.originalImageSrc,
         this.imageWidth || undefined,
@@ -288,6 +293,37 @@ export class WebGLImageViewerEngine {
       });
     } else {
       this.render();
+    }
+  }
+
+  private restartPendingLoadAfterContextRestore(): void {
+    if (!this.activeLoad || !this.workerBridge) return;
+
+    this.hasNotifiedImagePainted = false;
+    this.isLoadingTexture = true;
+    this.textureWorkerInitialized = false;
+    this.notifyLoadingStateChange(true, LoadingState.IMAGE_LOADING);
+    this.tileManager.reset();
+
+    const sessionId = ++this.loadGeneration;
+    this.currentSessionId = sessionId;
+    this.activeLoad.sessionId = sessionId;
+
+    try {
+      this.workerBridge.loadImage({
+        sessionId,
+        url: this.originalImageSrc,
+        blob: this.originalSourceBlob,
+        maxTextureSize: this.maxTextureSize,
+        maxTextureBytes: BASE_TEXTURE_BYTE_BUDGET,
+      });
+    } catch (error) {
+      this.rejectActiveLoad(
+        toError(error, "Failed to reload the image after context restoration"),
+        sessionId,
+      );
+      this.isLoadingTexture = false;
+      this.notifyLoadingStateChange(false);
     }
   }
 
@@ -334,6 +370,16 @@ export class WebGLImageViewerEngine {
       // destroy() 已 terminate worker，但已入队的消息这一拍仍会送达。转移来的
       // ImageBitmap（0.5x 底图可达 ~45MB）必须立即 close，不能等 GC——与
       // texture.worker.js 里写明的 iOS 内存纪律同一条。
+      if (message.type === "image-loaded" || message.type === "tile-created") {
+        message.payload.imageBitmap.close();
+      }
+      return;
+    }
+
+    // A transferred bitmap can arrive after the context-loss event but before
+    // restoration. Uploading it would reject the still-valid load promise;
+    // restoration re-dispatches that load under a fresh worker session.
+    if (this.isContextLost) {
       if (message.type === "image-loaded" || message.type === "tile-created") {
         message.payload.imageBitmap.close();
       }
@@ -416,7 +462,8 @@ export class WebGLImageViewerEngine {
    * useEffect），因此对不同 URL 的再次调用直接拒绝——引擎的 imageWidth/
    * imageHeight 与瓦片键（`x-y-lod`，不含图像身份）都以首图为准，复用会把
    * 旧图的几何与瓦片渲染进新图。同一 URL 允许重复调用：上下文恢复路径会对
-   * originalImageSrc 重新发起加载，此时仍挂起的旧 promise 以 superseded 拒绝。
+   * originalImageSrc 重新发起加载；若旧 promise 仍挂起，恢复流程会把它迁移到
+   * 新 worker session，而不是把一次可恢复的上下文丢失暴露成加载失败。
    */
   async loadImage(
     url: string,

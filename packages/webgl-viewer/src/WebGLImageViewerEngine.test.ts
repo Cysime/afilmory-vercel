@@ -1082,6 +1082,73 @@ describe("WebGLImageViewerEngine lifecycle", () => {
     engine.destroy();
   });
 
+  it("keeps a pending image load alive across context restoration", async () => {
+    const contextWarning = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => {});
+    const canvas = document.createElement("canvas");
+    const gl = createWebGLMock();
+    vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      toJSON: () => ({}),
+    });
+    const engine = createEngine(canvas);
+    const worker = WorkerMock.instances.at(-1)!;
+    const pending = engine.loadImage("blob:photo", 100, 100);
+
+    canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+    const bitmapDuringLoss = { width: 50, height: 50, close: vi.fn() };
+    worker.onmessage?.({
+      data: {
+        type: "image-loaded",
+        sessionId: 1,
+        payload: {
+          imageBitmap: bitmapDuringLoss,
+          imageWidth: 100,
+          imageHeight: 100,
+          lodLevel: 1,
+        },
+      },
+    } as MessageEvent);
+    expect(bitmapDuringLoss.close).toHaveBeenCalledTimes(1);
+
+    canvas.dispatchEvent(new Event("webglcontextrestored"));
+    expect(contextWarning).toHaveBeenCalled();
+    expect(worker.postMessage).toHaveBeenLastCalledWith({
+      type: "load-image",
+      payload: {
+        sessionId: 2,
+        url: "blob:photo",
+        blob: null,
+        maxTextureSize: 4096,
+        maxTextureBytes: 64 * 1024 * 1024,
+      },
+    });
+
+    worker.onmessage?.({
+      data: {
+        type: "image-loaded",
+        sessionId: 2,
+        payload: {
+          imageBitmap: { width: 50, height: 50, close: vi.fn() },
+          imageWidth: 100,
+          imageHeight: 100,
+          lodLevel: 1,
+        },
+      },
+    } as MessageEvent);
+    await expect(pending).resolves.toBeUndefined();
+    engine.destroy();
+  });
+
   it("derives double-click toggle state from scale and honors zero animation time", () => {
     vi.spyOn(performance, "now").mockReturnValue(0);
     const canvas = document.createElement("canvas");

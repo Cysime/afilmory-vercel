@@ -16,9 +16,9 @@ import { assertSafeHttpBaseUrl } from "../storage/url.js";
  * 否则「构建期能读到对象、访客拿到的公开 URL 却 404」（或反过来）。
  * generatePublicUrl 的分支逻辑（见 storage/providers/s3-provider.ts）：
  *
- * - endpoint 未设置或包含 "amazonaws.com" → AWS virtual-hosted-style
+ * - endpoint 未设置或 hostname 为 AWS endpoint → AWS virtual-hosted-style
  *   （`bucket.s3.region.amazonaws.com/key`）→ forcePathStyle: false
- * - endpoint 包含 "aliyuncs.com" → 阿里云 OSS 把 bucket 插入 host，
+ * - endpoint hostname 为 aliyuncs.com 或其子域 → 阿里云 OSS 把 bucket 插入 host，
  *   同样是 virtual-hosted-style → forcePathStyle: false
  * - 其余自定义 endpoint（MinIO 等自建服务）→ path-style
  *   （`endpoint/bucket/key`）→ forcePathStyle: true
@@ -38,7 +38,21 @@ export function resolveForcePathStyle(
   if (!endpoint) {
     return false;
   }
-  if (endpoint.includes("amazonaws.com") || endpoint.includes("aliyuncs.com")) {
+  let hostname: string;
+  try {
+    hostname = new URL(endpoint).hostname.toLowerCase();
+  } catch {
+    // The caller's URL validator reports the actionable configuration error.
+    // A malformed string must never accidentally opt into virtual hosting.
+    return true;
+  }
+  const isDomainOrSubdomain = (domain: string) =>
+    hostname === domain || hostname.endsWith(`.${domain}`);
+  if (
+    ["amazonaws.com", "amazonaws.com.cn", "aliyuncs.com"].some(
+      isDomainOrSubdomain,
+    )
+  ) {
     return false;
   }
   return true;
@@ -61,7 +75,10 @@ export function createS3Client(config: S3Config): S3Client {
     throw new Error("Storage provider is not s3");
   }
 
-  const { accessKeyId, secretAccessKey, endpoint } = config;
+  const { accessKeyId, secretAccessKey } = config;
+  // Config loading treats an empty optional URL as unset. Keep direct API
+  // usage consistent instead of handing an invalid empty endpoint to the SDK.
+  const endpoint = config.endpoint || undefined;
   const region = config.region ?? "us-east-1";
   if (Boolean(accessKeyId) !== Boolean(secretAccessKey)) {
     throw new Error(
@@ -106,7 +123,10 @@ export function createS3Client(config: S3Config): S3Client {
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
     endpoint,
-    forcePathStyle: resolveForcePathStyle(config),
+    forcePathStyle: resolveForcePathStyle({
+      ...config,
+      endpoint,
+    }),
     requestHandler: new NodeHttpHandler({
       httpAgent,
       httpsAgent,

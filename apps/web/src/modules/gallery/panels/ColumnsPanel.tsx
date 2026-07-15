@@ -1,14 +1,14 @@
 import { useAtom } from "jotai";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { galleryColumnsAtom } from "~/atoms/app";
+import { responsiveGalleryColumnsAtom } from "~/atoms/app";
 import { Slider } from "~/components/ui/slider";
 import { useMobile } from "~/hooks/useMobile";
 
 export const ColumnsPanel = () => {
   const { t } = useTranslation();
-  const [columns, setColumns] = useAtom(galleryColumnsAtom);
+  const [columns, setColumns] = useAtom(responsiveGalleryColumnsAtom);
   const isMobile = useMobile();
   // Local preview state to avoid reflow while dragging
   const [previewColumns, setPreviewColumns] = useState<number | "auto">(
@@ -16,6 +16,13 @@ export const ColumnsPanel = () => {
   );
   // Ref to always have the latest slider value and avoid stale closures
   const latestColumnsRef = useRef<number | "auto">(columns);
+
+  // atomWithStorage hydrates after the component mounts. Keep the local
+  // drag-preview in sync so the control reflects the restored preference.
+  useEffect(() => {
+    latestColumnsRef.current = columns;
+    setPreviewColumns(columns);
+  }, [columns]);
 
   const handleChange = (val: number | "auto") => {
     latestColumnsRef.current = val;

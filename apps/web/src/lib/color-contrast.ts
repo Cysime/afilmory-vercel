@@ -1,12 +1,29 @@
-const expandHex = (hex: string): string | null => {
+interface RgbaColor {
+  red: number;
+  green: number;
+  blue: number;
+  alpha: number;
+}
+
+const parseHexColor = (hex: string): RgbaColor | null => {
   const value = hex.trim().replace(/^#/, "");
-  if (/^[\da-f]{3}$/i.test(value)) {
-    return value
-      .split("")
-      .map((character) => `${character}${character}`)
-      .join("");
-  }
-  return /^[\da-f]{6}$/i.test(value) ? value : null;
+  const expanded = /^[\da-f]{3,4}$/i.test(value)
+    ? value
+        .split("")
+        .map((character) => `${character}${character}`)
+        .join("")
+    : value;
+  if (!/^(?:[\da-f]{6}|[\da-f]{8})$/i.test(expanded)) return null;
+
+  return {
+    red: Number.parseInt(expanded.slice(0, 2), 16),
+    green: Number.parseInt(expanded.slice(2, 4), 16),
+    blue: Number.parseInt(expanded.slice(4, 6), 16),
+    alpha:
+      expanded.length === 8
+        ? Number.parseInt(expanded.slice(6, 8), 16) / 255
+        : 1,
+  };
 };
 
 const toLinearChannel = (channel: number): number => {
@@ -21,11 +38,16 @@ export function getReadableTextColor(
   backgroundColor: string,
   fallback = "#ffffff",
 ): "#000000" | "#ffffff" | string {
-  const hex = expandHex(backgroundColor);
-  if (!hex) return fallback;
+  const color = parseHexColor(backgroundColor);
+  if (!color) return fallback;
 
-  const [red, green, blue] = [0, 2, 4].map((offset) =>
-    Number.parseInt(hex.slice(offset, offset + 2), 16),
+  // Accent surfaces in this app are rendered on the dark #1c1c1e canvas.
+  // Alpha-bearing CSS hex colors must be composited first: ignoring alpha
+  // makes e.g. transparent white incorrectly select black text.
+  const darkCanvas = [28, 28, 30];
+  const [red, green, blue] = [color.red, color.green, color.blue].map(
+    (channel, index) =>
+      channel * color.alpha + darkCanvas[index]! * (1 - color.alpha),
   );
   const luminance =
     0.2126 * toLinearChannel(red) +

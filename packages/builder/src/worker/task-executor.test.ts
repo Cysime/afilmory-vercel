@@ -143,6 +143,7 @@ describe("worker task executor", () => {
         index: 1,
         workerId: runtime.workerId,
         totalImages: runtime.imageObjects.length,
+        signal: expect.any(AbortSignal),
       },
       runtime,
     );
@@ -209,9 +210,11 @@ describe("worker task executor", () => {
   it("returns a structured error when a worker task exceeds its watchdog", async () => {
     vi.useFakeTimers();
     const runtime = createRuntime({ taskTimeoutMs: 25 });
-    const processPhoto = vi.fn<WorkerProcessPhoto>(
-      async () => await new Promise<ProcessPhotoResult>(() => {}),
-    );
+    let taskSignal: AbortSignal | undefined;
+    const processPhoto = vi.fn<WorkerProcessPhoto>(async (task) => {
+      taskSignal = task.signal;
+      return await new Promise<ProcessPhotoResult>(() => {});
+    });
     const responsePromise = executeWorkerTask(
       { type: "task", taskId: "hung", taskIndex: 0, workerId: 7 },
       runtime,
@@ -224,5 +227,6 @@ describe("worker task executor", () => {
       taskId: "hung",
       type: "error",
     });
+    expect(taskSignal?.aborted).toBe(true);
   });
 });

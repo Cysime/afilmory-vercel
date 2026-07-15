@@ -16,6 +16,11 @@ describe("resolveForcePathStyle", () => {
         endpoint: "https://s3.us-east-1.amazonaws.com",
       }),
     ).toBe(false);
+    expect(
+      resolveForcePathStyle({
+        endpoint: "https://S3.CN-NORTH-1.AMAZONAWS.COM.CN",
+      }),
+    ).toBe(false);
   });
 
   it("defaults to virtual-hosted style for Aliyun OSS endpoints", () => {
@@ -33,6 +38,14 @@ describe("resolveForcePathStyle", () => {
     expect(resolveForcePathStyle({ endpoint: "http://localhost:9000" })).toBe(
       true,
     );
+    expect(
+      resolveForcePathStyle({
+        endpoint: "https://minio.example.com/amazonaws.com",
+      }),
+    ).toBe(true);
+    expect(
+      resolveForcePathStyle({ endpoint: "https://evilamazonaws.com" }),
+    ).toBe(true);
   });
 
   it("honours an explicit forcePathStyle: true even for AWS endpoints", () => {
@@ -107,6 +120,18 @@ describe("createS3Client", () => {
       region: "us-east-1",
     });
     client.destroy();
+  });
+
+  it("treats an empty endpoint as unset in direct API usage", () => {
+    const client = createS3Client({
+      ...baseConfig,
+      endpoint: "",
+    });
+    try {
+      expect(client.config.forcePathStyle).toBe(false);
+    } finally {
+      client.destroy();
+    }
   });
 
   it("rejects a partially configured explicit credential pair", () => {

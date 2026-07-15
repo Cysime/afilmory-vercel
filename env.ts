@@ -3,24 +3,46 @@ import "dotenv-expand/config";
 import { createEnv } from "@t3-oss/env-core";
 import { z } from "zod";
 
-const hasNoEncodedParentSegments = (value: string): boolean => {
-  try {
-    return !decodeURIComponent(value).split("/").includes("..");
-  } catch {
+const RESERVED_PUBLIC_PATH_SEGMENTS = new Set([
+  "assets",
+  "photos",
+  "thumbnails",
+  "vendor",
+]);
+
+const normalizeLocalPhotosBaseUrl = (value: string): string =>
+  value.replace(/\/+$/, "");
+
+const isPortablePublicPath = (value: string): boolean => {
+  if (!value.startsWith("/") || value === "/" || value.startsWith("//")) {
     return false;
   }
+
+  const segments = value.slice(1).split("/");
+  return segments.every(
+    (segment) =>
+      /^[\w.~-]+$/.test(segment) &&
+      segment !== "." &&
+      segment !== ".." &&
+      !segment.endsWith(".") &&
+      !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment),
+  );
 };
 
-const safePublicUrl = z.url().refine((value) => {
-  const url = new URL(value);
-  return (
-    (url.protocol === "http:" || url.protocol === "https:") &&
-    !url.username &&
-    !url.password &&
-    !url.search &&
-    !url.hash
-  );
-}, "must be an http(s) URL without credentials, query parameters, or a fragment");
+const safePublicUrl = z
+  .string()
+  .trim()
+  .pipe(z.url())
+  .refine((value) => {
+    const url = new URL(value);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      !url.username &&
+      !url.password &&
+      !url.href.includes("?") &&
+      !url.href.includes("#")
+    );
+  }, "must be an http(s) URL without credentials, query parameters, or a fragment");
 
 export const env = createEnv({
   server: {
@@ -31,22 +53,16 @@ export const env = createEnv({
     LOCAL_PHOTOS_BASE_URL: z
       .string()
       .trim()
-      .regex(/^\/(?!\/)[^?#\\]+$/)
-      .refine((value) => !value.split("/").includes(".."), {
-        message: "LOCAL_PHOTOS_BASE_URL cannot contain parent path segments",
-      })
-      .refine(hasNoEncodedParentSegments, {
+      .transform(normalizeLocalPhotosBaseUrl)
+      .refine(isPortablePublicPath, {
         message:
-          "LOCAL_PHOTOS_BASE_URL cannot contain encoded parent path segments",
-      })
-      .refine((value) => value !== "/", {
-        message: "LOCAL_PHOTOS_BASE_URL must name a path below the site root",
+          "LOCAL_PHOTOS_BASE_URL must be a root-relative path made of portable ASCII path segments",
       })
       .refine(
-        (value) =>
-          !["assets", "photos", "thumbnails", "vendor"].includes(
-            value.split("/").find((segment) => segment.length > 0) ?? "",
-          ),
+        (value) => {
+          const namespace = value.slice(1).split("/", 1)[0]?.toLowerCase();
+          return !namespace || !RESERVED_PUBLIC_PATH_SEGMENTS.has(namespace);
+        },
         {
           message:
             "LOCAL_PHOTOS_BASE_URL conflicts with a reserved application path",

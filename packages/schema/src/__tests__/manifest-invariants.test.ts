@@ -175,6 +175,27 @@ describe("exif sanitization", () => {
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
+  it("recursively clones nested EXIF and removes unsafe descendants", () => {
+    const recipe = JSON.parse(
+      '{"Name":"Classic","__proto__":{"polluted":true}}',
+    ) as Record<string, unknown>;
+    recipe.callback = () => "pwned";
+    recipe.invalidNumber = Number.POSITIVE_INFINITY;
+    recipe.circular = recipe;
+
+    const exif = parseExif({
+      FujiRecipe: recipe,
+      ContainerDirectory: [{ Item: { Semantic: "Primary" } }],
+    });
+
+    expect(exif).toEqual({
+      FujiRecipe: { Name: "Classic" },
+      ContainerDirectory: [{ Item: { Semantic: "Primary" } }],
+    });
+    expect(exif?.FujiRecipe).not.toBe(recipe);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
   it("still passes strict validation while sanitizing the output", () => {
     const input = createInput([
       createValidPhoto({ exif: { Make: "Sony", junk: () => 1 } as never }),

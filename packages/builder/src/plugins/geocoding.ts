@@ -99,13 +99,16 @@ async function ensurePhotoContext<T>(
 ): Promise<T> {
   try {
     getPhotoExecutionContext();
-    return await fn();
   } catch {
     return await runWithPhotoExecutionContext(
       createPhotoExecutionContext(services, emitPluginEvent, 0),
       fn,
     );
   }
+  // Keep callback failures outside the context-probe catch. Otherwise a
+  // provider/plugin exception is mistaken for "no AsyncLocalStorage context"
+  // and the whole geocoding operation is executed a second time.
+  return await fn();
 }
 
 export default function geocodingPlugin(

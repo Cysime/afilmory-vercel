@@ -687,7 +687,7 @@ export function redactConfigSecrets(config: BuilderConfig): BuilderConfig {
 }
 
 const SECRET_KEY_PATTERN =
-  /(?:^|_)(?:api[-_]?key|access[-_]?key|secret|password|authorization|token)$/i;
+  /(?:^|[-_])(?:api[-_]?key|access[-_]?key|secret(?:[-_]?access)?[-_]?key|secret|private[-_]?key|password|authorization|credentials?|token)$/i;
 
 /**
  * Plugin options are intentionally open-ended, so a fixed path allow-list
@@ -695,36 +695,59 @@ const SECRET_KEY_PATTERN =
  * plain config data (never invoke plugin functions) and redact common
  * secret key names, including camelCase names such as `mapboxToken`.
  */
-function redactSecretKeysDeep<T>(value: T, ancestors = new Set<object>()): T {
+function containsSecretKeyDeep(
+  value: unknown,
+  seen = new Set<object>(),
+): boolean {
+  if ((!Array.isArray(value) && !isPlainObject(value)) || value === null) {
+    return false;
+  }
+  if (seen.has(value)) return false;
+  seen.add(value);
   if (Array.isArray(value)) {
-    if (ancestors.has(value)) return value;
-    const nextAncestors = new Set(ancestors).add(value);
-    let changed = false;
-    const items = value.map((item) => {
-      const redacted = redactSecretKeysDeep(item, nextAncestors);
-      if (redacted !== item) changed = true;
-      return redacted;
-    });
-    return (changed ? items : value) as T;
+    return value.some((item) => containsSecretKeyDeep(item, seen));
+  }
+  return Object.entries(value).some(([key, child]) => {
+    const normalizedKey = key.replaceAll(/([a-z])([A-Z])/g, "$1_$2");
+    return (
+      SECRET_KEY_PATTERN.test(normalizedKey) ||
+      containsSecretKeyDeep(child, seen)
+    );
+  });
+}
+
+function cloneWithRedactedSecrets<T>(
+  value: T,
+  clones = new Map<object, unknown>(),
+): T {
+  if (Array.isArray(value)) {
+    const existing = clones.get(value);
+    if (existing) return existing as T;
+    const items: unknown[] = [];
+    clones.set(value, items);
+    items.push(...value.map((item) => cloneWithRedactedSecrets(item, clones)));
+    return items as T;
   }
   if (!isPlainObject(value)) return value;
-  if (ancestors.has(value)) return value;
-
-  const nextAncestors = new Set(ancestors).add(value);
-  let changed = false;
-  const result: Record<string, unknown> = {};
+  const existing = clones.get(value);
+  if (existing) return existing as T;
+  const result: Record<string, unknown> = Object.create(
+    Object.getPrototypeOf(value),
+  );
+  clones.set(value, result);
   for (const [key, child] of Object.entries(value)) {
     const normalizedKey = key.replaceAll(/([a-z])([A-Z])/g, "$1_$2");
     if (SECRET_KEY_PATTERN.test(normalizedKey)) {
       result[key] = "***";
-      changed = true;
       continue;
     }
-    const redacted = redactSecretKeysDeep(child, nextAncestors);
-    result[key] = redacted;
-    if (redacted !== child) changed = true;
+    result[key] = cloneWithRedactedSecrets(child, clones);
   }
-  return (changed ? result : value) as T;
+  return result as T;
+}
+
+function redactSecretKeysDeep<T>(value: T): T {
+  return containsSecretKeyDeep(value) ? cloneWithRedactedSecrets(value) : value;
 }
 
 function redactPath(root: BuilderConfig, segments: string[]): BuilderConfig {

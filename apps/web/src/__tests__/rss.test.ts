@@ -41,6 +41,8 @@ describe("generateRSSFeed XML safety", () => {
         ColorSpace: "sRGB & more",
         ExposureProgram: "Manual <p>",
         Orientation: "Rotate 90 CW & <x>",
+        FNumber: "]]><script>alert('aperture')</script>",
+        ExposureTime: "]]><img src=x onerror=alert('shutter')>",
       } as never,
     });
 
@@ -59,11 +61,17 @@ describe("generateRSSFeed XML safety", () => {
     expect(doc.querySelectorAll("script").length).toBe(0);
     expect(doc.querySelectorAll("img").length).toBe(0);
     expect(doc.querySelectorAll("broken").length).toBe(0);
+    expect(doc.querySelector("description")?.textContent).not.toContain(
+      "<script>",
+    );
+    expect(doc.querySelector("description")?.textContent).not.toContain(
+      "<img ",
+    );
   });
 
   it("escapes a hostile photo title and tags", () => {
     const photo = makePhoto({
-      title: 'Sunset <b>&</b> "quotes"',
+      title: 'Sunset\u0001 <b>&</b> "quotes"',
       tags: ["<tag>", "a & b"],
     });
 
@@ -75,6 +83,7 @@ describe("generateRSSFeed XML safety", () => {
     const doc = new DOMParser().parseFromString(xml, "application/xml");
     expect(doc.querySelector("parsererror")).toBeNull();
     expect(xml).not.toContain("<b>&</b>");
+    expect(xml).not.toContain("\u0001");
   });
 
   it("uses the configured language and deterministic build timestamp", () => {
@@ -109,6 +118,38 @@ describe("generateRSSFeed XML safety", () => {
     expect(doc.querySelector("parsererror")).toBeNull();
     expect(doc.querySelector("managingEditor")?.textContent).toBe(
       "A & B (https://example.com/about?x=1&y=2)",
+    );
+  });
+
+  it("validates the site URL and only emits safe HTTP thumbnail enclosures", () => {
+    expect(() =>
+      generateRSSFeed([makePhoto({})], {
+        title: "Test",
+        url: "javascript:alert(1)",
+      }),
+    ).toThrow("Site URL must");
+
+    const xml = generateRSSFeed(
+      [
+        makePhoto({
+          id: "webp",
+          thumbnailUrl: "/thumbnails/photo.webp?version=1",
+        }),
+        makePhoto({
+          id: "unsafe",
+          thumbnailUrl: "data:image/png;base64,AAAA",
+        }),
+      ],
+      { title: "Test", url: "https://example.com" },
+    );
+    const doc = new DOMParser().parseFromString(xml, "application/xml");
+    const enclosures = [...doc.querySelectorAll("enclosure")];
+
+    expect(doc.querySelector("parsererror")).toBeNull();
+    expect(enclosures).toHaveLength(1);
+    expect(enclosures[0]?.getAttribute("type")).toBe("image/webp");
+    expect(enclosures[0]?.getAttribute("url")).toBe(
+      "https://example.com/thumbnails/photo.webp?version=1",
     );
   });
 });

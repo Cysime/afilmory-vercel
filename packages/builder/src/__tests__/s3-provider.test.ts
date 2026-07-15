@@ -126,6 +126,17 @@ describe("S3StorageProvider.getFile", () => {
     ).toThrow(/http\(s\) URL without credentials/);
   });
 
+  it("treats empty optional URL settings as unset", () => {
+    const provider = new S3StorageProvider(
+      { ...config, endpoint: "", customDomain: "" },
+      { s3Client: new MockS3Client(vi.fn<MockS3Send>()) },
+    );
+
+    expect(provider.generatePublicUrl("photo.jpg")).toBe(
+      "https://bucket.s3.auto.amazonaws.com/photo.jpg",
+    );
+  });
+
   it("clears the total timeout when the response body is already a Buffer", async () => {
     const send = vi.fn<MockS3Send>().mockResolvedValue(
       createGetObjectResponse({
@@ -429,6 +440,28 @@ describe("S3StorageProvider.getFile", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it("destroys an unread stream when its declared length exceeds the limit", async () => {
+    const stream = new PassThrough();
+    const destroy = vi.spyOn(stream, "destroy");
+    const send = vi.fn<MockS3Send>().mockResolvedValue(
+      createGetObjectResponse({
+        Body: stream,
+        ContentLength: 5,
+      }),
+    );
+    const provider = new S3StorageProvider(
+      {
+        ...config,
+        downloadMemoryBudgetBytes: 4,
+        maxDownloadBytes: 4,
+      },
+      { s3Client: new MockS3Client(send) },
+    );
+
+    await expect(provider.getFile("too-large.jpg")).resolves.toBeNull();
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
   it("serializes streamed buffers when the provider byte budget is exhausted", async () => {
     const firstStream = new PassThrough();
     const send = vi
@@ -554,6 +587,37 @@ describe("S3StorageProvider.getFile", () => {
       "thumbs/c.jpg",
     ]);
     expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects multi-page continuation-token cycles in listObjectKeys", async () => {
+    const send = vi
+      .fn<MockS3Send>()
+      .mockResolvedValueOnce(
+        createListObjectsResponse({
+          IsTruncated: true,
+          NextContinuationToken: "page-a",
+        }),
+      )
+      .mockResolvedValueOnce(
+        createListObjectsResponse({
+          IsTruncated: true,
+          NextContinuationToken: "page-b",
+        }),
+      )
+      .mockResolvedValueOnce(
+        createListObjectsResponse({
+          IsTruncated: true,
+          NextContinuationToken: "page-a",
+        }),
+      );
+    const provider = new S3StorageProvider(config, {
+      s3Client: new MockS3Client(send),
+    });
+
+    await expect(provider.listObjectKeys("thumbs/")).rejects.toThrow(
+      'repeated continuation token "page-a"',
+    );
+    expect(send).toHaveBeenCalledTimes(3);
   });
 
   it("applies the same retry policy to uploads", async () => {

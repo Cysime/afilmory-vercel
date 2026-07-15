@@ -57,6 +57,34 @@ describe("WorkerPool", () => {
     expect(started).toEqual([0, 1]);
   });
 
+  it("drains sibling work when a completion callback throws", async () => {
+    setConsoleForwarding(false);
+    let releaseInFlight!: () => void;
+    const inFlight = new Promise<void>((resolve) => {
+      releaseInFlight = resolve;
+    });
+    let settled = false;
+    const pool = new WorkerPool<string>({
+      concurrency: 2,
+      totalTasks: 2,
+      onTaskCompleted: ({ taskIndex }) => {
+        if (taskIndex === 0) throw new Error("progress callback failed");
+      },
+    });
+    const run = pool
+      .execute(async (taskIndex) => {
+        if (taskIndex === 1) await inFlight;
+        return `task-${taskIndex}`;
+      })
+      .finally(() => {
+        settled = true;
+      });
+
+    await vi.waitFor(() => expect(settled).toBe(false));
+    releaseInFlight();
+    await expect(run).rejects.toThrow("progress callback failed");
+  });
+
   it("fails a hung task through the configured watchdog", async () => {
     setConsoleForwarding(false);
     vi.useFakeTimers();

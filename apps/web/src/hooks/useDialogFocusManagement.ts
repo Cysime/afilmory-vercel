@@ -82,7 +82,10 @@ export function useDialogFocusManagement({
       const first = focusable[0];
       const last = focusable.at(-1)!;
       const active = document.activeElement;
-      if (event.shiftKey && (active === first || !dialog.contains(active))) {
+      if (
+        event.shiftKey &&
+        (active === dialog || active === first || !dialog.contains(active))
+      ) {
         event.preventDefault();
         last.focus({ preventScroll: true });
       } else if (!event.shiftKey && active === last) {

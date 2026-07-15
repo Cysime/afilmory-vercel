@@ -494,7 +494,14 @@ describe("redactConfigSecrets", () => {
     config.plugins = [
       {
         plugin: "geocoding",
-        options: { mapboxToken: "pk.secret", nested: { apiToken: "also" } },
+        options: {
+          mapboxToken: "pk.secret",
+          nested: {
+            apiToken: "also",
+            secretKey: "third",
+            "api-key": "fourth",
+          },
+        },
       },
     ];
 
@@ -502,7 +509,14 @@ describe("redactConfigSecrets", () => {
     expect(sanitized.plugins).toEqual([
       {
         plugin: "geocoding",
-        options: { mapboxToken: "***", nested: { apiToken: "***" } },
+        options: {
+          mapboxToken: "***",
+          nested: {
+            apiToken: "***",
+            secretKey: "***",
+            "api-key": "***",
+          },
+        },
       },
     ]);
     expect(config.plugins).toEqual([
@@ -510,10 +524,29 @@ describe("redactConfigSecrets", () => {
         plugin: "geocoding",
         options: {
           mapboxToken: "pk.secret",
-          nested: { apiToken: "also" },
+          nested: {
+            apiToken: "also",
+            secretKey: "third",
+            "api-key": "fourth",
+          },
         },
       },
     ]);
+  });
+
+  it("does not expose secrets through circular plugin options", () => {
+    const config = createDefaultBuilderConfig();
+    const options: Record<string, unknown> = { secretKey: "do-not-log" };
+    options.self = options;
+    config.plugins = [{ plugin: "custom", options } as never];
+
+    const sanitized = redactConfigSecrets(config);
+    const sanitizedOptions = (
+      sanitized.plugins[0] as { options: Record<string, unknown> }
+    ).options;
+    expect(sanitizedOptions.secretKey).toBe("***");
+    expect(sanitizedOptions.self).toBe(sanitizedOptions);
+    expect(options.secretKey).toBe("do-not-log");
   });
 
   it("redacts tokens from initialized built-in plugin references", () => {

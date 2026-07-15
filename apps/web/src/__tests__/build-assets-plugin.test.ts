@@ -72,6 +72,43 @@ describe("build asset SEO helpers", () => {
     expect(result).not.toContain("https://old.example");
   });
 
+  it("rejects unsafe site and metadata image URLs", () => {
+    expect(() =>
+      injectHomeMetadata("<html><head></head><body></body></html>", {
+        title: "Gallery",
+        description: "Photos",
+        siteName: "Gallery",
+        siteUrl: "javascript:alert(1)",
+        imageUrl: "https://example.com/og.png",
+      }),
+    ).toThrow("Site URL must");
+
+    expect(() =>
+      injectHomeMetadata("<html><head></head><body></body></html>", {
+        title: "Gallery",
+        description: "Photos",
+        siteName: "Gallery",
+        siteUrl: "https://example.com",
+        imageUrl: "data:image/png;base64,AAAA",
+      }),
+    ).toThrow("image URL must use http(s)");
+
+    for (const siteUrl of [
+      "https://example.com/gallery?",
+      "https://example.com/gallery#",
+    ]) {
+      expect(() =>
+        injectHomeMetadata("<html><head></head><body></body></html>", {
+          title: "Gallery",
+          description: "Photos",
+          siteName: "Gallery",
+          siteUrl,
+          imageUrl: "https://example.com/og.png",
+        }),
+      ).toThrow("Site URL must");
+    }
+  });
+
   it("creates a crawlable photo shell with escaped HTML and JSON-LD", () => {
     const baseHtml = injectHomeMetadata(
       '<!doctype html><html><head><link rel="manifest" href="/manifest.webmanifest"></head><body><div id="splash-screen"></div><div id="root"></div></body></html>',

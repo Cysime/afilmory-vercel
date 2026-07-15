@@ -4,9 +4,9 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 
 import {
-  galleryColumnsAtom,
   gallerySettingAtom,
   isCommandPaletteOpenAtom,
+  responsiveGalleryColumnsAtom,
 } from "~/atoms/app";
 import { siteConfig } from "~/config";
 
@@ -16,7 +16,7 @@ import { ViewPanel } from "./panels/ViewPanel";
 export const ActionGroup = () => {
   const { t } = useTranslation();
   const [gallerySetting] = useAtom(gallerySettingAtom);
-  const columns = useAtomValue(galleryColumnsAtom);
+  const columns = useAtomValue(responsiveGalleryColumnsAtom);
   const setCommandPaletteOpen = useSetAtom(isCommandPaletteOpenAtom);
   const navigate = useNavigate();
 

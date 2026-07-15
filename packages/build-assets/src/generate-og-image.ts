@@ -1,15 +1,16 @@
 /* eslint-disable no-console */
 
 import {
-  existsSync,
+  lstatSync,
   mkdirSync,
   realpathSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { PhotoManifestItem } from "@afilmory/schema";
 import sharp from "sharp";
 
 import { buildTimePhotoLoader } from "./photo-loader.ts";
@@ -19,6 +20,16 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // packages/build-assets/src -> 仓库根需要上跳三层（原先在根 scripts/ 时是一层）
 const monorepoRoot = resolve(__dirname, "../../..");
 const webPublicDir = join(monorepoRoot, "apps/web/public");
+
+function isPathWithin(rootPath: string, candidatePath: string): boolean {
+  const relativePath = relative(rootPath, candidatePath);
+  return (
+    relativePath === "" ||
+    (!isAbsolute(relativePath) &&
+      relativePath !== ".." &&
+      !relativePath.startsWith(`..${sep}`))
+  );
+}
 
 /** Resolve the build-only public asset root and fail early on bad overrides. */
 export function resolvePublicAssetDirectory(
@@ -60,17 +71,12 @@ export function resolvePublicAssetPath(
   try {
     const realPublicDirectory = realpathSync(publicDirectory);
     const candidatePath = resolve(realPublicDirectory, `.${decodedPath}`);
-    const candidateRelativePath = relative(realPublicDirectory, candidatePath);
-    if (
-      candidateRelativePath.startsWith("..") ||
-      isAbsolute(candidateRelativePath)
-    ) {
+    if (!isPathWithin(realPublicDirectory, candidatePath)) {
       return null;
     }
 
     const realCandidatePath = realpathSync(candidatePath);
-    const realRelativePath = relative(realPublicDirectory, realCandidatePath);
-    if (realRelativePath.startsWith("..") || isAbsolute(realRelativePath)) {
+    if (!isPathWithin(realPublicDirectory, realCandidatePath)) {
       return null;
     }
     return statSync(realCandidatePath).isFile() ? realCandidatePath : null;
@@ -79,22 +85,70 @@ export function resolvePublicAssetPath(
   }
 }
 
+function parsePhotoDate(value: unknown): number | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const trimmedValue = value.trim();
+  // EXIF commonly uses `YYYY:MM:DD HH:mm:ss` without a timezone. Treat it as
+  // UTC for deterministic build ordering rather than inheriting the machine's
+  // local timezone.
+  const exifDate = /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(
+    trimmedValue,
+  );
+  if (exifDate) {
+    const [, year, month, day, hour, minute, second] = exifDate;
+    const parsed = Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second),
+    );
+    const date = new Date(parsed);
+    if (
+      date.getUTCFullYear() === Number(year) &&
+      date.getUTCMonth() === Number(month) - 1 &&
+      date.getUTCDate() === Number(day) &&
+      date.getUTCHours() === Number(hour) &&
+      date.getUTCMinutes() === Number(minute) &&
+      date.getUTCSeconds() === Number(second)
+    ) {
+      return parsed;
+    }
+    return null;
+  }
+
+  const timestamp = Date.parse(trimmedValue);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function photoTimestamp(photo: PhotoManifestItem): number {
+  for (const value of [
+    photo.dateTaken,
+    photo.exif?.DateTimeOriginal,
+    photo.lastModified,
+  ]) {
+    const timestamp = parsePhotoDate(value);
+    if (timestamp !== null) return timestamp;
+  }
+  return Number.NEGATIVE_INFINITY;
+}
+
+/** Deterministically order the photos used by the generated OG collage. */
+export function sortPhotosForOg(
+  photos: readonly PhotoManifestItem[],
+): PhotoManifestItem[] {
+  return [...photos].sort((a, b) => {
+    const aTimestamp = photoTimestamp(a);
+    const bTimestamp = photoTimestamp(b);
+    if (aTimestamp !== bTimestamp) return bTimestamp > aTimestamp ? 1 : -1;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+}
+
 // 获取最新的照片
 async function getLatestPhotos(count = 4) {
-  const photos = [...buildTimePhotoLoader.getPhotos()];
-
-  // 按拍摄时间排序，获取最新的照片
-  const sortedPhotos = photos.sort((a, b) => {
-    if (!a?.exif?.DateTimeOriginal || !b?.exif?.DateTimeOriginal) {
-      return 0;
-    }
-
-    const aDate = a.exif.DateTimeOriginal || a.lastModified;
-    const bDate = b.exif.DateTimeOriginal || b.lastModified;
-    return bDate.localeCompare(aDate);
-  });
-
-  return sortedPhotos.slice(0, count);
+  return sortPhotosForOg(buildTimePhotoLoader.getPhotos()).slice(0, count);
 }
 
 // 下载并处理照片缩略图
@@ -231,6 +285,90 @@ interface OGImageOptions {
 export interface GeneratedImageArtifact {
   outputPath: string;
   buffer: Buffer;
+}
+
+export function resolveGeneratedImageOutputPath(
+  outputDir: string,
+  outputPath: string,
+): string {
+  if (
+    outputPath.trim() === "" ||
+    outputPath.includes("\0") ||
+    outputPath.includes("\\") ||
+    isAbsolute(outputPath)
+  ) {
+    throw new Error(
+      `[og-image] outputPath must be a safe relative path: ${JSON.stringify(outputPath)}`,
+    );
+  }
+
+  const resolvedOutputDirectory = resolve(outputDir);
+  const resolvedOutputPath = resolve(resolvedOutputDirectory, outputPath);
+  if (
+    resolvedOutputPath === resolvedOutputDirectory ||
+    !isPathWithin(resolvedOutputDirectory, resolvedOutputPath)
+  ) {
+    throw new Error(
+      `[og-image] outputPath escapes outputDir: ${JSON.stringify(outputPath)}`,
+    );
+  }
+  return resolvedOutputPath;
+}
+
+export function resolveWritableGeneratedImageOutputPath(
+  outputDir: string,
+  outputPath: string,
+): string {
+  const resolvedOutputDirectory = resolve(outputDir);
+  const requestedOutputPath = resolveGeneratedImageOutputPath(
+    resolvedOutputDirectory,
+    outputPath,
+  );
+  mkdirSync(resolvedOutputDirectory, { recursive: true });
+  const realOutputDirectory = realpathSync(resolvedOutputDirectory);
+  const relativeOutputPath = relative(
+    resolvedOutputDirectory,
+    requestedOutputPath,
+  );
+  const outputSegments = relativeOutputPath.split(sep);
+  const fileName = outputSegments.pop();
+  if (!fileName) {
+    throw new Error("[og-image] outputPath must name a file");
+  }
+
+  let realParentDirectory = realOutputDirectory;
+  for (const segment of outputSegments) {
+    const nextDirectory = join(realParentDirectory, segment);
+    let stats: ReturnType<typeof lstatSync> | undefined;
+    try {
+      stats = lstatSync(nextDirectory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (!stats) {
+      mkdirSync(nextDirectory);
+      stats = lstatSync(nextDirectory);
+    }
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new Error(
+        `[og-image] outputPath contains an unsafe directory: ${nextDirectory}`,
+      );
+    }
+    realParentDirectory = realpathSync(nextDirectory);
+    if (!isPathWithin(realOutputDirectory, realParentDirectory)) {
+      throw new Error("[og-image] outputPath resolves outside outputDir");
+    }
+  }
+
+  const writableOutputPath = join(realParentDirectory, fileName);
+  try {
+    if (lstatSync(writableOutputPath).isSymbolicLink()) {
+      throw new Error("[og-image] outputPath cannot be a symbolic link");
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return writableOutputPath;
 }
 
 export async function generateOGImage(options: OGImageOptions) {
@@ -458,12 +596,10 @@ export async function generateOGImage(options: OGImageOptions) {
     const buffer = await finalImage.png().toBuffer();
 
     if (writeToDisk) {
-      const fullOutputPath = join(outputDir, outputPath);
-      const fullOutputDir = dirname(fullOutputPath);
-      if (!existsSync(fullOutputDir)) {
-        mkdirSync(fullOutputDir, { recursive: true });
-      }
-
+      const fullOutputPath = resolveWritableGeneratedImageOutputPath(
+        outputDir,
+        outputPath,
+      );
       writeFileSync(fullOutputPath, buffer);
       console.info(`✅ OG image generated: ${fullOutputPath}`);
     }
