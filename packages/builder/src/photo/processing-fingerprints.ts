@@ -1,3 +1,5 @@
+import { locationPrivacyFingerprint } from "@afilmory/schema";
+
 import type {
   PhotoManifestItem,
   PhotoProcessingFingerprints,
@@ -24,7 +26,9 @@ export const CURRENT_CORE_PROCESSING_FINGERPRINTS: Readonly<CoreProcessingFinger
     exif: "exif:v2",
     tone: "tone:v2",
     media: "media-detection:v2",
-    privacy: "location-privacy:v1:coarse",
+    // 与发布层盖章（applyPhotoLocationPrivacy）共用同一来源，两边失同步会
+    // 造成永久增量空转或永久重建循环。
+    privacy: locationPrivacyFingerprint("coarse"),
   }) satisfies Readonly<PhotoProcessingFingerprints>;
 
 export type CoreProcessingStage = keyof CoreProcessingFingerprints;
@@ -36,7 +40,7 @@ export function getCurrentCoreProcessingFingerprints(
 ): CoreProcessingFingerprints {
   return {
     ...CURRENT_CORE_PROCESSING_FINGERPRINTS,
-    privacy: `location-privacy:v1:${locationMode}`,
+    privacy: locationPrivacyFingerprint(locationMode),
   };
 }
 

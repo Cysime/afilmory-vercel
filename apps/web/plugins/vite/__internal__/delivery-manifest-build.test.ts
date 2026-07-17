@@ -157,18 +157,20 @@ describe("createWebDeliveryArtifacts", () => {
     const map = parsedAssets.find((asset) => asset.kind === "map-details");
 
     expect(index.manifest.photos[0]).toMatchObject({
-      location: { latitude: 31.23, longitude: 121.57 },
-      processing: { privacy: "location-privacy:v1:coarse" },
+      location: { latitude: 31.235, longitude: 121.568 },
+      processing: { privacy: "location-privacy:v2:coarse-d3" },
     });
     expect(detail.photos.legacy.location).toMatchObject({
-      latitude: 31.23,
-      longitude: 121.57,
+      latitude: 31.235,
+      longitude: 121.568,
     });
     expect(map.photos.legacy.exif).toMatchObject({
-      GPSLatitude: 31.23,
-      GPSLongitude: 121.57,
+      GPSLatitude: 31.235,
+      GPSLongitude: 121.568,
     });
-    expect(map.photos.legacy.exif).not.toHaveProperty("GPSAltitude");
+    // coarse 保留海拔（不暴露水平位置）；全精度组合键必须已删除
+    expect(map.photos.legacy.exif).toMatchObject({ GPSAltitude: 12 });
+    expect(map.photos.legacy.exif).not.toHaveProperty("GPSCoordinates");
     expect(sourcePhoto.location.latitude).toBe(31.234567);
     expect(sourcePhoto).not.toHaveProperty("processing");
   });

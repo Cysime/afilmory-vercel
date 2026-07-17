@@ -34,9 +34,11 @@ describe("location privacy policy", () => {
   it("coarsens coordinates before they can reach a provider or manifest", () => {
     expect(applyExifLocationPrivacy(exactExif, "coarse")).toEqual({
       Make: "Leica",
+      // 海拔保留；GPSCoordinates（内嵌全精度经纬度）删除
+      GPSAltitude: 123,
       GPSLatitude: 31.23,
       GPSLatitudeRef: "N",
-      GPSLongitude: 121.47,
+      GPSLongitude: 121.474,
       GPSLongitudeRef: "E",
     });
     expect(
@@ -44,7 +46,7 @@ describe("location privacy policy", () => {
         { latitude: 31.230_416, longitude: 121.473_701, city: "Shanghai" },
         "coarse",
       ),
-    ).toEqual({ latitude: 31.23, longitude: 121.47, city: "Shanghai" });
+    ).toEqual({ latitude: 31.23, longitude: 121.474, city: "Shanghai" });
   });
 
   it("never includes coordinate values in geocoding logs", async () => {
@@ -111,5 +113,45 @@ describe("location privacy policy", () => {
     enforcePhotoLocationPrivacy(item, "exact");
     expect(item.processing?.privacy).toBe("location-privacy:v1:strip");
     expect(item.exif).not.toHaveProperty("GPSLatitude");
+  });
+
+  // coarse 契约升级（精度/键保留规则变化 → 指纹版本变化）：取整不可逆，
+  // 发布层无法凭已取整数据推导新契约。旧指纹必须保留，否则该照片被误标为
+  // 已升级，增量构建永远不再重走源文件提取。
+  it("keeps the old coarse fingerprint on items published under a previous coarse contract", () => {
+    const item: PhotoManifestItem = {
+      id: "photo",
+      title: "",
+      description: "",
+      dateTaken: "2026-01-01T00:00:00.000Z",
+      tags: [],
+      originalUrl: "/photo.jpg",
+      thumbnailUrl: "/thumb.jpg",
+      thumbHash: null,
+      width: 1,
+      height: 1,
+      aspectRatio: 1,
+      s3Key: "photo.jpg",
+      lastModified: "2026-01-01T00:00:00.000Z",
+      size: 1,
+      exif: {
+        Make: "Leica",
+        GPSLatitude: 31.23,
+        GPSLatitudeRef: "N",
+        GPSLongitude: 121.47,
+        GPSLongitudeRef: "E",
+      },
+      toneAnalysis: null,
+      location: { latitude: 31.23, longitude: 121.47 },
+      processing: { privacy: "location-privacy:v1:coarse" },
+    };
+
+    enforcePhotoLocationPrivacy(item, "coarse");
+    expect(item.processing?.privacy).toBe("location-privacy:v1:coarse");
+
+    // 从 exact 来源可以推导任意目标：盖当前指纹
+    item.processing = { privacy: "location-privacy:v1:exact" };
+    enforcePhotoLocationPrivacy(item, "coarse");
+    expect(item.processing?.privacy).toBe("location-privacy:v2:coarse-d3");
   });
 });

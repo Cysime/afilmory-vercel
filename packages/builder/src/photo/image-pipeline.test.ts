@@ -301,11 +301,11 @@ describe("processPhotoWithPipeline thumbnail buffer lifetime", () => {
     );
     expect(coarse.item?.exif).toMatchObject({
       GPSLatitude: 31.23,
-      GPSLongitude: 121.47,
+      GPSLongitude: 121.474,
     });
     expect(coarse.item?.location).toMatchObject({
       latitude: 31.23,
-      longitude: 121.47,
+      longitude: 121.474,
     });
 
     const restoredExact = await runPipeline(

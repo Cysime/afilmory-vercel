@@ -44,15 +44,17 @@ describe("manifest publication location privacy", () => {
 
     expect(publication.photos[0]).toMatchObject({
       exif: {
-        GPSLatitude: 31.23,
+        GPSLatitude: 31.235,
         GPSLatitudeRef: "N",
-        GPSLongitude: 121.57,
+        GPSLongitude: 121.568,
         GPSLongitudeRef: "W",
+        // 海拔不暴露水平位置，coarse 模式保留
+        GPSAltitude: 12,
       },
-      location: { latitude: 31.23, longitude: -121.57 },
-      processing: { privacy: "location-privacy:v1:coarse" },
+      location: { latitude: 31.235, longitude: -121.568 },
+      processing: { privacy: "location-privacy:v2:coarse-d3" },
     });
-    expect(publication.photos[0]?.exif).not.toHaveProperty("GPSAltitude");
+    // 内嵌全精度经纬度的组合键必须删除
     expect(publication.photos[0]?.exif).not.toHaveProperty("GPSCoordinates");
     expect(photo.exif?.GPSLatitude).toBe(31.234567);
     expect(photo.processing).toBeUndefined();
