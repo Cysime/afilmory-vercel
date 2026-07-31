@@ -22,6 +22,24 @@ import { virtualRoutesPlugin } from "./plugins/vite/routes";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// process.noDeprecation is a real Node API that @types/node 24 doesn't declare.
+const proc = process as NodeJS.Process & { noDeprecation?: boolean };
+
+async function loadTailwindcssPlugin() {
+  // Tailwind 4.1.x calls the deprecated module.register() during import on Node 26.
+  const previousNoDeprecation = proc.noDeprecation;
+  proc.noDeprecation = true;
+  try {
+    return (await import("@tailwindcss/vite")).default;
+  } finally {
+    proc.noDeprecation = previousNoDeprecation;
+  }
+}
+
+// The runner config loader closes after evaluating this module, so config-time
+// dependencies must be resolved before Vite invokes the exported config hook.
+const tailwindcss = await loadTailwindcssPlugin();
+
 const ReactCompilerConfig = {
   /* ... */
 };
@@ -44,6 +62,15 @@ function silenceUnavailableNodeLocalStorageWarning() {
     writable: true,
   });
 }
+
+async function loadCodeInspectorPlugin() {
+  silenceUnavailableNodeLocalStorageWarning();
+  return (await import("code-inspector-plugin")).codeInspectorPlugin;
+}
+
+// The runner config loader closes after evaluating this module, so dev-only
+// dependencies also need to resolve before Vite invokes the config hook.
+const codeInspectorPlugin = await loadCodeInspectorPlugin();
 
 const staticWebBuildPlugins: PluginOption[] = [
   dataInjectPlugin(),
@@ -90,11 +117,8 @@ const staticWebBuildPlugins: PluginOption[] = [
 // https://vitejs.dev/config/
 export default defineConfig(async ({ command }) => {
   const devOnlyPlugins: PluginOption[] = [];
-  const tailwindcss = await loadTailwindcssPlugin();
 
   if (command === "serve") {
-    silenceUnavailableNodeLocalStorageWarning();
-    const { codeInspectorPlugin } = await import("code-inspector-plugin");
     devOnlyPlugins.push(
       codeInspectorPlugin({
         bundler: "vite",
@@ -105,6 +129,11 @@ export default defineConfig(async ({ command }) => {
 
   return {
     base: "/",
+    // Swiper exposes optional React bindings without declaring React as a peer.
+    // Resolve them from the app root and keep one React instance in the bundle.
+    resolve: {
+      dedupe: ["react", "react-dom"],
+    },
     plugins: [
       ...devOnlyPlugins,
       react({
@@ -145,17 +174,3 @@ export default defineConfig(async ({ command }) => {
     },
   };
 });
-
-// process.noDeprecation is a real Node API that @types/node 24 doesn't declare.
-const proc = process as NodeJS.Process & { noDeprecation?: boolean };
-
-async function loadTailwindcssPlugin() {
-  // Tailwind 4.1.x calls the deprecated module.register() during import on Node 26.
-  const previousNoDeprecation = proc.noDeprecation;
-  proc.noDeprecation = true;
-  try {
-    return (await import("@tailwindcss/vite")).default;
-  } finally {
-    proc.noDeprecation = previousNoDeprecation;
-  }
-}
